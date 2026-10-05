@@ -182,7 +182,7 @@ def chrome_width() -> int:
 def min_columns_width() -> int:
     """各列都取最小值时的列宽之和（= 窗口下限时的那一份）。"""
     return (deck_col_width() + result_col_width() + order_col_width()
-            + badge_slot() + COL_OPP_THUMB + OPP_GAP + COL_OPP_NAME)
+            + badge_slot() + opp_col_width())
 
 
 def _text_col_w(text: str, base: int) -> int:
@@ -238,6 +238,17 @@ def opp_name_width(rows) -> int:
     return max(40, min(need + 8, COL_OPP_NAME))
 
 
+def opp_col_width() -> int:
+    """对手卡组整列宽 = max(基准 `COL_OPP`, 卡图+缝+「未知卡组」实测宽)。
+
+    「未知卡组」是**固定 UI 文案**（琥珀未标注态），省略成「未知…」既难看
+    又丢语义（2026-10-05 审查）—— 名字列收窄后给它保底。
+    """
+    fm = QFontMetrics(widgets.font(theme.F_BODY))
+    need = fm.horizontalAdvance(tr('未知卡组')) + 8
+    return max(COL_OPP, COL_OPP_THUMB + OPP_GAP + need)
+
+
 def column_widths(avail_w: int, opp_name_w: Optional[int] = None) -> tuple:
     """`(卡组, 结果, 先/后, 段位, 对手卡组)` —— **表头与行都调这一个**。
 
@@ -246,8 +257,8 @@ def column_widths(avail_w: int, opp_name_w: Optional[int] = None) -> tuple:
     不追求长名全显示，最小列宽贴着对手卡组字的右边）—— 窗口最小宽 =
     各列基准和；拉宽窗口多出的部分留在整行铺色的行背景上，不再分配给列。
     """
-    opp = (COL_OPP_THUMB + OPP_GAP
-           + (opp_name_w if opp_name_w else COL_OPP_NAME))
+    opp = max(COL_OPP, COL_OPP_THUMB + OPP_GAP
+              + (opp_name_w if opp_name_w else COL_OPP_NAME))
     return (deck_col_width(), result_col_width(), order_col_width(),
             badge_slot(), opp)
 
@@ -268,7 +279,7 @@ def max_window_width(names) -> int:
                or [COL_OPP_NAME])
     total_base = min_columns_width()
     need_col = need + COL_OPP_THUMB + OPP_GAP        # 卡组名列整格要这么宽
-    room = int(math.ceil(need_col * total_base / COL_OPP))
+    room = int(math.ceil(need_col * total_base / opp_col_width()))
     avail = room + (theme.S_SM - 2) * 4
     return max(window_width(), chrome_width() + theme.SCROLL_W + avail)
 
@@ -786,7 +797,7 @@ class MatchHeader(QWidget):
                            (tr('结果'), result_col_width()),
                            (tr('先/后'), order_col_width()),
                            (tr('段位'), badge_slot()),
-                           (tr('对手卡组'), COL_OPP)):
+                           (tr('对手卡组'), opp_col_width())):
             align = Qt.AlignCenter
             lab = widgets.label(cap, 'label', align | Qt.AlignVCenter)
             lab.setFixedWidth(width)
@@ -1012,7 +1023,8 @@ class OppDeckCell(QFrame):
         super().__init__(parent)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(COL_OPP, theme.MATCH_ROW_H - theme.S_XS * 2)
+        self.setFixedSize(opp_col_width(),
+                          theme.MATCH_ROW_H - theme.S_XS * 2)
         self._press = None
         self.setStyleSheet(
             'OppDeckCell { background: %s; border: 1px solid transparent;'
@@ -1056,7 +1068,7 @@ class OppDeckCell(QFrame):
         self._deck_text = deck_text
         self._base_tip = base_tip
         self._player = player
-        self.apply_width(COL_OPP)
+        self.apply_width(opp_col_width())
 
     def apply_width(self, total_w: int) -> None:
         """整格宽度 → 名字列宽（定长省略、悬停看全名）。
@@ -1064,7 +1076,9 @@ class OppDeckCell(QFrame):
         ⚠️ 这一格是**弹性**的（拖宽只改它），所以每次变宽都要重新 elide；
         名字列宽上限不受限，下限 24px（再窄就只剩 `…` 了，没意义）。
         """
-        name_w = max(24, int(total_w) - COL_OPP_THUMB - OPP_GAP)
+        floor = (QFontMetrics(self.label.font())
+                 .horizontalAdvance(tr('未知卡组')) + 4)
+        name_w = max(floor, 24, int(total_w) - COL_OPP_THUMB - OPP_GAP)
         if name_w == self.label.width():
             return                      # 名字列宽没变 → 连 elide 都不用重算
         self.setFixedWidth(COL_OPP_THUMB + OPP_GAP + name_w)

@@ -9,6 +9,18 @@
 > 本工具为非官方粉丝作品，与 KONAMI、Untapped 均无关联。
 > 所有战绩数据只保存在你自己的电脑上，**不收集、不上传任何数据**。
 
+## 截图
+
+| 悬浮窗 | 看板 · 战绩页 |
+|---|---|
+| ![floating](assets/floating.png) | ![dashboard](assets/dashboard.png) |
+
+| 看板 · 对手卡组标注 |
+|---|
+| ![selector](assets/selector.png) |
+
+（截图为内置 demo 假数据渲染，非真实战绩。）
+
 ## 功能
 
 - **悬浮窗**：置顶小窗实时显示总览 / 先后攻统计 / 最近对局；点对手卡组格

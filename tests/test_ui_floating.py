@@ -1072,9 +1072,7 @@ class ColumnWidthTest(unittest.TestCase):
 
     def test_never_below_the_floor_width(self):
         widths = floating.column_widths(0)
-        self.assertEqual(
-            widths[4],
-            floating.COL_OPP_THUMB + floating.OPP_GAP + floating.COL_OPP_NAME)
+        self.assertEqual(widths[4], floating.opp_col_width())
 
     def test_widths_are_monotonic(self):
         prev = 0
@@ -1679,9 +1677,7 @@ class SizeLimitTest(unittest.TestCase):
         cap = floating.max_window_width(names)
         widths = floating.column_widths(
             floating.available_for_cols(cap, theme.SCROLL_W))
-        self.assertEqual(widths[4],
-                         floating.COL_OPP_THUMB + floating.OPP_GAP
-                         + floating.COL_OPP_NAME)
+        self.assertEqual(widths[4], floating.opp_col_width())
 
 
 @unittest.skipUnless(HAVE_QT, '没装 PySide6')
