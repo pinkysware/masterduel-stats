@@ -31,6 +31,10 @@
 
 ## 安装与运行
 
+> **不想装环境？** 到 [Releases](../../releases/latest) 下载
+> `...-win64-full.zip`（全依赖便携包），解压后双击 `start.bat` 即可
+> —— 包里自带 Python 和全部依赖。
+
 1. 安装 [Python 3.13](https://www.python.org/downloads/)（勾选 *Add to PATH*，
    或确保 `py` 启动器可用）；
 2. 克隆本仓库，在仓库根目录执行：

@@ -37,6 +37,10 @@ decks, rank progress and the metagame — with UI in **English / 中文 / 日本
 
 ## Install & Run
 
+> **Prefer no setup?** Download `...-win64-full.zip` from
+> [Releases](../../releases/latest), unzip anywhere and double-click `start.bat`
+> — the bundle ships its own Python and dependencies.
+
 1. Install [Python 3.13](https://www.python.org/downloads/) (check *Add to PATH*,
    or make sure the `py` launcher works);
 2. Clone this repository and run from the repo root:

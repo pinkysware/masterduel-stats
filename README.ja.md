@@ -38,6 +38,10 @@
 
 ## インストールと起動
 
+> **セットアップ不要で使いたい場合**：[Releases](../../releases/latest) から
+> `...-win64-full.zip`（全依存同梱のポータブル版）をダウンロードし、解凍して
+> `start.bat` をダブルクリック —— Python と依存関係が同梱されています。
+
 1. [Python 3.13](https://www.python.org/downloads/) をインストール
    （*Add to PATH* にチェック、または `py` ランチャーを有効化）；
 2. このリポジトリをクローンし、ルートで実行：
