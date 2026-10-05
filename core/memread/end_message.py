@@ -48,6 +48,34 @@ mem_result 复算和文案变体研究，不再参与任何判据。
 | `已投降` | **我**投降 → 我输 | 实测一局，日志 `result=Lose` |
 | `对手已投降` | 对手投降 → 我赢 | 实测两局（其中一局由日志**独立**判成 `Win`） |
 | `{胜者名}将{败者名}的LP已削减至0` | **句首那个名字赢** | 回放实测（`DUELIST A将DUELIST B的LP已削减至0`） |
+| `对手的LP已削减至0` | 对手 LP 归零 → 我赢 | 6 例全 win（无名字，靠「对手」二字） |
+| `LP已削减至0` | **我** LP 归零 → 我输 | 8 例全 lose（省略主语 = 我方） |
+| `由于超出时间在对局中落败` | 我超时 → 我输 | 09-13 12:52 局 |
+| `由于网络中断，决斗已经结束` | 对手掉线 → 我赢 | 4 例全 win（⚠️ 方向不在文案里，样本少） |
+
+日文客户端（2026-10-05 用户实机样本）：
+
+| `messageText`（日文客户端） | 胜负 | 证据 |
+|---|---|---|
+| `相手が降参しました` | 对手投降 → 我赢 | 用户标注（2 张截图） |
+| `LPが0になりました` | 我 LP 归零 → 我输 | 用户标注；同构中文 `LP已削减至0` |
+| `タイムアウトで敗北しました` | 我超时 → 我输 | 用户标注；同构中文超时文案 |
+| `降参しました` | **我**投降 → 我输 | 用户标注（2026-10-05 补） |
+| `相手のLPを0にしました` | 对手 LP 归零 → 我赢 | 用户标注（2026-10-05 补） |
+| `通信切断によりデュエルが終了しました` | 对手掉线 → 我赢 | 用户标注（⚠️ 同上） |
+
+英文客户端（2026-10-05 用户实机样本）：
+
+| `messageText`（英文客户端） | 胜负 | 证据 |
+|---|---|---|
+| `Opponent Surrendered` | 对手投降 → 我赢 | 用户标注 |
+| `You Surrendered` | **我**投降 → 我输 | 用户标注（2026-10-05 补） |
+| `Opponent's LP reduced to 0!` | 对手 LP 归零 → 我赢 | 用户标注 |
+| `LP reduced to 0` | 我 LP 归零 → 我输 | 用户标注 |
+| `Time limit win` | 我超时胜 → 我赢 | 用户标注 |
+
+⚠️ 英文文案的撇号（`'` / `\u2019`）与结尾感叹号会随字体/编码变 —— 查表前由
+`_norm_text()` 归一，表里只写规范形（**别**再把变体一条条塞进表）。
 
 ★ 两类投降文案是**不对称**的 —— `已投降` 不带名字、`对手已投降` 带「对手」二字，
 所以「谁投降」分得出来。这正是上一棒把它当「唯一缺口」的那一条。
@@ -57,15 +85,23 @@ mem_result 复算和文案变体研究，不再参与任何判据。
 
 语言
 ----
-**投降类是硬编码中文**，换客户端语言（日/英）会失配 —— 但失效是**安全的**：
-`derive_result` 返回 None、调用方退回日志，**不会判反**。
-要补别的语言，各攒一条样本即可（`tools/capture_end_message.py --watch` 会自动记
-未知文案并按日志标胜负），把字符串加进 `SURRENDER_RESULT` 就行。
+文案判据**分语言维护**（`SURRENDER_RESULT` 投降类 / `SELF_TEXT_RESULT` 自指类
+都是硬编码字符串表），换客户端语言会失配。
+⚠️ **2026-10-03 起失配不再「安全」**：`derive_result` 返回 None 只是这一票不投，
+而 `arbitrate_result` 的**平票规则偏向 winbit**，投降局的 winbit 又可能是
+**上一局残留**（见 `arbitrate_result` docstring）—— 中文下 2:1 判对的局，
+换个语言可能变成 1:1 平票、按残留 winbit 判反。
+补样本仍是最省事的修法：`tools/capture_end_message.py --watch` 会自动记未知文案
+并按日志标胜负，把字符串加进上面两张表即可。
+已收（2026-10-05）：中文 投降 2 + 固定措辞 4；日文 投降 2 + 固定措辞 4；
+英文 投降 2 + 固定措辞 3。
+**仍缺**：英文的「我超时负」（`Time limit loss`？）—— 没样本，不许猜。
 
 **LP 归零类不依赖语言**：不管哪种语言，「LP 被削到 0」的那个名字就是**败方**，
 而败方的名字在文案里总是**紧跟着 LP 字样**（`B的LP` / `B's LP` / `BのLP`）——
 这条与语序无关（英语被动句 `B's LP was reduced to 0 by A` 败者也在 LP 前面）。
-⚠️ 中文已实证；其他语言是**同构推断**，等撞到样本确认。
+⚠️ 中文 / 英文已实证（2026-10-05：`LP reduced to 0`[lose] /
+`Opponent's LP reduced to 0!`[win]）；日文仍是同构推断。
 
 红线
 ----
@@ -82,10 +118,40 @@ from typing import Optional, Sequence
 
 #: 投降类文案（**必须精确相等** —— `'对手已投降'` 里含有子串 `'已投降'`，
 #: 用 `in` / `endswith` 判会把「对手投降」误判成「我输」）。
-#: 目前只有中文客户端的样本；其他语言撞到再加。
+#: 中文 2 条 + 日文 2 条 + 英文 2 条（2026-10-05 用户实机样本）；撞到再加。
 SURRENDER_LOSE = '已投降'
 SURRENDER_WIN = '对手已投降'
-SURRENDER_RESULT = {SURRENDER_WIN: 'win', SURRENDER_LOSE: 'lose'}
+SURRENDER_RESULT = {SURRENDER_WIN: 'win', SURRENDER_LOSE: 'lose',
+                    '相手が降参しました': 'win',        # 日文：对手投降
+                    '降参しました': 'lose',            # 日文：我方投降
+                    'Opponent Surrendered': 'win',    # 英文：对手投降
+                    'You Surrendered': 'lose'}        # 英文：我方投降
+
+#: 「固定措辞」文案 -> 胜负（**不含玩家名**，靠措辞本身定方向）。与
+#: `SURRENDER_RESULT` 的区别：投降类靠「对手 / 相手」分方向，这里分两种写法 ——
+#: ① **省略主语 = 我方**（`LP已削减至0` / `LP reduced to 0`）；
+#: ② 写死「对手 / 相手」= 对手侧（`对手的LP已削减至0` / `相手のLPを0にしました`）。
+#: ⚠️ 只收**实证过**的，依据逐条写在下面 —— 别照语言规律批量补。
+SELF_TEXT_RESULT = {
+    # --- 中文（data/archive/end_messages.jsonl 逐条核对）---
+    'LP已削减至0': 'lose',              # 8 例全 lose（我 LP 归零）
+    '对手的LP已削减至0': 'win',          # 6 例全 win（对手 LP 归零）
+    '由于超出时间在对局中落败': 'lose',    # 09-13 12:52 局，winbits=[0,1]
+    # ⚠️ 掉线的方向**不在文案里**（任何一方掉线都可能显示）：依据 = 中文
+    #    4/4 全 win + 2026-10-05 用户标注，样本仍少；若自己掉线也显示这条
+    #    就会判反 —— 撞到自己掉线的样本时立刻回来改。
+    '由于网络中断，决斗已经结束': 'win',
+    # --- 日文（2026-10-05 用户实机样本，5 张截图）---
+    'LPが0になりました': 'lose',          # 同中文「LP已削减至0」
+    'タイムアウトで敗北しました': 'lose',   # 同中文「由于超出时间在对局中落败」
+    '通信切断によりデュエルが終了しました': 'win',   # 同中文「由于网络中断…」
+    '相手のLPを0にしました': 'win',        # 同中文「对手的LP已削减至0」
+    # --- 英文（2026-10-05 用户实机样本，4 张截图）---
+    # ⚠️ 表里只写规范形：撇号（' / \u2019）与结尾感叹号由 `_norm_text` 归一。
+    "Opponent's LP reduced to 0": 'win',   # 对手 LP 归零（截图带 !）
+    'LP reduced to 0': 'lose',             # 我方 LP 归零
+    'Time limit win': 'win',               # 超时胜
+}
 
 #: 「名字后面紧跟 LP 字样」判法用的标记（败方的名字总是贴着 LP）
 LP_MARKERS = ('的LP', "'s LP", '’s LP', 'のLP')
@@ -259,6 +325,16 @@ def lp_loser(text: str, names: Sequence[Optional[str]]) -> Optional[str]:
     return None
 
 
+def _norm_text(s) -> str:
+    """文案归一化（**只用于查表**，不改变原值）：直/弯撇号统一、去掉尾部感叹号。
+
+    英文客户端的文案会随字体/编码给撇号（``'`` / ``\u2019``）和结尾感叹号
+    （``!``）留变体 —— 逐条列进表里太脆。查表前统一一次，表里只写规范形。
+    中文/日文文案不受影响（无 ASCII 撇号，也不用 ``!`` 结尾）。
+    """
+    return (s or '').strip().replace('\u2019', "'").rstrip('!').rstrip()
+
+
 def _flip(result: str) -> str:
     return 'lose' if result == 'win' else 'win'
 
@@ -279,10 +355,16 @@ def derive_result(message_text,
     if not message_text:
         return None
     text = message_text.strip()
+    key = _norm_text(text)               # 查表用（撇号 / 结尾感叹号归一）
 
-    # ① 投降类（精确相等；目前只有中文客户端的字符串）
-    if text in SURRENDER_RESULT:
-        result = SURRENDER_RESULT[text]
+    # ① 投降类（精确相等；中/日/英各 1~2 条实证）
+    if key in SURRENDER_RESULT:
+        result = SURRENDER_RESULT[key]
+        return result if my_side == SIDE_MINE else _flip(result)
+
+    # ①b 视角方自指类（精确相等；省略主语 = 我方）
+    if key in SELF_TEXT_RESULT:
+        result = SELF_TEXT_RESULT[key]
         return result if my_side == SIDE_MINE else _flip(result)
 
     mine, rival = _side_names(player0_name, player1_name, my_side)
@@ -319,7 +401,9 @@ def is_known(message_text) -> bool:
     if not message_text:
         return False
     text = message_text.strip()
-    return (text in SURRENDER_RESULT
+    key = _norm_text(text)
+    return (key in SURRENDER_RESULT
+            or key in SELF_TEXT_RESULT
             or LP_DEPLETION_RE.match(text) is not None)
 
 

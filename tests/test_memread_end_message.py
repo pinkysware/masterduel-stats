@@ -15,9 +15,9 @@ if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
 from core.memread.end_message import (                       # noqa: E402
-    LP_DEPLETION_RE, SURRENDER_LOSE, SURRENDER_WIN, WINBIT_OFFSET,
-    EndMessageReader, derive_result, derive_result_from_winbits, is_known,
-    result_from_duel_code,
+    LP_DEPLETION_RE, SELF_TEXT_RESULT, SURRENDER_LOSE, SURRENDER_WIN,
+    WINBIT_OFFSET, EndMessageReader, derive_result,
+    derive_result_from_winbits, is_known, result_from_duel_code,
     lp_loser, read_winbits, winbits_from_native)
 
 
@@ -54,6 +54,84 @@ class TestSurrender(unittest.TestCase):
     def test_whitespace_tolerated(self):
         self.assertEqual(derive_result('  对手已投降 \n'), 'win')
         self.assertEqual(derive_result(' 已投降'), 'lose')
+
+
+class TestSelfTextResult(unittest.TestCase):
+    """★ 视角方自指文案（省略主语 = 我方）—— 中文实证 + 2026-10-05 日文样本。
+
+    这些文案**不含玩家名**，`lp_loser` 对不上名字 → 只能靠精确匹配表。
+    表里加错方向 = 整局记反，所以每条都必须有样本出处。
+    """
+
+    def test_chinese_self(self):
+        self.assertEqual(derive_result('LP已削减至0', 'A', 'B'), 'lose')
+        self.assertEqual(derive_result('对手的LP已削减至0', 'A', 'B'), 'win')
+        self.assertEqual(derive_result('由于超出时间在对局中落败', 'A', 'B'), 'lose')
+        self.assertEqual(derive_result('由于网络中断，决斗已经结束', 'A', 'B'),
+                         'win')
+
+    def test_japanese_samples(self):
+        """2026-10-05 用户实机样本（日文客户端 7 张截图）。"""
+        self.assertEqual(derive_result('相手が降参しました', 'A', 'B'), 'win')
+        self.assertEqual(derive_result('降参しました', 'A', 'B'), 'lose')
+        self.assertEqual(derive_result('LPが0になりました', 'A', 'B'), 'lose')
+        self.assertEqual(derive_result('相手のLPを0にしました', 'A', 'B'), 'win')
+        self.assertEqual(derive_result('タイムアウトで敗北しました', 'A', 'B'),
+                         'lose')
+        self.assertEqual(
+            derive_result('通信切断によりデュエルが終了しました', 'A', 'B'), 'win')
+
+    def test_side_swapped(self):
+        self.assertEqual(
+            derive_result('相手が降参しました', 'A', 'B', my_side=1), 'lose')
+        self.assertEqual(
+            derive_result('LPが0になりました', 'A', 'B', my_side=1), 'win')
+
+    def test_not_collected_still_none(self):
+        """**没样本的日文文案不许猜**（我方投降 / 对手 LP 归零仍缺样本）。"""
+        for text in ('相手のLPが0になりました', '敗北しました',
+                     'Time limit loss'):
+            self.assertIsNone(derive_result(text, 'A', 'B'), msg=text)
+
+    def test_is_known_covers_self_text(self):
+        for text in ('LP已削减至0', '对手的LP已削减至0', '相手が降参しました',
+                     'LPが0になりました', 'タイムアウトで敗北しました',
+                     '通信切断によりデュエルが終了しました',
+                     '降参しました', '相手のLPを0にしました',
+                     "Opponent's LP reduced to 0!", 'LP reduced to 0',
+                     'Opponent Surrendered', 'You Surrendered',
+                     'Time limit win'):
+            self.assertTrue(is_known(text), msg=text)
+
+    def test_english_samples(self):
+        """2026-10-05 用户实机样本（英文客户端 5 张截图）。"""
+        self.assertEqual(derive_result('You Surrendered', 'A', 'B'), 'lose')
+        self.assertEqual(derive_result("Opponent's LP reduced to 0!", 'A', 'B'),
+                         'win')
+        self.assertEqual(derive_result('LP reduced to 0', 'A', 'B'), 'lose')
+        self.assertEqual(derive_result('Opponent Surrendered', 'A', 'B'), 'win')
+        self.assertEqual(derive_result('Time limit win', 'A', 'B'), 'win')
+
+    def test_english_variants_normalized(self):
+        """撇号（直/弯）与结尾感叹号由 `_norm_text` 归一 —— 写法不同也同判。"""
+        for text in ("Opponent's LP reduced to 0!",
+                     'Opponent\u2019s LP reduced to 0!',
+                     "Opponent's LP reduced to 0",
+                     'Opponent\u2019s LP reduced to 0'):
+            self.assertEqual(derive_result(text, 'A', 'B'), 'win', msg=text)
+        self.assertEqual(derive_result('LP reduced to 0!', 'A', 'B'), 'lose')
+
+    def test_english_side_swapped(self):
+        self.assertEqual(
+            derive_result('Opponent Surrendered', 'A', 'B', my_side=1), 'lose')
+        self.assertEqual(
+            derive_result('LP reduced to 0', 'A', 'B', my_side=1), 'win')
+
+    def test_table_has_no_duplicate_value(self):
+        """同一文案不许映射两种胜负（表内自检）。"""
+        for table in (SELF_TEXT_RESULT,):
+            vals = set(table.values())
+            self.assertTrue(vals <= {'win', 'lose'}, repr(vals))
 
 
 class TestLpDepletion(unittest.TestCase):
