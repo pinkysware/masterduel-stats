@@ -38,9 +38,13 @@
 
 ## インストールと起動
 
-> **セットアップ不要で使いたい場合**：[Releases](../../releases/latest) から
-> `...-win64-full.zip`（全依存同梱のポータブル版）をダウンロードし、解凍して
-> `start.bat` をダブルクリック —— Python と依存関係が同梱されています。
+### ダウンロード（[Releases](../../releases/latest)）
+
+| アセット | サイズ | 必要なもの |
+|---|---|---|
+| `masterduel-stats-v1.0.0-win64-full.zip` | 約193 MB | **不要** —— Python と全依存を同梱。解凍して `start.bat` を実行するだけ |
+| `masterduel-stats-v1.0.0-win64-lite.zip` | 約4 MB | Python 3.13 のインストールが必要。初回の `start.bat` が依存関係を自動インストール |
+| Source code (zip / tar.gz) | 自動 | 開発者向け。各 tag に GitHub が自動添付 |
 
 1. [Python 3.13](https://www.python.org/downloads/) をインストール
    （*Add to PATH* にチェック、または `py` ランチャーを有効化）；

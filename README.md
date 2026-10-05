@@ -37,9 +37,13 @@ decks, rank progress and the metagame — with UI in **English / 中文 / 日本
 
 ## Install & Run
 
-> **Prefer no setup?** Download `...-win64-full.zip` from
-> [Releases](../../releases/latest), unzip anywhere and double-click `start.bat`
-> — the bundle ships its own Python and dependencies.
+### Downloads ([Releases](../../releases/latest))
+
+| Asset | Size | Requirements |
+|---|---|---|
+| `masterduel-stats-v1.0.0-win64-full.zip` | ~193 MB | **None** — Python & all deps bundled; unzip anywhere and run `start.bat` |
+| `masterduel-stats-v1.0.0-win64-lite.zip` | ~4 MB | Python 3.13 installed; `start.bat` installs the dependencies on first run |
+| Source code (zip / tar.gz) | auto | for developers — attached automatically by GitHub for each tag |
 
 1. Install [Python 3.13](https://www.python.org/downloads/) (check *Add to PATH*,
    or make sure the `py` launcher works);
