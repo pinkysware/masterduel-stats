@@ -89,8 +89,7 @@ class TestSelfTextResult(unittest.TestCase):
 
     def test_not_collected_still_none(self):
         """**没样本的日文文案不许猜**（我方投降 / 对手 LP 归零仍缺样本）。"""
-        for text in ('相手のLPが0になりました', '敗北しました',
-                     'Time limit loss'):
+        for text in ('相手のLPが0になりました', '敗北しました'):
             self.assertIsNone(derive_result(text, 'A', 'B'), msg=text)
 
     def test_is_known_covers_self_text(self):
@@ -100,12 +99,13 @@ class TestSelfTextResult(unittest.TestCase):
                      '降参しました', '相手のLPを0にしました',
                      "Opponent's LP reduced to 0!", 'LP reduced to 0',
                      'Opponent Surrendered', 'You Surrendered',
-                     'Time limit win'):
+                     'Time limit win', 'Time limit loss'):
             self.assertTrue(is_known(text), msg=text)
 
     def test_english_samples(self):
-        """2026-10-05 用户实机样本（英文客户端 5 张截图）。"""
+        """2026-10-05 用户实机样本（英文客户端 6 张截图）。"""
         self.assertEqual(derive_result('You Surrendered', 'A', 'B'), 'lose')
+        self.assertEqual(derive_result('Time limit loss', 'A', 'B'), 'lose')
         self.assertEqual(derive_result("Opponent's LP reduced to 0!", 'A', 'B'),
                          'win')
         self.assertEqual(derive_result('LP reduced to 0', 'A', 'B'), 'lose')
