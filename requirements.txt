@@ -1,0 +1,2 @@
+PySide6-Essentials==6.11.2
+pypinyin==0.55.0

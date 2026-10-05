@@ -1,0 +1,289 @@
+{
+ "saved_at": "2026-09-13 12:26:29",
+ "note": "骰子拉力",
+ "instance": "0x1cdf158f3f0",
+ "element_sizes": {
+  "ShowAction": 32,
+  "ShowTurn": 24,
+  "ShowPhase": 4,
+  "ShowText": 4,
+  "ChoiceFirstPlayer": 4,
+  "MoveMultiHeader": 32,
+  "MoveMulti": 8
+ },
+ "unknown_stride_max": 32,
+ "logbase_element": 32,
+ "partial": true,
+ "logbase": {
+  "size": 52,
+  "entries": [
+   {
+    "label": "ShowFirstPlayer",
+    "dataindex": 0
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "CardMoveMultiHeader",
+    "dataindex": 0
+   },
+   {
+    "label": "CardMoveMulti",
+    "dataindex": 0
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "CardMoveMultiHeader",
+    "dataindex": 1
+   },
+   {
+    "label": "CardMoveMulti",
+    "dataindex": 1
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 0
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 0
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 1
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowTurn",
+    "dataindex": 0
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 0
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 1
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 2
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 2
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 2
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 0
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 3
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 3
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 0
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 4
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 4
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 5
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 5
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 6
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 6
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 7
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 7
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 2
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 8
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 8
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 3
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 9
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 9
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 10
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 10
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 11
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 11
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 4
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 12
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 12
+   }
+  ]
+ },
+ "payload": {
+  "ShowTurn": {
+   "count": 1,
+   "stride": 24,
+   "bin": "m_DataList_ShowTurn.bin",
+   "bytes": 24
+  },
+  "ShowAction": {
+   "count": 13,
+   "stride": 32,
+   "bin": "m_DataList_ShowAction.bin",
+   "bytes": 416
+  },
+  "ShowChain": {
+   "count": 5,
+   "stride": null,
+   "bin": "m_DataList_ShowChain.bin",
+   "bytes": 256
+  },
+  "ShowCardName": {
+   "count": 13,
+   "stride": null,
+   "bin": "m_DataList_ShowCardName.bin",
+   "bytes": 512
+  },
+  "ShowText": {
+   "count": 0
+  },
+  "ShowPhase": {
+   "count": 3,
+   "stride": 4,
+   "bin": "m_DataList_ShowPhase.bin",
+   "bytes": 12
+  },
+  "ShowTag": {
+   "count": 2,
+   "stride": null,
+   "bin": "m_DataList_ShowTag.bin",
+   "bytes": 128
+  },
+  "MoveMultiHeader": {
+   "count": 2,
+   "stride": 32,
+   "bin": "m_DataList_MoveMultiHeader.bin",
+   "bytes": 64
+  },
+  "MoveMulti": {
+   "count": 2,
+   "stride": 8,
+   "bin": "m_DataList_MoveMulti.bin",
+   "bytes": 16
+  },
+  "ChoiceFirstPlayer": {
+   "count": 1,
+   "stride": 4,
+   "bin": "m_DataList_ChoiceFirstPlayer.bin",
+   "bytes": 4
+  }
+ }
+}

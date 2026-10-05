@@ -1,0 +1,8 @@
+# 统一用 LF：这项目对文件字节敏感（含中文，有 UTF-8 逐字节校验），
+# 别让 Git 在 checkout 时把行尾改成 CRLF，否则 diff 会全是噪声。
+* text=auto eol=lf
+
+# 二进制别当文本处理
+*.db   binary
+*.zip  binary
+*.png  binary

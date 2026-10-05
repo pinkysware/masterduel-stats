@@ -1,0 +1,834 @@
+# -*- coding: utf-8 -*-
+"""ui.app 调试模式（demo 战绩热切换 + 沙盒全流程）契约（2026-09-15）。
+
+规矩：
+* QSettings 一律 patch 成测试专属（masterduel_test/M7_test），结束 clear
+  —— 绝不碰真实注册表键 `masterduel/M7`；Windows 注册表把 bool 存成
+  'true'/'false' 字符串，读回一律走 `demo_from_settings()` 归一化；
+* Storage 只用临时库；MasterDuelUiApp 用 ``__new__`` 裸对象
+  （QApplication 全进程一份，不能整个构造 —— 同 test_ui_selector.OnPickDeckTest）；
+* ⚠️ 对话框必须**持引用**（``dlg = self._dlg()``）再摸子控件 —— 内联链式
+  ``SettingsDialog(...).cb_demo`` 会在表达式中间被 GC，shiboken 报
+  "Internal C++ object already deleted"（2026-09-15 踩过，tmp/_dbg_settings_dlg.py 复现）；
+* demo 快照来自 core.ui_demo（9 行），断言 recent 行数即可分辨数据源；
+* demo 沙盒 = 标注写内存（_MARKS / 负数 opp_deck_id），真库一字节不写；
+  ⚠️ 动了沙盒全局态必须 ``demo_reset_marks()`` 收尾，否则泄漏到别的测试。
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+import io
+from unittest import mock
+
+PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJ)
+
+try:
+    from PySide6.QtCore import QObject, QSettings, Qt, Signal
+    from PySide6.QtWidgets import QApplication, QLabel
+    HAVE_QT = True
+except ImportError:
+    HAVE_QT = False
+
+from ui import app as app_mod                         # noqa: E402
+from ui import opp_deck_manager                       # noqa: E402
+from core import deck_csv as deck_csv_mod             # noqa: E402
+from core import ui_demo as ui_demo_mod               # noqa: E402
+
+TEST_QSETTINGS = dict(organization='masterduel_test', application='M7_test')
+
+_APP = None
+
+
+def _app():
+    """QApplication 是进程级单例 —— 整个测试模块共用一份。"""
+    global _APP
+    if _APP is None:
+        _APP = QApplication.instance() or QApplication([])
+    return _APP
+
+
+class _FakeWin(object):
+    """记录 set_snapshot 的假悬浮窗。"""
+
+    def __init__(self):
+        self.snapshots = []
+        self.hidden = False          # 「×」→ 隐藏到托盘 的观察点
+
+    def set_snapshot(self, snap):
+        self.snapshots.append(snap)
+
+    def refresh_deck_banner(self, img_resolver=None):
+        """卡组确认条（2026-09-22）—— 假窗只记录调用。"""
+        self.banner_refreshes = getattr(self, 'banner_refreshes', 0) + 1
+
+    def hide(self):
+        self.hidden = True
+
+
+class _FakeTimer(object):
+    """记录 start/stop 的假定时器。"""
+
+    def __init__(self):
+        self.started = 0
+        self.stopped = 0
+
+    def start(self):
+        self.started += 1
+
+    def stop(self):
+        self.stopped += 1
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class SettingsPatchedTest(unittest.TestCase):
+    """公共基类：QSettings 指到测试专属键，结束 clear。"""
+
+    def setUp(self):
+        _app()
+        self._patch = mock.patch.object(
+            app_mod, 'settings',
+            lambda: QSettings(TEST_QSETTINGS['organization'],
+                              TEST_QSETTINGS['application']))
+        self._patch.start()
+        self.addCleanup(self._patch.stop)
+        # ★ i18n 的 QSettings 也指到测试专属键，并重置进程内语言缓存
+        #   （否则 tr() 读用户真机 ui/lang：en 机器上变英文 + 缓存毒化后续模块）
+        import ui.i18n as _i18n
+        self._i18n_patch = mock.patch.object(
+            _i18n, '_SETTINGS_FACTORY',
+            staticmethod(lambda: QSettings(TEST_QSETTINGS['organization'],
+                                           TEST_QSETTINGS['application'])))
+        self._i18n_patch.start()
+        self.addCleanup(self._i18n_patch.stop)
+        _i18n.reset_lang()
+        self.addCleanup(_i18n.reset_lang)
+
+        def _clear():
+            QSettings(TEST_QSETTINGS['organization'],
+                      TEST_QSETTINGS['application']).clear()
+        _clear()
+        self.addCleanup(_clear)
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class DemoFromSettingsTest(SettingsPatchedTest):
+    """demo_from_settings() —— QSettings 里 ui/demo 的读取。"""
+
+    def test_default_is_false(self):
+        self.assertFalse(app_mod.demo_from_settings())
+
+    def test_true_and_one_count(self):
+        for v in ('true', 'True', '1'):
+            app_mod.settings().setValue('ui/demo', v)
+            self.assertTrue(app_mod.demo_from_settings(), v)
+
+    def test_false_and_junk_count_as_false(self):
+        for v in ('false', '', 'junk'):
+            app_mod.settings().setValue('ui/demo', v)
+            self.assertFalse(app_mod.demo_from_settings(), v)
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class SetDemoModeTest(SettingsPatchedTest):
+    """MasterDuelUiApp.set_demo_mode —— 热切换的状态机。"""
+
+    def setUp(self):
+        super().setUp()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.db_path = os.path.join(self._tmp.name, 'masterduel.db')
+        self.win = _FakeWin()
+        self.timer = _FakeTimer()
+
+    def _appobj(self, demo, with_storage=False):
+        a = app_mod.MasterDuelUiApp.__new__(app_mod.MasterDuelUiApp)
+        a._demo = demo
+        a._db_path = self.db_path
+        a.storage = app_mod.Storage(self.db_path) if with_storage else None
+        a.last_key = None
+        a.win = self.win
+        a.timer = self.timer
+        return a
+
+    def _last_recent(self):
+        return self.win.snapshots[-1].recent
+
+    def test_leave_demo_creates_storage_starts_timer_real_snapshot(self):
+        a = self._appobj(demo=True)
+        a.set_demo_mode(False)
+        self.assertIsInstance(a.storage, app_mod.Storage)
+        self.assertEqual(self.timer.started, 1)
+        self.assertEqual(len(self._last_recent()), 0)      # 空库 = 空 recent
+        self.assertFalse(app_mod.demo_from_settings())
+
+    def test_enter_demo_swaps_to_sandbox_stops_timer_demo_snapshot(self):
+        a = self._appobj(demo=False, with_storage=True)
+        a.set_demo_mode(True)
+        # 沙盒包真库：选择器能完整走通，真库却一个字节不写（2026-09-15 起）
+        self.assertIsInstance(a.storage, app_mod.DemoSandboxStorage)
+        self.assertIsInstance(a.storage._real, app_mod.Storage)
+        self.assertEqual(self.timer.stopped, 1)
+        self.assertEqual(len(self._last_recent()), 9)      # demo 9 行全形态
+        self.assertTrue(app_mod.demo_from_settings())
+
+    def test_same_state_is_noop(self):
+        a = self._appobj(demo=True)
+        a.set_demo_mode(True)                              # 已是 demo，别动
+        self.assertEqual(self.timer.stopped, 0)
+        self.assertEqual(self.win.snapshots, [])
+
+    def test_roundtrip(self):
+        a = self._appobj(demo=False, with_storage=True)
+        a.set_demo_mode(True)
+        a.set_demo_mode(False)
+        self.assertIsInstance(a.storage, app_mod.Storage)
+        self.assertEqual(self.timer.started, 1)
+        self.assertEqual(self.timer.stopped, 1)
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class DemoGuardTest(SettingsPatchedTest):
+    """demo 模式下的守卫：tick 不探、标注进内存沙盒。"""
+
+    def setUp(self):
+        super().setUp()
+        # 动过 _MARKS / _SANDBOX_OPP 全局态必须清 —— 防泄漏到别的测试
+        self.addCleanup(ui_demo_mod.demo_reset_marks)
+
+    def _appobj(self, demo, storage=None):
+        a = app_mod.MasterDuelUiApp.__new__(app_mod.MasterDuelUiApp)
+        a._demo = demo
+        a._db_path = None
+        a.storage = storage
+        a.last_key = None
+        a.win = _FakeWin()
+        a.timer = _FakeTimer()
+        return a
+
+    def test_tick_is_noop_in_demo(self):
+        a = self._appobj(demo=True)
+
+        def _boom(_storage):
+            raise AssertionError('demo 模式不该探真库')
+
+        with mock.patch.object(app_mod.ui_state, 'probe', _boom):
+            a.tick()                                       # 不抛 = 提前返回了
+
+    def test_pick_deck_in_demo_full_sandbox_flow(self):
+        """demo 下选择器**完整走通**（2026-09-15 沙盒版，替代旧 info-box 拦截）。
+
+        搜 meta -> 选 -> 标注 全程：标注进内存沙盒、行上立即显示，
+        真库的 opp_decks / matches 一个字节不动。
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db = os.path.join(tmp.name, 'sandbox.db')
+        real = app_mod.Storage(db)
+        real.init_schema()
+        n_decks_before = len(real.list_opp_decks())
+        a = self._appobj(
+            demo=True,
+            storage=app_mod.DemoSandboxStorage(real))
+
+        fake_deck = {'name': 'Maliss', 'name_cn': '码丽丝',
+                     'aliases': ['Maliss']}
+
+        class _FakePanel(QObject):
+            """面板替身：不上屏，靠 `confirmed` 信号驱动（旧对话框是 exec 打桩）。"""
+
+            confirmed = Signal(object)
+            cancelled = Signal()
+
+            def __init__(self, *args, **kw):
+                super().__init__()          # parent 可能是测试桩（非 QObject），别传给 Qt
+                self.parent = kw.get('parent')
+
+            def show_near(self, anchor):
+                pass
+
+            def show(self):
+                pass
+
+        with mock.patch.object(app_mod, 'DeckSelectorPanel', _FakePanel):
+            a.on_pick_deck({'match_id': 'demo0003'}, anchor=None)
+            a._panel.confirmed.emit(fake_deck)          # 用户点了「确定」
+
+        # 1) 刷新过、仍是 demo 9 行
+        self.assertEqual(len(a.win.snapshots), 1)
+        self.assertEqual(len(a.win.snapshots[-1].recent), 9)
+        # 2) demo0003 行上立即显示标注（选择器里的显示名 = 中文名）
+        row3 = [r for r in a.win.snapshots[-1].recent
+                if r.get('match_id') == 'demo0003'][0]
+        self.assertTrue(row3.get('opp_known'))
+        self.assertEqual(row3.get('opp_deck'), '码丽丝')
+        # 3) 真库 opp_decks 行数不变（upsert 进了沙盒）
+        self.assertEqual(len(real.list_opp_decks()), n_decks_before)
+        # 4) 沙盒视角多出负数 id 条目
+        ids = [r[0] for r in a.storage.list_opp_decks()]
+        self.assertTrue(any(i < 0 for i in ids))       # 沙盒负数条目在
+
+    # ------------------------------------------------ 结果格修正（Bug 2 兜底）
+    class _Act(QObject):
+        triggered = Signal(bool)
+
+    class _AutoMenu(QObject):
+        """QMenu 替身：记下菜单项，`exec` 时**自动点指定那一项**（模拟用户选择）。"""
+
+        def __init__(self, parent=None):
+            super().__init__()
+            self.items = []
+
+        def addAction(self, label):
+            act = DemoGuardTest._Act()
+            self.items.append((label, act))
+            return act
+
+        def exec(self, pos=None):                              # noqa: A003
+            for label, act in self.items:
+                if label == self._auto:
+                    act.triggered.emit(False)
+            return None
+
+    def _auto_menu(self, label):
+        cls = self._AutoMenu
+
+        class _Menu(cls):
+            _auto = label
+
+        return _Menu
+
+    def test_pick_result_writes_manual(self):
+        """点结果格 → 菜单选中 → 写库（`result_src='manual'`，人工优先）。"""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        st = app_mod.Storage(os.path.join(tmp.name, 'a.db'))
+        st.init_schema()
+        st.upsert_match({'match_id': 'm1', 'started_at': '2026-09-18 23:00:00',
+                         'origin': 'log', 'mode': 'pvp', 'result': None})
+        a = self._appobj(demo=False, storage=st)
+
+        with mock.patch.object(app_mod, 'QMenu', self._auto_menu('失败')):
+            a.on_pick_result(st.get_match('m1'))
+
+        row = st.get_match('m1')
+        self.assertEqual(row['result'], 'Lose')
+        self.assertEqual(row['result_src'], 'manual')
+        self.assertEqual(len(a.win.snapshots), 1)              # 改完立刻重画
+
+    def test_pick_result_without_match_id_is_noop(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        st = app_mod.Storage(os.path.join(tmp.name, 'b.db'))
+        st.init_schema()
+        a = self._appobj(demo=False, storage=st)
+        with mock.patch.object(app_mod, 'QMenu', self._auto_menu('失败')):
+            a.on_pick_result({})                               # 没有 match_id
+        self.assertEqual(a.win.snapshots, [])
+
+    def test_clear_result_writes_null(self):
+        """「清除结果」= 撤销修正（result 与 src 一起置 NULL，自动解析可以再填）。"""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        st = app_mod.Storage(os.path.join(tmp.name, 'c.db'))
+        st.init_schema()
+        st.upsert_match({'match_id': 'm1', 'started_at': '2026-09-18 23:00:00',
+                         'origin': 'log', 'mode': 'pvp', 'result': 'Win'})
+        a = self._appobj(demo=False, storage=st)
+        with mock.patch.object(app_mod, 'QMenu', self._auto_menu('清除结果')):
+            a.on_pick_result(st.get_match('m1'))
+        row = st.get_match('m1')
+        self.assertIsNone(row['result'])
+        self.assertIsNone(row['result_src'])
+
+    def test_attach_suggestions_accepts_list_revealed_ids(self):
+        """★ 真库里 `opp_revealed_ids` **读出后是 list**（JSON 列被 load 成对象），
+        而 list 不能当字典键 —— 2026-09-16 实机启动就崩在这（demo 里是字符串，
+        所以单测全绿也拦不住）。缓存键必须归一化。
+        """
+        a = app_mod.MasterDuelUiApp.__new__(app_mod.MasterDuelUiApp)
+        a._sug_cache = {}
+        a._guess_index = None                      # 没有参照库 -> 建议恒为 None
+        a._guess_groups = None
+        rows = [{'opp_known': False, 'opp_revealed_ids': [22568, 22582]},
+                {'opp_known': False, 'opp_revealed_ids': '[1, 2]'},
+                {'opp_known': True, 'opp_revealed_ids': None}]
+        a._attach_suggestions(rows)                # 不许抛
+        self.assertEqual(len(a._sug_cache), 2)     # 已标注那行不进缓存（设计如此）
+        self.assertTrue(all(k == k for k in a._sug_cache))   # 键必须可哈希
+
+    def test_guess_for_fills_display_names_from_meta(self):
+        """★ 候选必须带上 meta 清单的显示字段 —— 不补的话 `deck_display()`
+        回落到英文站内名：悬浮窗建议名是英文、**一键采纳落库的 `opp_deck_name`
+        也是英文**（2026-09-16 实机：库里全成了 'Blue-Eyes'/'Exosister'）。
+        """
+        a = app_mod.MasterDuelUiApp.__new__(app_mod.MasterDuelUiApp)
+        a._sug_cache = {}
+        a._guess_index = {'Blue-Eyes': {}}
+        a._guess_groups = None
+        # 打桩 suggest()：返回只有英文名的打分候选（deck_guess 的真实形态）
+        fake_cand = [{'name': 'Blue-Eyes', 'hits': 3, 'revealed': 5,
+                      'confidence': 0.6, 'bayes': -1.0, 'tier': 1,
+                      'source_name': 'Blue-Eyes', 'in_prefill_set': True,
+                      'explained': 3, 'sample': 10, 'prefill': True}]
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        st = app_mod.Storage(os.path.join(tmp.name, 'g.db'))
+        st.init_schema()
+        st.replace_meta_decks([{'name': 'Blue-Eyes', 'name_cn': '青眼白龙',
+                                'tier': 1}])
+        try:
+            with mock.patch.object(app_mod.deck_guess, 'suggest',
+                                   return_value=fake_cand):
+                a.storage = st
+                out = a.guess_for({'opp_revealed_ids': [1, 2, 3]})
+        finally:
+            st.close() if hasattr(st, 'close') else None
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]['name'], 'Blue-Eyes')
+        # ★ meta 清单里有中文名 -> 候选必须补上 -> deck_display 出中文
+        self.assertTrue(out[0].get('name_cn'), '候选缺 name_cn：%r' % out[0])
+        from ui.selector import deck_display
+        self.assertNotEqual(deck_display(out[0], 'cn'), 'Blue-Eyes')
+
+    def test_refresh_in_demo_uses_demo_snapshot(self):
+        a = self._appobj(demo=True)
+        a.refresh()
+        self.assertEqual(len(a.win.snapshots[-1].recent), 9)
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class CloseActionTest(SettingsPatchedTest):
+    """★ 用户 2026-09-15：标题条「×」按设置关；**没设置过就先弹一次提示**（带「记住」）。"""
+
+    def _appobj(self):
+        a = app_mod.MasterDuelUiApp.__new__(app_mod.MasterDuelUiApp)
+        a.storage = None
+        a.win = _FakeWin()
+        a.quit = lambda: setattr(a.win, 'quit_called', True)
+        return a
+
+    def test_default_setting_is_tray_and_marked_unset(self):
+        action, explicit = app_mod.close_action()
+        self.assertEqual(action, 'tray')
+        self.assertFalse(explicit, '从没设置过 = 还没明确选择（要弹提示）')
+
+    def test_explicit_setting_is_used(self):
+        app_mod.settings().setValue('ui/close_action', 'quit')
+        self.assertEqual(app_mod.close_action(), ('quit', True))
+
+    def test_tray_action_hides_window(self):
+        app_mod.settings().setValue('ui/close_action', 'tray')
+        a = self._appobj()
+        a.on_close_requested()
+        self.assertTrue(a.win.hidden)
+        self.assertFalse(getattr(a.win, 'quit_called', False))
+
+    def test_quit_action_quits(self):
+        app_mod.settings().setValue('ui/close_action', 'quit')
+        a = self._appobj()
+        a.on_close_requested()
+        self.assertTrue(getattr(a.win, 'quit_called', False))
+        self.assertFalse(a.win.hidden)
+
+    def test_first_time_asks_and_remembers(self):
+        """第一次点 × → 弹提示；勾了「记住」就把选择落库。"""
+        a = self._appobj()
+        a.ask_close_action = lambda: ('quit', True)
+        a.on_close_requested()
+        self.assertTrue(getattr(a.win, 'quit_called', False))
+        self.assertEqual(app_mod.settings().value('ui/close_action'), 'quit')
+
+    def test_first_time_without_remember_keeps_asking(self):
+        a = self._appobj()
+        a.ask_close_action = lambda: ('tray', False)
+        a.on_close_requested()
+        self.assertTrue(a.win.hidden)
+        self.assertIsNone(app_mod.settings().value('ui/close_action'),
+                          '没勾记住就不该落库')
+
+    def test_dismissed_dialog_does_nothing(self):
+        """把关窗对话框直接关掉 → 什么都不做（不隐藏、不退出）。"""
+        a = self._appobj()
+        a.ask_close_action = lambda: (None, False)
+        a.on_close_requested()
+        self.assertFalse(a.win.hidden)
+        self.assertFalse(getattr(a.win, 'quit_called', False))
+
+    def test_dashboard_has_the_close_choice(self):
+        """设置里要有「当窗口关闭时」，两个选项都要在（用户要求；09-26 起在看板里）。"""
+        from ui import theme
+        self.assertEqual([k for k, _l in theme.CLOSE_ACTIONS], ['tray', 'quit'])
+        # 看板侧行为在 tests/test_ui_dashboard.py 的 close_choice 用例里锁 ——
+        # 这里只锁常量单一来源（ui.theme），别再出现第二份选项表。
+        self.assertEqual(theme.DEFAULT_CLOSE_ACTION, 'tray')
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class CloseDialogTest(SettingsPatchedTest):
+    """★ 参考图那种「点击关闭后」对话框（2026-09-15 用户：「你的文字太啰嗦」）。
+
+    两个**单选项** + 一个「不再提示」勾选 + 取消/确认；默认选「退出主程序」。
+    """
+
+    def test_shape_and_defaults(self):
+        dlg = app_mod.CloseDialog()
+        self.assertTrue(dlg.rb_quit.isChecked(), '默认选「退出主程序」（参考图）')
+        self.assertFalse(dlg.rb_tray.isChecked())
+        self.assertEqual(dlg.choice(), 'quit')
+        self.assertFalse(dlg.remember(), '「不再提示」默认不勾')
+        self.assertIn('不再提示', dlg.cb_remember.text())
+        self.assertEqual(dlg.btn_ok.text(), '确认')
+        self.assertEqual(dlg.btn_cancel.text(), '取消')
+        texts = [lab.text() for lab in dlg.findChildren(QLabel)]
+        self.assertIn('点击关闭后', texts)
+        dlg.deleteLater()
+
+    def test_radios_are_exclusive(self):
+        dlg = app_mod.CloseDialog()
+        dlg.rb_tray.setChecked(True)
+        self.assertEqual(dlg.choice(), 'tray')
+        self.assertFalse(dlg.rb_quit.isChecked())
+        dlg.cb_remember.setChecked(True)
+        self.assertTrue(dlg.remember())
+        dlg.deleteLater()
+
+    def test_dialog_is_frameless_with_its_own_dark_title(self):
+        """★ 用户 2026-09-15 点头：「白色原生标题栏换成自绘暗色标题」。
+
+        = 无边框 + 半透明圆角底 + **自绘的 ×**（复用 `floating.WindowButton`）。
+        """
+        dlg = app_mod.CloseDialog()
+        self.assertTrue(dlg.windowFlags() & Qt.FramelessWindowHint)
+        self.assertTrue(dlg.testAttribute(Qt.WA_TranslucentBackground))
+        self.assertEqual(dlg.btn_close.kind, 'close')
+        self.assertLessEqual(dlg.width(), 320, '要小')
+        dlg.deleteLater()
+
+    def test_title_bar_close_button_rejects(self):
+        """右上那个 × = 取消（不执行任何动作）。"""
+        dlg = app_mod.CloseDialog()
+        dlg.btn_close.clicked.emit()
+        self.assertEqual(dlg.result(), app_mod.QDialog.Rejected)
+        dlg.deleteLater()
+
+    def test_cancel_returns_nothing(self):
+        """取消 = 什么都不做（旧 QMessageBox 是「点按钮立刻执行」，没有确认这一步）。"""
+        a = self._appobj_ask()
+        with mock.patch.object(app_mod, 'CloseDialog', _FakeCloseDlg(
+                accepted=False, choice='quit', remember=True)):
+            self.assertEqual(a.ask_close_action(), (None, False))
+
+    def test_confirm_returns_choice(self):
+        a = self._appobj_ask()
+        with mock.patch.object(app_mod, 'CloseDialog', _FakeCloseDlg(
+                accepted=True, choice='tray', remember=True)):
+            self.assertEqual(a.ask_close_action(), ('tray', True))
+
+    def _appobj_ask(self):
+        a = app_mod.MasterDuelUiApp.__new__(app_mod.MasterDuelUiApp)
+        a.win = None
+        return a
+
+
+class _FakeCloseDlg(object):
+    """CloseDialog 替身：`exec()` 打桩，避免测试里真弹模态框。"""
+
+    def __init__(self, accepted=True, choice='quit', remember=False):
+        self._accepted = accepted
+        self._choice = choice
+        self._remember = remember
+
+    def __call__(self, parent=None):            # 当类用：mock.patch 里替换的是类
+        return self
+
+    def exec(self):
+        return app_mod.QDialog.Accepted if self._accepted else app_mod.QDialog.Rejected
+
+    def choice(self):
+        return self._choice
+
+    def remember(self):
+        return self._remember
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class NewDecksFeatureTest(SettingsPatchedTest):
+    """★ S3.5「获取新卡组名」做到设置里（用户 2026-09-15 定 + 选「乙」）。"""
+
+    def test_new_deck_names_skips_the_ones_already_in_the_table(self):
+        """覆盖表里有的（站内英文名那列）就不该再问 —— 用真表只读验。"""
+        fresh = app_mod.new_deck_names(
+            ['Branded', 'Dracotail', '一个不存在的卡组xyz'],
+            app_mod.CN_CSV)
+        self.assertNotIn('Branded', fresh)
+        self.assertNotIn('Dracotail', fresh)
+        self.assertIn('一个不存在的卡组xyz', fresh)
+
+    def test_missing_table_does_not_crash(self):
+        self.assertEqual(app_mod.new_deck_names(['X'], '不存在的文件.csv'), ['X'])
+
+    def test_new_decks_dialog_picks_checked_with_names(self):
+        """「乙」：每行一个中文名输入框 + 勾选；`picked()` 只回勾上的。"""
+        class _Imgs:
+            def resolve(self, _name):
+                return ''
+
+        dlg = app_mod.NewDecksDialog(['Alpha', 'Beta'], _Imgs())
+        self.assertEqual([n for n, _cb, _e in dlg.rows], ['Alpha', 'Beta'])
+        for _n, cb, _e in dlg.rows:
+            cb.setChecked(False)
+        name, cb, edit = dlg.rows[1]
+        cb.setChecked(True)
+        edit.setText(' 贝塔 ')
+        self.assertEqual(dlg.picked(), [(name, '贝塔')])
+        dlg.deleteLater()
+
+
+class _FakeFetchDlg(object):
+    """`_show_new_decks` 认的最小对话框（只有状态行）。"""
+
+    def __init__(self):
+        self.fetch_status = QLabel()
+
+
+class _StubRunner(QObject):
+    """不真起进程的 `ScriptRunner` 替身（手动 `done.emit`）。"""
+
+    done = Signal(int)
+
+    def __init__(self, script, args=None):
+        super().__init__()
+        self.script = script
+        self.args = list(args or [])
+        self.started = False
+
+    def running(self):
+        return self.started
+
+    def start(self):
+        self.started = True
+
+
+def _cover_csv(tmpdir, rows=(('Branded', '', '烙印', '', '', 'Tier2', '', ''),
+                             ('Odion', '', '利希德', '', '', 'Trending', 'Y', ''))):
+    """造一份**临时**覆盖表（8 列表头 + 两行）。"""
+    path = os.path.join(tmpdir, 'deck_name_cn.csv')
+    with io.open(path, 'w', encoding='utf-8-sig', newline='') as f:
+        f.write(','.join(deck_csv_mod.COLUMNS) + '\n')
+        for r in rows:
+            f.write(','.join(r) + '\n')
+    return path
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class OppDeckManagerTest(SettingsPatchedTest):
+    """「卡组名管理」（D3 §2）—— 改**覆盖表 CSV**，保存后自动 `--cn-only`。
+
+    ⚠️ D3 §2 前这是 `OppDeckDialog`（**弹窗**，Q14）；现在它是内嵌在
+    「卡组」页页签 1 里的 `OppDeckManager`（`ui/opp_deck_manager.py`）。
+    行为（读表 / 编辑 / 保存 / 搜索 / 贴库）**一条没变**，所以测试照搬。
+    """
+
+    def _dlg(self, path):
+        made = []
+
+        def factory(script, args):
+            r = _StubRunner(script, args)
+            made.append(r)
+            return r
+        dlg = opp_deck_manager.OppDeckManager(csv_path=path,
+                                              runner_factory=factory)
+        return dlg, made
+
+    def test_rows_loaded_from_csv(self):
+        d = tempfile.mkdtemp(prefix='opp-decks-')
+        self.addCleanup(shutil.rmtree, d, True)
+        dlg, _made = self._dlg(_cover_csv(d))
+        self.assertEqual(len(dlg.rows_ui), 2)
+        self.assertEqual(dlg.rows_ui[0].cn.text(), '烙印')
+        self.assertTrue(dlg.rows_ui[1].hidden.isChecked(), 'Odion 隐藏=Y')
+        self.assertFalse(dlg.rows_ui[0].hidden.isChecked())
+        dlg.deleteLater()
+
+    def test_edit_and_save_writes_csv_and_pushes(self):
+        d = tempfile.mkdtemp(prefix='opp-decks-')
+        self.addCleanup(shutil.rmtree, d, True)
+        path = _cover_csv(d)
+        dlg, made = self._dlg(path)
+        dlg.rows_ui[0].cn.setText(' 烙印之怒 ')
+        dlg.rows_ui[0].alias.setText('Brandy / 烙')
+        dlg.save()
+        self.assertTrue(made and made[0].started, '保存后要接着把表贴进库')
+        self.assertEqual(made[0].script, 'tools/fetch_meta_decks.py')
+        self.assertEqual(made[0].args, ['--cn-only'])
+        header, rows = deck_csv_mod.read(path)
+        idx = deck_csv_mod.index_map(header)
+        by_name = {deck_csv_mod.get(r, idx, '站内英文名'): r for r in rows}
+        self.assertEqual(deck_csv_mod.get(by_name['Branded'], idx, '中文名'),
+                         '烙印之怒', 'strip 过的值才落盘')
+        self.assertEqual(deck_csv_mod.get(by_name['Branded'], idx, '别名'),
+                         'Brandy / 烙')
+        dlg.deleteLater()
+
+
+    def test_unchecking_hidden_persists(self):
+        d = tempfile.mkdtemp(prefix='opp-decks-')
+        self.addCleanup(shutil.rmtree, d, True)
+        path = _cover_csv(d)
+        dlg, made = self._dlg(path)
+        dlg.rows_ui[1].hidden.setChecked(False)
+        dlg.save()
+        made[0].done.emit(0)
+        header, rows = deck_csv_mod.read(path)
+        idx = deck_csv_mod.index_map(header)
+        by_name = {deck_csv_mod.get(r, idx, '站内英文名'): r for r in rows}
+        self.assertEqual(deck_csv_mod.get(by_name['Odion'], idx, '隐藏'), '')
+        self.assertIn('已保存并贴进库', dlg.status.text())
+        dlg.deleteLater()
+
+    def test_search_filter_counts(self):
+        d = tempfile.mkdtemp(prefix='opp-decks-')
+        self.addCleanup(shutil.rmtree, d, True)
+        dlg, _made = self._dlg(_cover_csv(d))
+        dlg.edit_search.setText('烙印')
+        self.assertIn('1 / 2', dlg.status.text())
+        self.assertTrue(dlg.rows_ui[0].matches('烙印'))
+        self.assertFalse(dlg.rows_ui[1].matches('烙印'))
+        self.assertTrue(dlg.rows_ui[1].matches('Odion'), '站内英文名也算')
+        dlg.deleteLater()
+
+    def test_save_failure_does_not_raise(self):
+        """写盘失败（比如目录根本不存在）只报状态，不炸、不起进程。"""
+        d = tempfile.mkdtemp(prefix='opp-decks-')
+        self.addCleanup(shutil.rmtree, d, True)
+        dlg, made = self._dlg(os.path.join(d, 'nope', 'deck_name_cn.csv'))
+        dlg.save()
+        self.assertEqual(made, [])
+        self.assertIn('写盘失败', dlg.status.text())
+        dlg.deleteLater()
+
+    def test_push_failure_reports_exit_code(self):
+        d = tempfile.mkdtemp(prefix='opp-decks-')
+        self.addCleanup(shutil.rmtree, d, True)
+        path = _cover_csv(d)
+        dlg, made = self._dlg(path)
+        dlg.save()
+        made[0].done.emit(3)
+        self.assertIn('退出码 3', dlg.status.text())
+        dlg.deleteLater()
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class ShowNewDecksWritePathTest(SettingsPatchedTest):
+    """★ 回归锁：`_show_new_decks` 一路走到**写盘**。
+
+    以前这里用了个全仓未定义的 `CSV_PATH`（应为 `CN_CSV`），一写就 NameError；
+    旧测试只测纯函数与对话框、没走写盘那步，所以一直全绿 —— 这条补上那个洞。
+    """
+
+    def test_writes_the_new_deck_into_the_cover_table(self):
+        d = tempfile.mkdtemp(prefix='cn-csv-')
+        self.addCleanup(shutil.rmtree, d, True)
+        csv_path = _cover_csv(d)
+        a = app_mod.MasterDuelUiApp.__new__(app_mod.MasterDuelUiApp)
+        a._demo = False
+        pushed = []
+        a._push_cover_table = lambda dlg: pushed.append(True)
+
+        class _FakeStorage(object):
+            def list_meta_decks(self, *args, **kw):
+                return [{'name': 'Branded'}, {'name': 'Fresh Deck'}]
+
+        a.storage = _FakeStorage()
+
+        class _FakePicker(object):
+            def __init__(self, names, imgs, parent=None):
+                pass
+
+            def exec(self):
+                return app_mod.QDialog.Accepted
+
+            def picked(self):
+                return [('Fresh Deck', '新卡组')]
+
+        dlg = _FakeFetchDlg()
+        with mock.patch.object(app_mod, 'CN_CSV', csv_path), \
+                mock.patch.object(app_mod, 'NewDecksDialog', _FakePicker), \
+                mock.patch.object(app_mod, 'DeckImages', lambda storage: None):
+            a._show_new_decks(dlg)
+        self.assertTrue(pushed, '写完覆盖表要接着跑 --cn-only 进库')
+        header, rows = deck_csv_mod.read(csv_path)
+        idx = deck_csv_mod.index_map(header)
+        names = [deck_csv_mod.get(r, idx, '站内英文名') for r in rows]
+        self.assertIn('Fresh Deck', names)
+        fresh = rows[names.index('Fresh Deck')]
+        self.assertEqual(deck_csv_mod.get(fresh, idx, '中文名'), '新卡组')
+        self.assertEqual(deck_csv_mod.get(fresh, idx, '备注'), '设置页新增')
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class AutoShowFloatingTest(SettingsPatchedTest):
+    """游戏启动 → 自动弹悬浮窗（2026-10-05）。
+
+    锁状态机：只在 **False→True 跳变**弹（首拍建基线不弹、持续运行不重复、
+    手动收起后游戏没退不打扰）；设置关了就不弹。
+    """
+
+    class _ShowWin(object):
+        def __init__(self):
+            self.visible = False
+            self.shown = 0
+
+        def isVisible(self):
+            return self.visible
+
+        def show(self):
+            self.visible = True
+            self.shown += 1
+
+        def raise_(self):
+            pass
+
+    def setUp(self):
+        super().setUp()
+        self.win = self._ShowWin()
+
+    def _app(self, running):
+        a = app_mod.MasterDuelUiApp.__new__(app_mod.MasterDuelUiApp)
+        a._demo = False
+        a.win = self.win
+        a._game_was_running = None
+        a._game_running = lambda: running
+        return a
+
+    def test_pops_on_rising_edge_only(self):
+        a = self._app(running=True)
+        a._auto_show_tick()                    # 首拍建基线：不弹
+        self.assertEqual(self.win.shown, 0)
+        a._game_was_running = False            # 模拟「已见过游戏没跑」
+        a._auto_show_tick()                    # False→True：弹
+        self.assertEqual(self.win.shown, 1)
+        a._auto_show_tick()                    # 仍 True：不重复
+        self.assertEqual(self.win.shown, 1)
+        self.win.visible = False               # 用户手动收起，游戏没退
+        a._auto_show_tick()
+        self.assertEqual(self.win.shown, 1, '没有新跳变不该再弹')
+
+    def test_setting_off_disables(self):
+        app_mod.settings().setValue('ui/auto_show_floating', '0')
+        a = self._app(running=True)
+        a._game_was_running = False
+        a._auto_show_tick()
+        self.assertEqual(self.win.shown, 0)
+
+
+
+
+if __name__ == '__main__':
+    unittest.main()

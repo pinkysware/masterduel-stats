@@ -1,0 +1,18 @@
+NOTICE / 第三方素材与许可说明
+================================
+
+本仓库的**代码**以 GPL-3.0 授权（见 LICENSE）。
+以下**第三方素材不适用 GPL**，版权归各自权利方：
+
+* data/deck_images_custom/、data/deck_images/（如用户下载）
+  —— 《游戏王 Master Duel》卡绘，版权归 KONAMI；
+  仅限个人学习用途，非商业；收到权利方通知即撤。
+* data/rank_icons/、data/mode_icons/、data/coin_icons/
+  —— 段位/模式图标取自 Untapped（untapped.gg）公开静态资源，版权归其权利方；
+  仅限个人学习用途，非商业；收到权利方通知即撤。
+* data/fonts/ —— Inter 字体，SIL Open Font License 1.1
+  （许可全文见 data/fonts/OFL-Inter.txt）。
+* data/card_names.json、data/card_data.json —— 由 ygocdb（ygocdb.com）
+  公开数据与游戏内卡表合成，数据版权归各自权利方。
+
+本工具为非官方粉丝工具，与 KONAMI、Untapped 均无关联。

@@ -1,0 +1,80 @@
+# 运行时数据不入库（M2 起 SQLite 是唯一真源）
+data/masterduel.db
+data/masterduel.db-shm
+data/masterduel.db-wal
+
+# 本机归档数据与游标（含唯一历史战绩，已由 masterduel.db 承载）
+data/archive/
+
+# 反推卡组的参照库（masterduelmeta 月度快照，`tools/fetch_mdm_decks.py` 可重新抓）
+data/mdm_deck_cards.json
+
+# Untapped API 原始快照（2MB+，随时可重新抓）
+data/untapped_api_raw.json
+
+# 卡组覆盖表的只读导出（给用户看的，真源是 data/deck_name_cn.csv，可随时重新生成）
+data/deck_name_cn.xlsx
+
+# 本地卡组图（可从 masterduelmeta 重新下载，`tools/fetch_meta_decks.py`）
+data/deck_images/
+
+# 上游卡表原始包（13MB+，可从 ygocdb / GetDeck 重新下载；代码用的是 data/card_data.json）
+ygocdb.com.cards/
+ygocdb.com.cards.zip
+
+# yaml-yugi 的 Master Duel 全量导出（82MB，yugipedia 抓的；**没有卡 id**，
+# 见 docs/数据源裁定.md —— 只评估过、没采用，不入库）
+master-duel-raw.json
+
+# 临时实验文件
+tmp/
+
+# Python
+__pycache__/
+*.pyc
+
+# 悬浮窗单实例锁（运行时由 QLockFile 创建，pids/日志在已忽略的 data/archive/）
+data/.duel_ui.lock
+
+# 「当前卡组」状态（编辑卡组界面读到的那套；本机运行时状态，重进编辑界面即可重建）
+data/my_deck.json
+
+# 段位推断状态（`core/rank_state.py` 模块头写明「本机数据，不入库」；探测一次即可重建）
+data/rank_state.json
+
+# 礼盒看板的运行时缓存（点「读取礼盒」时写，随时可再生）
+data/present_box_cache.json
+
+# 单卡卡绘缓存（CDN 按需下、随时可再生；见 core/card_art.py）
+data/card_art/
+
+# 导出产物（看板「导出」页写出来的；`ui_state.export_default_name()` 的命名）
+duel_export_*.csv
+duel_export_*.json
+
+# ---- 2026-10-05 发布审查：个人/本机文件不进仓库 ----
+p.json
+data/untapped_ids.json
+data/rank_state_writes.log
+
+# ---- 发布仓库补充（2026-10-05）----
+# 运行时个人状态 / 缓存（发布版不含任何个人数据）
+data/my_deck.json
+data/rank_state.json
+data/rank_state_writes.log
+data/present_box_cache.json
+data/untapped_api_raw.json
+data/untapped_ids.json
+data/card_art/
+data/deck_images/
+data/deck_name_cn.xlsx
+p.json
+tmp/
+.workbuddy/
+.workbuddy-ai/
+AGENTS.md
+docs/
+.zcode/
+.zcodeignore
+__pycache__/
+*.pyc

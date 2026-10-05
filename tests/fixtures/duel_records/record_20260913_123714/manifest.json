@@ -1,0 +1,1932 @@
+{
+ "saved_at": "2026-09-13 12:53:40",
+ "note": "骰子拉力",
+ "instance": "0x1cdf158f000",
+ "element_sizes": {
+  "ShowAction": 32,
+  "ShowTurn": 24,
+  "ShowPhase": 4,
+  "ShowText": 4,
+  "ChoiceFirstPlayer": 4,
+  "MoveMultiHeader": 32,
+  "MoveMulti": 8
+ },
+ "unknown_stride_max": 32,
+ "logbase_element": 32,
+ "partial": true,
+ "logbase": {
+  "size": 462,
+  "entries": [
+   {
+    "label": "ShowFirstPlayer",
+    "dataindex": 0
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "CardMoveMultiHeader",
+    "dataindex": 0
+   },
+   {
+    "label": "CardMoveMulti",
+    "dataindex": 0
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "CardMoveMultiHeader",
+    "dataindex": 1
+   },
+   {
+    "label": "CardMoveMulti",
+    "dataindex": 1
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 0
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 0
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowTurn",
+    "dataindex": 0
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 0
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 1
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 2
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 1
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 2
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 2
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 3
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 3
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 3
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowTurn",
+    "dataindex": 1
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 4
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 4
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 5
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 6
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 4
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 5
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 5
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 6
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 0
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 6
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 7
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 0
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 7
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 8
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 1
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 2
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 8
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 9
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 9
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 10
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 3
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 10
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 11
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 11
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 12
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 4
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 12
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 13
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 13
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 14
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 5
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 14
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 15
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 2
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 15
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 16
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 3
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 16
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 17
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 6
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 7
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 17
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 18
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 18
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 19
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 8
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 19
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 20
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 4
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 20
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 21
+   },
+   {
+    "label": "ShowText",
+    "dataindex": 0
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 9
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 21
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 22
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 10
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 22
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 23
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 23
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 24
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 11
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 25
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 7
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowTurn",
+    "dataindex": 2
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 8
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 24
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 26
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 9
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 10
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 25
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 27
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 11
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowTurn",
+    "dataindex": 3
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 12
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 28
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 13
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 14
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 26
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 29
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 27
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 30
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 5
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 28
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 31
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 12
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 29
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 32
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 30
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 33
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 13
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 31
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 34
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 15
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 35
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 32
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 36
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 33
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 37
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 6
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 34
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 38
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 7
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 35
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 39
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 14
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 36
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 40
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 41
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 42
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 16
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 43
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 17
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowTurn",
+    "dataindex": 4
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 18
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 37
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 44
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 19
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 20
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 38
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 45
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 15
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 39
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 46
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 16
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 40
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 47
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 17
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 41
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 48
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 42
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 49
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 18
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 43
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 50
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 19
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 44
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 51
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 8
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 45
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 52
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 9
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 46
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 53
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 20
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 47
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 54
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 21
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 48
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 55
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 49
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 56
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 22
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 50
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 57
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 23
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 51
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 58
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 10
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 52
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 59
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 53
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 60
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 54
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 61
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 55
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 62
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 56
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 63
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 57
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 64
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 58
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 65
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 59
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 66
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 60
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 67
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 61
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 68
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 62
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 69
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 24
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 63
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 70
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 64
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 71
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 65
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 72
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 66
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 73
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 25
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 67
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 74
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 68
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 75
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 11
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 69
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 76
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 26
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 70
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 77
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 27
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 71
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 78
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 72
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 79
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 73
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 80
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 74
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 81
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 28
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 75
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 82
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 21
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 83
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 84
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 76
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 85
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 22
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 77
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 86
+   },
+   {
+    "label": "ShowText",
+    "dataindex": 1
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 29
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 78
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 87
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 79
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 88
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 80
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 89
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 81
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 90
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 23
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 82
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 91
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 83
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 92
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowTurn",
+    "dataindex": 5
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 24
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 93
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 25
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 26
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 84
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 94
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 12
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 85
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 95
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 30
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 86
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 96
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 31
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 87
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 97
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 88
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 98
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 89
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 99
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 32
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 90
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 100
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 91
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 101
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 33
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 92
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 102
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 93
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 103
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 94
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 104
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 95
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 105
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 34
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 96
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 106
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 97
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 107
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 35
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 98
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 108
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 99
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 109
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 13
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 100
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 110
+   },
+   {
+    "label": "ShowText",
+    "dataindex": 2
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 36
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 101
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 111
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 102
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 112
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 37
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 103
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 113
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 114
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 104
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 115
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 105
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 116
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 14
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 106
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 117
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 38
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 107
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 118
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 27
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 119
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 120
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 108
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 121
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 122
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 123
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 28
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 29
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowTurn",
+    "dataindex": 6
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 30
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 109
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 124
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 31
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 32
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 110
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 125
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 111
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 126
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 39
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 112
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 127
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 113
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 128
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 114
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 129
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 15
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 115
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 130
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 16
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 116
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 131
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 40
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 117
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 132
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 118
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 133
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 119
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 134
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 120
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 135
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 41
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 121
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 136
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 122
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 137
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 123
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 138
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 124
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 139
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 42
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 140
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 125
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 141
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 126
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 142
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 127
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 143
+   },
+   {
+    "label": "ShowPhase",
+    "dataindex": 33
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 144
+   },
+   {
+    "label": "SeparateLine",
+    "dataindex": -1
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 128
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 145
+   },
+   {
+    "label": "ShowTag",
+    "dataindex": 17
+   },
+   {
+    "label": "ShowCardName",
+    "dataindex": 129
+   },
+   {
+    "label": "ShowAction",
+    "dataindex": 146
+   },
+   {
+    "label": "ShowChain",
+    "dataindex": 43
+   }
+  ]
+ },
+ "payload": {
+  "ShowTurn": {
+   "count": 7,
+   "stride": 24,
+   "bin": "m_DataList_ShowTurn.bin",
+   "bytes": 168
+  },
+  "ShowAction": {
+   "count": 147,
+   "stride": 32,
+   "bin": "m_DataList_ShowAction.bin",
+   "bytes": 4704
+  },
+  "ShowChain": {
+   "count": 44,
+   "stride": null,
+   "bin": "m_DataList_ShowChain.bin",
+   "bytes": 2048
+  },
+  "ShowCardName": {
+   "count": 130,
+   "stride": null,
+   "bin": "m_DataList_ShowCardName.bin",
+   "bytes": 8192
+  },
+  "ShowText": {
+   "count": 3,
+   "stride": 4,
+   "bin": "m_DataList_ShowText.bin",
+   "bytes": 12
+  },
+  "ShowPhase": {
+   "count": 34,
+   "stride": 4,
+   "bin": "m_DataList_ShowPhase.bin",
+   "bytes": 136
+  },
+  "ShowTag": {
+   "count": 18,
+   "stride": null,
+   "bin": "m_DataList_ShowTag.bin",
+   "bytes": 1024
+  },
+  "MoveMultiHeader": {
+   "count": 2,
+   "stride": 32,
+   "bin": "m_DataList_MoveMultiHeader.bin",
+   "bytes": 64
+  },
+  "MoveMulti": {
+   "count": 2,
+   "stride": 8,
+   "bin": "m_DataList_MoveMulti.bin",
+   "bytes": 16
+  },
+  "ChoiceFirstPlayer": {
+   "count": 1,
+   "stride": 4,
+   "bin": "m_DataList_ChoiceFirstPlayer.bin",
+   "bytes": 4
+  }
+ }
+}
