@@ -79,3 +79,5 @@ docs/
 .zcodeignore
 __pycache__/
 *.pyc
+
+python_path.txt
