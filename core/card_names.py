@@ -133,6 +133,12 @@ def count(table=None):
 #: ygocdb 原始卡表（项目根下的快照，gitignore）
 YGOCDB_PATH = os.path.join(PROJ, 'ygocdb.com.cards', 'cards.json')
 
+#: **精简卡表**（`data/card_index.json`，随发布仓库附带）—— 只留运行时真正要的三个
+#: 字段（`id` = Konami 密码 / `en_name` / `data.type`），由
+#: `tools/build_card_index.py` 从上面那份原始卡表生成。完整包不在时（干净克隆）
+#: 自动回退到它，见 :func:`ygocdb`。
+CARD_INDEX_PATH = os.path.join(PROJ, 'data', 'card_index.json')
+
 #: **额外卡组**的类型位：融合 / 同调 / 超量 / 连接（YGO 惯例，位掩码集中在这里）
 EXTRA_TYPE_MASK = 0x40 | 0x2000 | 0x100000 | 0x4000000
 
@@ -144,7 +150,10 @@ def ygocdb(path=None) -> dict:
 
     文件不在 / 坏了 → **空 dict**（调用方据此降级，不抛）。
     """
-    path = path or YGOCDB_PATH
+    if path is None:
+        path = YGOCDB_PATH
+        if not os.path.exists(path):
+            path = CARD_INDEX_PATH          # 干净克隆：完整包不在，退回精简卡表
     if path in _YGO_CACHE:
         return _YGO_CACHE[path]
     doc = {}

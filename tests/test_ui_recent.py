@@ -283,6 +283,24 @@ class RobustnessTest(unittest.TestCase):
         self.assertEqual(snap.mode, U.MODE_IDLE)
 
 
+def _has_real_db() -> bool:
+    """本机是否有**带数据的**真实库 —— 没有就跳过「真库」类测试。
+
+    2026-10-05 发布审核：发布仓库不带 `data/masterduel.db`（含个人战绩），而本类
+    测试要读库里的表 —— 干净克隆上必然红。缺库时 skip，本机有库时照常跑。
+    """
+    p = os.path.join(PROJ, 'data', 'masterduel.db')
+    if not os.path.exists(p):
+        return False
+    try:
+        import sqlite3
+        with sqlite3.connect(p) as c:
+            return c.execute('SELECT COUNT(*) FROM matches').fetchone()[0] > 0
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
+@unittest.skipUnless(_has_real_db(), '本机没有带数据的真实库（发布仓库不带）')
 class RealDbTest(unittest.TestCase):
     """拿真库跑一遍（只读）—— 保证顺序和字段在真实数据上立得住。"""
 

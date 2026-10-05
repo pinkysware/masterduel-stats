@@ -6,8 +6,9 @@ data/masterduel.db-wal
 # 本机归档数据与游标（含唯一历史战绩，已由 masterduel.db 承载）
 data/archive/
 
-# 反推卡组的参照库（masterduelmeta 月度快照，`tools/fetch_mdm_decks.py` 可重新抓）
-data/mdm_deck_cards.json
+# 反推卡组的参照库（masterduelmeta 月度快照）—— **随仓库附带一份**
+# （2026-10-05 发布审核：干净克隆上「反推卡组 / 参照库」页要用它；
+#   想更新跑 `tools/fetch_mdm_decks.py --all`）
 
 # Untapped API 原始快照（2MB+，随时可重新抓）
 data/untapped_api_raw.json
