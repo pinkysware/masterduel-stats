@@ -61,7 +61,7 @@ if errorlevel 1 (
   )
 )
 
-echo Starting collector ^(no window^; stop via stop.bat^) ...
+echo Starting collector ^(no window^; to stop, close the window or use the tray^) ...
 start "" "%PYW%" tools\duel_collector.py --minutes 0
 
 rem give the collector a moment to grab the single-instance pid file
@@ -75,5 +75,5 @@ echo Done.
 echo   - collector log : data\archive\duel_collector.log
 echo   - dashboard opens automatically
 echo   - floating window shows/hides per its own page (or the tray menu)
-echo   - to stop both  : run stop.bat
+echo   - to stop both  : close the window ^(X^), or right-click tray -> exit
 endlocal
