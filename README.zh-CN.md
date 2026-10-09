@@ -38,24 +38,27 @@
 
 | 附件 | 体积 | 需要什么 |
 |---|---|---|
-| `masterduel-stats-v1.0.1-win64-full.zip` | ~193 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `start.bat` |
-| `masterduel-stats-v1.0.1-win64-lite.zip` | ~4 MB | 需先装 Python 3.13；首次运行 `start.bat` 会自动安装依赖 |
+| `masterduel-stats-v1.0.1-win64-full.zip` | ~194 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `MDStats.exe` |
+| `masterduel-stats-v1.0.1-win64-lite.zip` | ~5 MB | 需先装 Python 3.13；首次运行 `MDStats.exe` 会自动安装依赖 |
 | Source code (zip / tar.gz) | 自动 | 源码包，GitHub 对每个 tag 自动附带 |
 
-1. 安装 [Python 3.13](https://www.python.org/downloads/)（勾选 *Add to PATH*，
-   或确保 `py` 启动器可用）；
-2. 克隆本仓库，在仓库根目录执行：
-   ```
-   pip install -r requirements.txt
-   ```
-3. 双击 `start.bat` —— 自动拉起常驻采集器（无窗口）和悬浮窗，
-   看板随即打开。也可以分别手动运行：
-   ```
-   python tools\duel_collector.py     # 常驻采集器
-   python tools\duel_ui.py            # 悬浮窗 + 看板
-   ```
-   `stop.bat` 停止两者。若装了多个 Python，把正确 `python.exe` 的完整路径
-   写进仓库根目录的 `python_path.txt`。
+**最省事的做法**：装好 [Python 3.13](https://www.python.org/downloads/)（勾选
+*Add to PATH*，或确保 `py` 启动器可用），解压下载包，然后**双击 `MDStats.exe`**。
+它会自己找 Python、首次运行自动装依赖（**看得见进度**）、拉起常驻采集器与悬浮窗；
+万一出错会**弹窗告诉你原因**并写 `data/launcher.log`，而不是黑框一闪而过。
+
+**想分别手动运行**（在解压后的目录里）：
+
+```
+python tools\duel_collector.py     # 常驻采集器
+python tools\duel_ui.py            # 悬浮窗 + 看板
+```
+
+喜欢脚本的话，`start.bat` 做的是同样的事。
+
+**怎么停止**：点悬浮窗的 ×（X）—— 那会退出整个工具。看板可以从悬浮窗打开，
+也可以从托盘图标右键进入。若装了多个 Python，把正确 `python.exe` 的完整路径
+写进 `MDStats.exe` 同目录的 `python_path.txt`，它会优先用那个。
 
 ### 首次运行
 

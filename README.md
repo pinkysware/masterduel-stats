@@ -46,25 +46,30 @@ decks, rank progress and the metagame — with UI in **English / 中文 / 日本
 
 | Asset | Size | Requirements |
 |---|---|---|
-| `masterduel-stats-v1.0.1-win64-full.zip` | ~193 MB | **None** — Python & all deps bundled; unzip anywhere and run `start.bat` |
-| `masterduel-stats-v1.0.1-win64-lite.zip` | ~4 MB | Python 3.13 installed; `start.bat` installs the dependencies on first run |
+| `masterduel-stats-v1.0.1-win64-full.zip` | ~194 MB | **None** — Python & all deps bundled; unzip anywhere and run `MDStats.exe` |
+| `masterduel-stats-v1.0.1-win64-lite.zip` | ~5 MB | Python 3.13 installed; `MDStats.exe` installs the dependencies on first run |
 | Source code (zip / tar.gz) | auto | for developers — attached automatically by GitHub for each tag |
 
-1. Install [Python 3.13](https://www.python.org/downloads/) (check *Add to PATH*,
-   or make sure the `py` launcher works);
-2. Clone this repository and run from the repo root:
-   ```
-   pip install -r requirements.txt
-   ```
-3. Double-click `start.bat` — it brings up the resident collector (windowless)
-   and the floating window; the dashboard opens automatically. You can also run
-   the pieces manually:
-   ```
-   python tools\duel_collector.py     # resident collector
-   python tools\duel_ui.py            # floating window + dashboard
-   ```
-   `stop.bat` stops both. If you have several Pythons installed, put the full
-   path to the right `python.exe` into a `python_path.txt` file in the repo root.
+**The easy way:** install [Python 3.13](https://www.python.org/downloads/)
+(check *Add to PATH*, or make sure the `py` launcher works), unzip the
+download, and **double-click `MDStats.exe`**. It finds Python on its own,
+installs the dependencies on first run (with visible progress), starts the
+resident collector and the floating window, and — if anything goes wrong —
+shows you a dialog and writes `data/launcher.log` instead of a console
+window flashing and vanishing.
+
+**To run the pieces yourself** (from the extracted folder):
+```
+python tools\duel_collector.py     # resident collector
+python tools\duel_ui.py            # floating window + dashboard
+```
+`start.bat` does the same thing if you prefer a script.
+
+**Stopping:** close the floating window (the X button) — that exits the whole
+tool. The dashboard opens from the floating window, or from its tray icon
+(right-click → exit). If you have several Pythons installed, put the full
+path to the right `python.exe` into a `python_path.txt` file next to
+`MDStats.exe` and it will prefer that one.
 
 ### First run
 

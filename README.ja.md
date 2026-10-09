@@ -47,25 +47,31 @@
 
 | アセット | サイズ | 必要なもの |
 |---|---|---|
-| `masterduel-stats-v1.0.1-win64-full.zip` | 約193 MB | **不要** —— Python と全依存を同梱。解凍して `start.bat` を実行するだけ |
-| `masterduel-stats-v1.0.1-win64-lite.zip` | 約4 MB | Python 3.13 のインストールが必要。初回の `start.bat` が依存関係を自動インストール |
+| `masterduel-stats-v1.0.1-win64-full.zip` | 約194 MB | **不要** —— Python と全依存を同梱。解凍して `MDStats.exe` を実行するだけ |
+| `masterduel-stats-v1.0.1-win64-lite.zip` | 約5 MB | Python 3.13 のインストールが必要。初回の `MDStats.exe` が依存関係を自動インストール |
 | Source code (zip / tar.gz) | 自動 | 開発者向け。各 tag に GitHub が自動添付 |
 
-1. [Python 3.13](https://www.python.org/downloads/) をインストール
-   （*Add to PATH* にチェック、または `py` ランチャーを有効化）；
-2. このリポジトリをクローンし、ルートで実行：
-   ```
-   pip install -r requirements.txt
-   ```
-3. `start.bat` をダブルクリック —— 常駐コレクター（ウィンドウなし）と
-   フローティングウィンドウが起動し、ダッシュボードが自動で開きます。
-   手動での起動も可能：
-   ```
-   python tools\duel_collector.py     # 常駐コレクター
-   python tools\duel_ui.py            # フローティング + ダッシュボード
-   ```
-   `stop.bat` で両方停止。Python が複数ある場合は、正しい `python.exe` の
-   フルパスをルートの `python_path.txt` に記入してください。
+**一番手軽な方法**：[Python 3.13](https://www.python.org/downloads/) を
+インストールし（*Add to PATH* にチェック、または `py` ランチャーを有効化して
+おく）、ダウンロードを解凍して **`MDStats.exe` をダブルクリック**してください。
+Python を自動で探し、初回は依存関係を自動インストールし（進捗は画面に出ます）、
+常駐コレクターとフローティングウィンドウを起動します。失敗時はコンソールが
+閉じてしまうのではなく、**ダイアログで理由を表示**し `data/launcher.log` に
+記録します。
+
+**個別に手動起動する場合**（解凍先フォルダで）：
+
+```
+python tools\duel_collector.py     # 常駐コレクター
+python tools\duel_ui.py            # フローティング + ダッシュボード
+```
+
+スクリプトでよく使う場合は `start.bat` が同じ処理を行います。
+
+**停止するには**：フローティングウィンドウの ×（閉じる）を押します — それが
+ツール全体を終了します。ダッシュボードはフローティングウィンドウ、またはトレイ
+アイコンから開けます。Python が複数ある場合は、正しい `python.exe` のフルパスを
+`MDStats.exe` と同じフォルダの `python_path.txt` に記入すると、そちらを優先します。
 
 ### 初回起動
 
