@@ -81,3 +81,7 @@ __pycache__/
 *.pyc
 
 python_path.txt
+
+# 图形启动器：**构建产物**（tmp/build_launcher.py 用系统 csc 现场编译）
+#   不进版本库 —— 发布包里的那份由打包脚本生成。
+MDStats.exe

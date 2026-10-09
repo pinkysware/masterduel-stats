@@ -32,7 +32,8 @@ from core.deck_images import DeckImages
 from core.storage import Storage
 from core.ui_demo import DemoSandboxStorage, demo_snapshot
 from ui import theme, widgets
-from ui.floating import MAX_ROWS, FloatingWindow, WindowButton, max_window_width
+from ui.floating import (MAX_ROWS, FloatingWindow, WindowButton, md_app_icon,
+                        max_window_width)
 from ui.fonts import prepare_app
 from ui.i18n import tr
 from ui.selector import MAX_SUGGEST, DeckSelectorPanel
@@ -1110,6 +1111,10 @@ class MasterDuelUiApp(object):
         重建窗口，所以建窗 + 接线必须是一个可重入的方法（`_rebuild_windows`）。
         """
         win = FloatingWindow()
+        #: ★ 窗口图标 = 应用图标（2026-10-10 用户：「任务栏图标还是 python 脚本
+        #:   默认图标」）。以前**只有托盘**设了（`md_app_icon`），任务栏 / 标题栏 /
+        #:   Alt-Tab 全是 Qt 默认 —— 现在与托盘、看板**同一枚**。
+        win.setWindowIcon(md_app_icon())
         # 宽度**上限** = 最长的卡组名能完整显示（三语名字池由数据层收）
         # —— 用户 2026-09-15 定：左右最多拉到这里，再宽是纯留白
         win.set_max_width(
