@@ -2171,6 +2171,17 @@ def main(argv=None):
             % (prev.get('collector_pid'),
                proc_image_name(prev.get('collector_pid')) or '进程已不存在'))
 
+    # ★ 启动即建表（2026-10-10 实机测试抓到）：原来 `init_schema()` 只在
+    #   「补录刚收口的对局」那条路上（`_absorb_new` 里），**没打过一局就永远不建** ->
+    #   全新解压的用户看到的是一个 **0 字节、没有表**的 masterduel.db，
+    #   界面显示「零战绩」而不是报错，很难判断是坏了还是本来就这样。
+    #   建表很便宜（幂等），放在启动时最稳。
+    try:
+        from core.storage import Storage as _St
+        _St().init_schema()
+    except Exception as e:                              # noqa: BLE001
+        log('（建库失败，不阻塞采集：%r）' % e)
+
     game_pids = find_pids_by_name('masterduel.exe')
     self_heal(args.records_dir, game_pids, prev, log)
     write_pid_file(game_pids[0] if game_pids else None)

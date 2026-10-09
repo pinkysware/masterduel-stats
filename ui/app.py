@@ -707,6 +707,13 @@ class MasterDuelUiApp(object):
         # ⚠️ **必须在建任何控件之前**注册自带字体（`data/fonts/`，见 ui/fonts.py）
         # ★ 注册字体 + 上 QSS 走**唯一入口**（与出图脚本同一条路径，见 ui/fonts）
         prepare_app(self.qapp)
+        #: ★ **应用图标设在 QApplication 上**（2026-10-10 用户实测：
+        #:   「任务栏的 UI 还是 python 默认图标」）。之前只设了悬浮窗的
+        #:   `setWindowIcon`，而悬浮窗是 `Qt.Tool`（有意不进任务栏）——
+        #:   任务栏 / Alt-Tab / 窗口列表取的是**进程级**图标，没设就显示
+        #:   Python 的默认图标。设在这里，**所有窗口 + 任务栏 + Alt-Tab** 同一枚。
+        from ui.floating import md_app_icon
+        self.qapp.setWindowIcon(md_app_icon())
 
         # 调试模式（--demo 参数 或 设置里勾了）：不启探针；界面吃 demo 战绩，
         # Storage 换成**沙盒** —— 参考数据（meta 清单/卡组图）只读真库，
@@ -1081,6 +1088,15 @@ class MasterDuelUiApp(object):
     def _make_storage(self, sandbox: bool):
         """正常 = 真库 Storage；调试 = 沙盒（只读参考数据，标注进内存）。"""
         real = Storage(self._db_path) if self._db_path else Storage()
+        if not sandbox:
+            # ★ 建表（2026-10-10 实机测试）：全新解压时库里**一张表都没有**，
+            #   界面会显示「零战绩」而不是报错 —— 分不清是坏了还是本来就空。
+            #   建表幂等、很便宜，UI 先跑起来时建一份最稳（双击 exe 时
+            #   采集器未必已经起来）。
+            try:
+                real.init_schema()
+            except Exception:                            # noqa: BLE001
+                pass                                    # 读不到就等采集器建
         return DemoSandboxStorage(real) if sandbox else real
 
     # ------------------------------------------------------ S6 统计窗
