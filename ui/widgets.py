@@ -102,6 +102,27 @@ def round_pixmap(path, size: int = 26, radius: int = theme.R_XS,
     return out
 
 
+def forget_pixmap(path, size: Optional[int] = None) -> int:
+    """把某个**路径**的卡图从缓存里踢掉（**换图后必须调**）。
+
+    ⚠️ 为什么需要它（2026-10-08 用户实测：「改了卡图不刷新，必须重启 UI」）：
+    换卡图时**文件名不变**（`data/deck_images_custom/<名字>.webp` 原地覆盖），
+    而这里的缓存键是「路径 + 尺寸 + 透明度」—— 内容换了仍命中旧 pixmap，
+    界面就一直显示旧图，直到进程重启（缓存清空）。
+
+    ``size=None`` 清掉这个路径**所有尺寸**的缓存；返回踢掉了几个。
+    """
+    if not path:
+        return 0
+    full = path if os.path.isabs(path) else os.path.join(PROJ_ROOT, path)
+    want = os.path.normcase(full)
+    dead = [k for k in list(_PIX_CACHE)
+            if k[0] == want and (size is None or k[1] == int(size))]
+    for k in dead:
+        _PIX_CACHE.pop(k, None)
+    return len(dead)
+
+
 def thumb_label(path, size: int = 26, radius: int = theme.R_XS,
                 opacity: float = 1.0) -> QLabel:
     """卡图小标签（**图缺失就留一个同尺寸的空占位**，布局不会跳）。"""

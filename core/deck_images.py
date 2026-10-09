@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from typing import Dict, Iterable, Optional, Sequence
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -71,6 +72,185 @@ def _find_in(directory: str, name: str) -> Optional[str]:
         if os.path.exists(p) and os.path.getsize(p) > 0:
             return p
     return None
+
+
+#: 转存自定义卡图时的落地边长（与 `data/deck_images_custom/` 里其它图一致）
+TARGET_SIZE = 200
+
+
+def _normalize_to_webp(src_path: str, out_path: str,
+                       target_size: int = TARGET_SIZE) -> Optional[str]:
+    """把图**居中裁方 + 缩到 `target_size` + 存 webp**；做不到返回 ``None``。
+
+    两条腿（**口径只留这一份** —— CLI 与 UI 都走它，别再各写一套）：
+
+    1. **Pillow**（装了最好，质量最高）；
+    2. **Qt**（`PySide6.QtGui.QImage`，项目本来就依赖 —— 实测**不需要 QApplication**
+       也能读/写图）—— 这台机器没装 Pillow，靠它才能统一成 200×200 webp。
+
+    都不行 → ``None``，调用方原样拷贝兜底。
+
+    ⚠️ 为什么必须归一化：卡绘原图是 624² 级别，原样存会把**进版本库**的覆盖目录
+    撑大好几倍（用户专门优化过 lite 发布包体积）。
+    """
+    try:
+        from PIL import Image
+        im = Image.open(src_path).convert('RGBA')
+        side = min(im.size)
+        left, top = (im.width - side) // 2, (im.height - side) // 2
+        im = im.crop((left, top, left + side, top + side)).resize(
+            (int(target_size), int(target_size)), Image.LANCZOS)
+        im.save(out_path, 'WEBP', quality=92, method=6)
+        return out_path
+    except ImportError:
+        pass
+    except Exception:                                    # noqa: BLE001
+        pass
+    try:
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QImage
+        img = QImage(src_path)
+        if img.isNull():
+            return None
+        side = min(img.width(), img.height())
+        img = img.copy((img.width() - side) // 2, (img.height() - side) // 2,
+                       side, side).scaled(int(target_size), int(target_size),
+                                          Qt.IgnoreAspectRatio,
+                                          Qt.SmoothTransformation)
+        return out_path if img.save(out_path, 'WEBP') else None
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
+def save_custom_image(name: str, src_path: str, target_size: int = TARGET_SIZE,
+                      dest_dir: Optional[str] = None) -> Optional[str]:
+    """把一张图存成 ``data/deck_images_custom/<名字>.<ext>``（覆盖目录）。
+
+    给「给某卡组换图」用（CLI `tools/set_deck_image.py` 与看板卡组名管理共用）——
+    覆盖目录**优先于**站内图，且站内月度重抓不会盖回去（AGENTS.md 铁律 7）。
+
+    * 装了 Pillow → 居中裁剪成正方形 + 缩到 ``target_size`` + 存 **webp**；
+      没装 → **原样拷贝**（保留扩展名；界面会自己缩放，但尺寸不统一）。
+    * 会**清掉同名别的扩展名**旧文件 —— 不清的话它更早被 `_find_in` 命中。
+    * 返回**相对项目根**的路径（统一正斜杠）；失败返回 ``None``。
+    * ``dest_dir`` 默认 = 覆盖目录（``data/deck_images_custom/``）；
+      **单测传临时目录**，别往真图目录里写。
+    """
+    name = (name or '').strip()
+    if not name or not src_path or not os.path.exists(src_path):
+        return None
+    dest = dest_dir or CUSTOM_IMG_DIR
+    os.makedirs(dest, exist_ok=True)
+    base = os.path.join(dest, safe_filename(name))
+
+    dst = _normalize_to_webp(src_path, base + '.webp', target_size)
+    if dst is None:
+        #: Pillow / Qt 都没有 -> 原样拷贝（尺寸不统一，但别把它变成失败）
+        ext = os.path.splitext(src_path)[1].lower() or '.webp'
+        dst = base + ext
+        shutil.copyfile(src_path, dst)
+
+    for ext in IMAGE_EXTS:                         # 清掉同名别的扩展名旧图
+        other = base + ext
+        if (os.path.normcase(other) != os.path.normcase(dst)
+                and os.path.exists(other)):
+            try:
+                os.remove(other)
+            except OSError:
+                pass
+    return rel_or_abs(dst)
+
+
+#: **纯卡绘** CDN（去卡框、去效果文）—— 按 **Konami 密码**寻址（不是游戏内卡 id）。
+#: ⚠️ 与 `core/card_art.py` 的区别：那边是**整张卡**（带框带文案，禁限表页要用），
+#: 这边是 `cards_cropped`（纯卡绘，给卡组图用）。别混。
+CARD_ART_CROPPED_URL = 'https://images.ygoprodeck.com/images/cards_cropped/%s.jpg'
+
+
+def fetch_card_art(card_id, timeout: int = 20) -> Optional[str]:
+    """某张卡的**纯卡绘** -> 临时文件路径（失败返回 ``None``，不抛）。
+
+    用户 2026-10-08（研究结论落地）：**卡组图 == 代表卡的卡绘**（实测站内
+    `deck-type` 图与该卡组代表卡的相关性 0.90~0.96）。所以「给卡组配图」
+    可以退化成「挑一张代表卡」——敲中文卡名即可，不用记英文站内名。
+
+    ``card_id`` = **游戏内卡 id**（ygocdb 的 ``cid``）；Konami 密码从这里换算
+    （`core.card_art.konami_id`，与项目别处同一口径）。
+    """
+    import tempfile
+    import urllib.request
+    try:
+        from core.card_art import konami_id
+        konami = konami_id(card_id)
+    except Exception:                                  # noqa: BLE001
+        konami = None
+    if not konami:
+        return None
+    url = CARD_ART_CROPPED_URL % konami
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'masterduel'})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+    except Exception:                                  # noqa: BLE001
+        return None
+    if not body:
+        return None
+    fd, tmp = tempfile.mkstemp(suffix='.jpg', prefix='mdm-cardart-')
+    with os.fdopen(fd, 'wb') as f:
+        f.write(body)
+    return tmp
+
+
+#: 站内卡组图的 CDN（2026-10-08 实测：返回 200×200 webp，与 `data/deck_images/`
+#: 同源同规格；只覆盖**榜上卡组**，自组混轴名本身会 404）
+SITE_IMG_URL = ('https://imgserv.duellinksmeta.com/v2/mdm/deck-type/%s'
+                '?portrait=true&width=200')
+
+
+def fetch_site_deck_image(site_name: str, timeout: int = 20) -> Optional[str]:
+    """从站内取某卡组的卡图 → **临时文件路径**（失败返回 ``None``，不抛）。
+
+    给「从站内卡组取图」用（CLI `--from-site` 与看板换图共用同一口径）。
+    ⚠️ 名字是**站内英文名**（`Elfnote` / `Power Patron` …），不是中文名；
+    站内榜上没有的（自组混轴）会 404 → 返回 None，调用方给提示。
+    """
+    import tempfile
+    import urllib.parse
+    import urllib.request
+    name = (site_name or '').strip()
+    if not name:
+        return None
+    url = SITE_IMG_URL % urllib.parse.quote(name, safe='')
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'masterduel'})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+            ctype = (resp.headers.get('Content-Type') or '').split(';')[0].strip()
+    except Exception:                                  # noqa: BLE001
+        return None
+    if not body:
+        return None
+    ext = {'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp',
+           'image/gif': '.gif'}.get(ctype.lower(), '.webp')
+    fd, tmp = tempfile.mkstemp(suffix=ext, prefix='mdm-site-')
+    with os.fdopen(fd, 'wb') as f:
+        f.write(body)
+    return tmp
+
+
+def remove_custom_image(name: str) -> list:
+    """删掉覆盖目录里这个名字**所有扩展名**的图；返回被删文件名列表。"""
+    removed = []
+    base = os.path.join(CUSTOM_IMG_DIR, safe_filename(name or ''))
+    for ext in IMAGE_EXTS:
+        p = base + ext
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+                removed.append(os.path.basename(p))
+            except OSError:
+                pass
+    return removed
 
 
 def find_image_file(name: Optional[str]) -> Optional[str]:
@@ -158,6 +338,15 @@ class DeckImages(object):
         name = (name or '').strip()
         if not name:
             return DEFAULT_IMAGE if os.path.exists(DEFAULT_IMAGE) else None
+
+        # 0) ★ **覆盖目录里按这个名字直接放的图优先**（2026-10-09）
+        #: 用户 2026-10-09：给「狱神耀圣」配了图，但把该名字挂成 `Elfnote` 的**别名**
+        #: 之后，别名索引（第 1 环）会把它解析到站内 `Elfnote.webp`，把用户自己放的
+        #: 图盖掉。用户**按名字放的那张**是更明确的人工意图，必须最优先。
+        #: ⚠️ 只查**覆盖目录**（`deck_images_custom/`），站内目录照旧走下面几环。
+        own = _find_in(CUSTOM_IMG_DIR, name)
+        if own:
+            return own
 
         # 1) 别名索引精确命中
         hit = self._ensure_index().get(name)

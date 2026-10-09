@@ -16,6 +16,7 @@
 import os
 import sys
 import tempfile
+from unittest import mock
 import unittest
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,7 +27,8 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')      # 必须在 Qt import
 
 try:
     from PySide6.QtCore import QObject, QSettings, Qt, Signal
-    from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+    from PySide6.QtWidgets import (QApplication, QDialog, QLabel,
+                                   QPushButton)
     HAVE_QT = True
 except Exception:                                          # pragma: no cover
     HAVE_QT = False
@@ -259,7 +261,7 @@ class DashboardShellTest(unittest.TestCase):
     def test_settings_page_is_flat(self):
         """★ 09-27 用户口径：**所有设置项（含数据工具的「运行」）一级完成**。
 
-        * 8 行一个不少，**全部行内有控件**；无任何二级页（工具页已由概览页取代）。
+        * 9 行一个不少，**全部行内有控件**；无任何二级页（工具页已由概览页取代）。
         """
         page = self.win.pages[dashboard.SETTINGS_KEY]
         self.assertEqual(set(page._rows),
@@ -368,8 +370,9 @@ class DashboardShellTest(unittest.TestCase):
         self.assertNotIn('获取新卡组名', [n for n, _k in dashboard.SETTINGS_PAGES])
         # 2026-09-23 用户定：新增「数据体检」（s_audit）；
         # 2026-10-05 用户定：新增「游戏启动时弹悬浮窗」（s_autoshow）；
-        # 同日移除「刷新数据」（采集器自动做）→ 8 项
-        self.assertEqual(len(dashboard.SETTINGS_PAGES), 8)
+        # 同日移除「刷新数据」（采集器自动做）；
+        # 2026-10-09 用户定：新增「参照库刷新」（s_refdecks，卡组构成的逐卡使用率）→ 9 项
+        self.assertEqual(len(dashboard.SETTINGS_PAGES), 9)
         self.assertIn('获取新卡组名', dashboard.PAGE_HINTS['decks'][1] + dashboard.PAGE_HINTS['decks'][0])
 
     # ------------------------------------------------------------ 几何持久化
@@ -2625,3 +2628,394 @@ class RetranslateInPlaceTest(unittest.TestCase):
         self.assertIn('Settings', texts)
         # 标题条
         self.assertEqual(self.win._title_text.text(), 'Master Duel Statistics')
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class DeckImageSetTest(unittest.TestCase):
+    """★ 2026-10-08（用户）：「自定义卡组没有卡组卡图」。
+
+    修法：① `OppDeckRow` 的卡图**可点** → `SetImageDialog`（本地图片 / 站内取图 /
+    还原）；② 「我加过、但不在覆盖表里」的自定义卡组**也列在这一页**（只读行），
+    否则用户根本没有地方给它设图。
+    """
+
+    def setUp(self):
+        _app()
+        from core import deck_images
+        from ui import opp_deck_manager as odm_mod
+        from ui.opp_deck_manager import OppDeckManager
+        self.di = deck_images
+        self.mod = OppDeckManager
+        self.odm_mod = odm_mod
+        self.tmp = tempfile.mkdtemp(prefix='d3-img-')
+        self.csv = os.path.join(self.tmp, 'cn.csv')
+        deck_csv.write(self.csv, list(deck_csv.COLUMNS), [
+            ['Branded', '', '烙印', '', '', '', '', ''],
+        ])
+        #: 存图指向**临时目录** —— 不许往真的 data/deck_images_custom/ 写
+        self.imgdir = os.path.join(self.tmp, 'imgs')
+        self._prev_imgdir = self.di.CUSTOM_IMG_DIR
+        self.di.CUSTOM_IMG_DIR = self.imgdir
+
+    def tearDown(self):
+        self.di.CUSTOM_IMG_DIR = self._prev_imgdir
+
+    def _src_image(self):
+        from core.deck_images import DEFAULT_IMAGE
+        return DEFAULT_IMAGE
+
+    def _make(self, **kw):
+        kw.setdefault('runner_factory', lambda s, a: FakeRunner(s, a))
+        kw.setdefault('custom_names', ['狱神耀圣'])
+        return self.mod(csv_path=self.csv, **kw)
+
+    # ---------------------------------------------------------- 可点卡图
+    def test_thumb_is_clickable(self):
+        mgr = self._make()
+        self.assertTrue(hasattr(mgr.rows_ui[0].thumb, 'clicked'),
+                        '卡图格要可点（点了才能设图）')
+        self.assertEqual(mgr.rows_ui[0].thumb.cursor().shape(),
+                         Qt.PointingHandCursor)
+
+    def test_save_custom_image_writes_into_the_folder(self):
+        """存图落到覆盖目录，文件名 = 卡组名（`resolve` 的文件名直查靠它）。"""
+        rel = self.di.save_custom_image('狱神耀圣', self._src_image())
+        self.assertTrue(rel)
+        self.assertTrue(os.path.exists(os.path.join(self.imgdir, '狱神耀圣.webp')))
+
+    def test_set_image_from_local_file(self):
+        """走 `set_deck_image` 的 'file' 分支（对话框用桩替换）。"""
+        mgr = self._make()
+
+        src_img = self._src_image()
+
+        class _Dlg(object):
+            choice, image_path, site_name = 'file', src_img, ''
+
+            def __init__(self_inner, *a, **kw):
+                pass
+
+            def exec(self_inner):
+                return QDialog.Accepted
+        with mock.patch.object(self.odm_mod, 'SetImageDialog', _Dlg):
+            mgr.set_deck_image(mgr.rows_ui[0])
+        self.assertTrue(os.path.exists(os.path.join(self.imgdir, 'Branded.webp')))
+        self.assertIn('已设置', mgr.status.text())
+
+    def test_set_image_for_custom_only_row(self):
+        """只读行（自组卡组名）也能设图 —— 用户报的正是这种（狱神耀圣）。"""
+        mgr = self._make()
+
+        src_img = self._src_image()
+
+        class _Dlg(object):
+            choice, image_path, site_name = 'file', src_img, ''
+
+            def __init__(self_inner, *a, **kw):
+                pass
+
+            def exec(self_inner):
+                return QDialog.Accepted
+        with mock.patch.object(self.odm_mod, 'SetImageDialog', _Dlg):
+            mgr.set_deck_image(mgr.custom_rows_ui[0])
+        self.assertTrue(os.path.exists(os.path.join(self.imgdir, '狱神耀圣.webp')))
+
+    def test_reset_removes_the_custom_image(self):
+        self.di.save_custom_image('Branded', self._src_image())
+        mgr = self._make()
+        mgr._reset_deck_image(mgr.rows_ui[0], 'Branded')
+        self.assertFalse(os.path.exists(os.path.join(self.imgdir, 'Branded.webp')))
+        self.assertIn('已还原', mgr.status.text())
+
+    def test_site_fetch_failure_is_reported(self):
+        """站内取不到图（自组混轴名 404）→ 状态行给出可行动的提示，不炸。"""
+        mgr = self._make()
+
+        class _Dlg(object):
+            choice, image_path, site_name = 'site', '', 'NoSuchDeckXYZ'
+
+            def __init__(self_inner, *a, **kw):
+                pass
+
+            def exec(self_inner):
+                return QDialog.Accepted
+        with mock.patch.object(self.odm_mod, 'SetImageDialog', _Dlg), \
+                mock.patch.object(self.odm_mod.deck_images, 'fetch_site_deck_image',
+                                  lambda n: None):
+            mgr.set_deck_image(mgr.rows_ui[0])
+        self.assertIn('站内没有', mgr.status.text())
+
+    # ---------------------------------------------------------- 只读行
+    def test_custom_only_rows_listed(self):
+        mgr = self._make()
+        names = [r.deck_name for r in mgr.custom_rows_ui]
+        self.assertIn('狱神耀圣', names)
+
+    def test_custom_only_row_is_read_only(self):
+        """只读行**没有删除按钮**（删它要动 opp_decks / 已有标注），名字也不可改。"""
+        mgr = self._make()
+        row = mgr.custom_rows_ui[0]
+        self.assertFalse(hasattr(row, 'btn_del'))
+        self.assertFalse(hasattr(row, 'cn'))
+
+    def test_custom_only_rows_are_not_written_to_csv(self):
+        """只读行不参与保存 —— 存盘后 CSV 里**不该**多出这些名字。"""
+        mgr = self._make()
+        mgr.save()
+        _h, rows = deck_csv.read(self.csv)
+        idx = deck_csv.index_map(_h)
+        names = [deck_csv.get(r, idx, '站内英文名') for r in rows]
+        self.assertNotIn('狱神耀圣', names)
+
+    def test_rows_that_are_meta_aliases_are_not_duplicated(self):
+        """`烙印` 这类（已在覆盖表里）不该再当自定义行列一遍。"""
+        mgr = self._make(custom_names=['烙印', '狱神耀圣'])
+        names = [r.deck_name for r in mgr.custom_rows_ui]
+        self.assertNotIn('烙印', names, '覆盖表里的名字不该再列只读行')
+        self.assertIn('狱神耀圣', names)
+
+    def test_status_counts_readonly_rows(self):
+        mgr = self._make()
+        self.assertIn('1 条不在覆盖表', mgr.status.text())
+
+    def test_search_filters_readonly_rows(self):
+        mgr = self._make(custom_names=['狱神耀圣', '魔术师'])
+        mgr.edit_search.setText('狱神')
+        shown = [r.deck_name for r in mgr.custom_rows_ui if r.isVisibleTo(mgr)]
+        self.assertEqual(shown, ['狱神耀圣'])
+
+
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class CardArtPickerTest(unittest.TestCase):
+    """★ 2026-10-08（用户）「只能输英文查很不方便」+ 第二版口径。
+
+    结论：**卡组图 == 该卡组代表卡的卡绘** → 配图 = 挑一张卡，敲**中文卡名**即可。
+    第二版（用户截图反馈）：
+      * 列表**不再批量下缩略图**（「下的图太多了」）；
+      * 「选择本地图片」**移除**，改成「获取卡图」；
+      * 点列表一行 -> **该行右边出现「确认」按钮**；
+      * 选中卡的**名字显示在卡图下方**；[获取卡图][保存] 同一行放名字下面。
+    """
+
+    def setUp(self):
+        _app()
+        from core import card_names
+        from ui.opp_deck_manager import SetImageDialog
+        self.cn = card_names
+        self.Dlg = SetImageDialog
+
+    def _dlg(self, **kw):
+        d = self.Dlg('狱火机', '', **kw)
+        self.addCleanup(d.deleteLater)
+        return d
+
+    def test_card_search_by_chinese_name(self):
+        """敲中文就能搜到卡（`core.card_names.search`，中/英/日都认）。"""
+        d = self._dlg()
+        d.card_search.setText('灰流丽')
+        self.assertTrue(d.card_list.count() > 0, '敲中文应该搜得到卡')
+        row = d.card_list.itemWidget(d.card_list.item(0))
+        #: 用户 2026-10-08：「去掉卡名后的括号和数字」—— 标签**只有卡名**
+        self.assertEqual(row.label.text(), '灰流丽')
+
+    def test_rows_carry_card_id_no_thumbnail(self):
+        """行带卡 id；**不下载缩略图**（用户：「下的图太多了」）。"""
+        d = self._dlg()
+        d.card_search.setText('灰流丽')
+        it = d.card_list.item(0)
+        self.assertIsInstance(it.data(Qt.UserRole), int)
+        row = d.card_list.itemWidget(it)
+        self.assertFalse(hasattr(row, 'thumb'), '第二版已回退缩略图')
+
+    def test_confirm_button_appears_on_click(self):
+        """★ 点一行 -> 该行右边出现「确认」按钮；点别的行，旧的收起。"""
+        d = self._dlg()
+        d.resize(400, 600)
+        d.show()
+        self.addCleanup(d.hide)
+        d.card_search.setText('斩机')
+        QApplication.processEvents()
+        self.assertTrue(d.card_list.count() >= 2)
+        r0 = d.card_list.itemWidget(d.card_list.item(0))
+        r1 = d.card_list.itemWidget(d.card_list.item(1))
+        self.assertFalse(r0.btn_confirm.isVisibleTo(r0), '默认不显示')
+        d._on_row_clicked(d.card_list.item(0))
+        self.assertTrue(r0.btn_confirm.isVisibleTo(r0), '点了要出现')
+        d._on_row_clicked(d.card_list.item(1))
+        self.assertFalse(r0.btn_confirm.isVisibleTo(r0), '点别的行要收起')
+        self.assertTrue(r1.btn_confirm.isVisibleTo(r1))
+
+    def test_name_shows_above_and_id_is_set(self):
+        """点「确认」-> 名字显示在上方（卡图下方那块），并记下卡 id。"""
+        d = self._dlg()
+        d.card_search.setText('灰流丽')
+        row = d.card_list.itemWidget(d.card_list.item(0))
+        d._on_row_confirmed(row)
+        self.assertEqual(d.picked_label.text(), row.card_name)
+        self.assertEqual(d.card_id, row.card_id)
+
+    def test_local_file_button_is_gone(self):
+        """★ 用户要求：「移除选择本地图片」。"""
+        d = self._dlg()
+        texts = [b.text() for b in d.findChildren(QPushButton)]
+        self.assertNotIn('选择本地图片…', texts)
+        self.assertIn('获取卡图', texts)
+
+    def test_fetch_and_save_share_one_row_below_the_name(self):
+        """[获取卡图][保存] 必须在**名字下方、同一行**。"""
+        d = self._dlg()
+        lay = d.layout()
+        names = []
+        for i in range(lay.count()):
+            w = lay.itemAt(i).widget()
+            names.append(type(w).__name__ if w is not None else 'layout')
+        #: 顺序 = [0]标题行 [1]卡组名 [2]预览图 [3]名字 [4]按钮行（同一行）
+        self.assertEqual(names[1], 'QLabel')      # 卡组名
+        self.assertEqual(names[2], 'QLabel')      # 预览
+        self.assertEqual(names[3], 'QLabel')      # 选中卡的名字（在预览**下方**）
+        btn_row = lay.itemAt(4).layout()
+        self.assertIsNotNone(btn_row, '第 5 项应该是按钮行')
+        row_texts = [btn_row.itemAt(j).widget().text()
+                     for j in range(btn_row.count())
+                     if btn_row.itemAt(j).widget() is not None]
+        self.assertIn('获取卡图', row_texts)
+        self.assertIn('保存', row_texts)
+        self.assertLess(lay.indexOf(d.picked_label), 4, '名字在按钮行**上方**')
+
+
+
+    def test_changing_image_invalidates_the_pixmap_cache(self):
+        """★ 2026-10-08（用户）：「改了我自定义卡组的卡图不会立即刷新，必须重启 UI」。
+
+        根因（已复现）：换图时**文件名不变**（`deck_images_custom/<名字>.webp`
+        原地覆盖），而 `widgets.round_pixmap` 按**路径**缓存 pixmap —— 内容换了
+        仍返回旧图。修法：换图后调 `widgets.forget_pixmap(path)`。
+        """
+        import shutil
+        from ui import widgets
+        a = os.path.join('data', 'deck_images_custom', '_default.webp')
+        b = os.path.join('data', 'deck_images', 'Elfnote.webp')
+        for f in (a, b):
+            if not os.path.exists(f):
+                self.skipTest('素材图不在：%s' % f)
+        tmp = tempfile.mkdtemp(prefix='pixcache-')
+        self.addCleanup(shutil.rmtree, tmp, True)
+        p = os.path.join(tmp, 'same.webp')
+        seen = []
+        for src in (a, b):
+            shutil.copyfile(src, p)
+            widgets.forget_pixmap(p)              #: 换图后必须清（被测行为）
+            seen.append(widgets.round_pixmap(p, 22, theme.R_XS))
+        self.assertIsNot(seen[0], seen[1], '换了图还是同一个 pixmap（缓存没失效）')
+
+    def test_forget_pixmap_clears_all_sizes(self):
+        from ui import widgets
+        p = os.path.join('data', 'deck_images_custom', '_default.webp')
+        if not os.path.exists(p):
+            self.skipTest('默认卡图不在')
+        widgets.round_pixmap(p, 22, theme.R_XS)
+        widgets.round_pixmap(p, 40, theme.R_XS)
+        self.assertGreaterEqual(widgets.forget_pixmap(p), 2, '该清掉所有尺寸')
+
+    def test_forget_pixmap_accepts_relative_path(self):
+        """相对路径 / 绝对路径都要能命中同一条缓存（换图画的是绝对路径）。"""
+        from ui import widgets
+        rel = os.path.join('data', 'deck_images_custom', '_default.webp')
+        full = os.path.join(widgets.PROJ_ROOT, rel)
+        if not os.path.exists(full):
+            self.skipTest('默认卡图不在')
+        widgets.round_pixmap(rel, 22, theme.R_XS)
+        self.assertGreaterEqual(widgets.forget_pixmap(full), 1)
+
+    def test_save_without_picking_hints(self):
+        d = self._dlg()
+        d._save()
+        self.assertIsNone(d.choice)
+        self.assertIn('先在下面选一张卡', d.hint.text())
+
+    def test_deck_picker_is_searchable_and_stores_site_name(self):
+        """站内下拉：显示友好名、`itemData` 存站内英文名（不要求手输英文）。"""
+        d = self._dlg(deck_options=[('烙印', 'Branded'), ('闪刀姬', 'Sky Striker')])
+        self.assertTrue(d.site_picker.isEditable())
+        self.assertEqual(d.site_picker.itemText(0), '烙印')
+        self.assertEqual(d.site_picker.itemData(0), 'Branded')
+        words = d._comp_model.stringList()
+        self.assertIn('烙印', words)
+        self.assertIn('Branded', words)
+
+
+    def test_label_has_no_id_suffix(self):
+        """★ 2026-10-08 用户：「去掉卡名后的括号和数字」。"""
+        d = self._dlg()
+        d.card_search.setText('灰流丽')
+        row = d.card_list.itemWidget(d.card_list.item(0))
+        self.assertNotIn('#', row.label.text())
+        self.assertNotIn('（', row.label.text())
+
+    def test_confirm_button_text_is_not_clipped(self):
+        """★ 2026-10-08 用户：「确认按钮显示不全」—— 按钮要装得下自己的字。
+
+        根因：全局 QSS 的 `padding: 6px 12px` 在 ~18px 高的行内按钮上只剩 6px
+        内容区，12px 的字上下被裁（与输入框被裁是同一个坑）。
+        """
+        from ui.opp_deck_manager import CardPickRow
+        row = CardPickRow(12950, '灰流丽')
+        fm = row.btn_confirm.fontMetrics()
+        self.assertGreaterEqual(row.btn_confirm.height(),
+                                fm.height() + 4,
+                                '按钮高 %d < 字高 %d + 余量 —— 字会被裁'
+                                % (row.btn_confirm.height(), fm.height()))
+        self.assertGreaterEqual(
+            row.btn_confirm.width(),
+            fm.horizontalAdvance(row.btn_confirm.text()) + 8,
+            '按钮宽不够（字会被挤掉）')
+        self.assertIn('padding: 2px 8px', row.btn_confirm.styleSheet())
+
+    def test_take_site_uses_item_data(self):
+        d = self._dlg(deck_options=[('烙印', 'Branded')])
+        d.site_picker.setCurrentIndex(0)
+        d._take_site()
+        self.assertEqual(d.choice, 'site')
+        self.assertEqual(d.site_name, 'Branded')
+
+
+
+
+    def test_refdecks_entry_runs_the_refresh_tool(self):
+        """★ 2026-10-09（用户）：「参照库快照是 09-21 的，而且没有能更新的按钮」。
+
+        修法：设置概览页「数据工具」组新增一行「参照库刷新」——
+        跑 `tools/fetch_mdm_decks.py --all`（联网几分钟）。
+        """
+        cfg = dashboard.SCRIPT_COMMANDS.get('s_refdecks')
+        self.assertIsNotNone(cfg, 's_refdecks 必须进命令表')
+        self.assertEqual(cfg['script'], 'tools/fetch_mdm_decks.py')
+        self.assertEqual(cfg['runs'], [('刷新（几分钟）', ['--all'])])
+        #: 分组里要有（否则概览页不显示）
+        grouped = dict(dashboard.SETTING_GROUPS)['数据工具']
+        self.assertIn('s_refdecks', grouped)
+        made = []
+
+        def _factory(script, args):
+            made.append((script, list(args)))
+            from PySide6.QtCore import Signal as _S
+
+            class _R(object):
+                line = _S(str)
+                done = _S(int)
+
+                def running(self):
+                    return False
+
+                def start(self):
+                    pass
+            return _R()
+
+        page = dashboard.SettingsIndexPage('', '', runner_factory=_factory)
+        btns = page._rows['s_refdecks'].control.findChildren(QPushButton)
+        self.assertEqual([b.text() for b in btns], ['刷新（几分钟）'])
+        btns[0].click()
+        self.assertEqual(made, [('tools/fetch_mdm_decks.py', ['--all'])])
+

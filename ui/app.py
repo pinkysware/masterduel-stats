@@ -1161,6 +1161,7 @@ class MasterDuelUiApp(object):
                 deckview_loader=self.dashboard_deckview_loader(),
                 on_fetch_decks=self.fetch_new_decks_dialog,      # Q17
                 opp_deck_images=self._deck_images().resolve,     # 卡组名管理页签的行图
+                storage=self.storage,                            # 换图写库用
                 collector_loader=self.dashboard_collector_status,  # 标题栏采集器状态
                 export_saver=self.export_matches,                  # 导出写盘（D4c）
                 export_loader=self.dashboard_export_loader())      # 导出页预览（D4c）
@@ -1471,18 +1472,39 @@ class MasterDuelUiApp(object):
         self._push_cover_table(dlg)
 
     def _push_cover_table(self, dlg) -> None:
-        """跑 `fetch_meta_decks.py --cn-only`（只贴覆盖表、不联网）→ 刷新界面。"""
+        """跑 `fetch_meta_decks.py --cn-only`（只贴覆盖表、不联网）→ **再补缺图** → 刷新。
+
+        ★ 2026-10-08：贴完库后追加一次 `--missing-images` —— Q17 抓榜单时是
+        `--no-images`，新加进来的**站内卡组**（`Phantom Knight Orcust` 那类）
+        本来会一直没图；补这一步它们就有卡图了。补图失败不回滚贴库（库已经好了）。
+        """
         from PySide6.QtCore import QProcess
 
         proc = QProcess(dlg)
         proc.setWorkingDirectory(PROJ)
 
-        def on_done(code, _status):
-            dlg.fetch_status.setText(tr('完成（%s）') % (tr('成功') if code == 0 else tr('抓取失败')))
+        def after_images(code, _status):
+            dlg.fetch_status.setText(
+                tr('完成（%s）') % (tr('成功') if code == 0 else tr('抓取失败')))
             try:
                 self.refresh()
             except Exception:
                 pass
+
+        def on_done(code, _status):
+            if code != 0:
+                after_images(code, _status)
+                return
+            dlg.fetch_status.setText(tr('已贴进库，正在补缺失的卡图…'))
+            img = QProcess(dlg)
+            img.setWorkingDirectory(PROJ)
+            img.setProcessChannelMode(QProcess.MergedChannels)
+            #: 补图失败也只是提示（贴库已经成功，别把整体判成失败）
+            img.finished.connect(lambda c, _s: after_images(0, _s))
+            img.start(sys.executable,
+                      [os.path.join('tools', 'fetch_meta_decks.py'),
+                       '--missing-images'])
+            self._img_proc = img
 
         proc.finished.connect(on_done)
         proc.start(sys.executable, [os.path.join('tools', 'fetch_meta_decks.py'),

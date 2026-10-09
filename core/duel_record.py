@@ -26,7 +26,8 @@ from datetime import datetime
 from core import card_names as _cn
 from core.memread import duel_log as _dl
 from core.memread.end_message import derive_result_from_winbits
-from core.storage import DECK_SNAPSHOT_TRUSTED_MODES
+from core.storage import (DECK_SNAPSHOT_TRUSTED_MODES,
+                          MODE_GROUP_BY_GAME_MODE, MODE_GROUP_SOLO)
 
 DUEL_JSON_NAME = 'duel.json'
 FORMAT_VERSION = 1
@@ -712,11 +713,25 @@ _RESULT_LABEL = {'win': 'Win', 'lose': 'Lose'}
 
 
 def _mode_of(game_mode):
-    """game_mode -> matches.mode。7=回放（不是对局）；判不出 unknown。"""
+    """game_mode -> matches.mode。
+
+    * ``7``  = 观战 / 回放 -> ``live``（**不是对局**，不入库）
+    * ``9``  = 单人模式 -> ``solo``（2026-09-26 用户实测拍板；id 口径见
+      ``core.storage.MODE_GROUP_BY_GAME_MODE``）
+    * 其余（天梯 3 / 巅峰 19 / DC 12 / 各活动）-> ``pvp``
+    * 判不出 -> ``unknown``
+
+    ⚠️ 2026-10-08 抓到：这里原先**只认 7**，把 ``game_mode=9`` 的行全记成了
+    ``pvp``（库里 8 行），与日志线的 ``solo`` 对不上 —— 用户 10-07 的单人局
+    就是这么暴露的。**单人的 id 一律问 `core.storage`，别在这儿硬编码。**
+    """
     if game_mode is None:
         return 'unknown'
-    if int(game_mode) == 7:
+    gm = int(game_mode)
+    if gm == 7:
         return 'live'
+    if MODE_GROUP_BY_GAME_MODE.get(gm) == MODE_GROUP_SOLO:
+        return 'solo'
     return 'pvp'
 
 

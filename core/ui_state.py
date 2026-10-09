@@ -361,7 +361,13 @@ def build_recent(storage, limit: int = 3, decks=None,
         return []
     if not rows:
         return []
-    rows = [m for m in rows if mode_group(m.get('game_mode')) != 'solo']
+    # ⚠️ 还要看 `mode` 字段：**补录的日志行 `game_mode` 是 NULL**
+    #    （日志线拿不到 game_mode），只按 `mode_group(None) -> None` 判会漏掉
+    #    单人局 —— 2026-10-08 用户实报「悬浮窗还有 4 局单人模式」。
+    #    与 `_in_duel_scope()` 对 game_mode=None 的兜底同语义。
+    rows = [m for m in rows
+            if mode_group(m.get('game_mode')) != 'solo'
+            and m.get('mode') != 'solo']
     if decks is None:
         decks = DeckImages(storage)
 
@@ -1406,6 +1412,19 @@ def _reference(reference=None) -> Dict[str, object]:
     return reference if isinstance(reference, dict) else {}
 
 
+def clear_reference_cache() -> None:
+    """清掉参照库缓存（**UI 侧唯一入口**，转调 `core.deck_guess`）。
+
+    给「设置 -> 数据工具 -> 参照库刷新」用：脚本跑完必须调一次，
+    否则「卡组构成」页与选择器的 M5 建议仍按**旧快照**算。
+    """
+    try:
+        from core import deck_guess
+        deck_guess.clear_reference_cache()
+    except Exception:                                    # noqa: BLE001
+        pass
+
+
 def _reference_decks(reference=None) -> Dict[str, dict]:
     """参照库的 `decks` 段 —— **99 副**（拿不到给空 dict）。"""
     decks = _reference(reference).get('decks')
@@ -2036,8 +2055,12 @@ def audit_issues(storage=None, records_dir=None) -> Dict[str, object]:
     # ① 结果缺失：已结束（有 ended_at）但 result 是空 —— 结果不会再来，
     #    越早发现越早补（EM 窗口只有几秒，事后必须手动）。
     for m in rows:
-        if m.get('game_mode') is not None and mode_group(m['game_mode']) == 'solo':
-            continue          # 单人局 result 恒空（PvE 不抓结算），别报「结果缺失」
+        # 单人局 result 恒空（PvE 不抓结算），别报「结果缺失」。
+        # ⚠️ 补录的日志行 game_mode 是 NULL —— 退回看 `mode` 字段（2026-10-08）。
+        if m.get('mode') == 'solo' or (
+                m.get('game_mode') is not None
+                and mode_group(m['game_mode']) == 'solo'):
+            continue
         if m.get('result') is None and m.get('ended_at'):
             out['missing_result'].append({
                 'dir': m.get('record_dir'),

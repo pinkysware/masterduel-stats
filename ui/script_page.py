@@ -61,6 +61,15 @@ SCRIPT_COMMANDS = {
                 '「下载更新」刷新快照后重新合成卡表，**卡表刷新后对新卡才有名字**。',
         'runs': [('检查更新', ['--check-update']), ('下载更新', ['--update'])],
     },
+    's_refdecks': {
+        'title': '参照库刷新',
+        'script': 'tools/fetch_mdm_decks.py',
+        'desc': '抓**卡组构成的参照库**（`data/mdm_deck_cards.json`，'
+                '即「卡组构成」页里每张卡的 `Nx in P%` 使用率）—— 联网，'
+                '**103 副要几分钟**。一个月手动跑一次就够；'
+                '跑完「卡组构成」页页头的快照日期会跟着更新。',
+        'runs': [('刷新（几分钟）', ['--all'])],
+    },
     's_audit': {
         'title': '数据体检',
         'script': 'tools/audit_issues.py',

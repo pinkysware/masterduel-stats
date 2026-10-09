@@ -101,6 +101,23 @@ def konami_by_en(name: str) -> Optional[str]:
     return _EN_SQUEEZED.get(squeezed)
 
 
+def has_art(cid) -> bool:
+    """这张卡**可能**有卡绘吗 —— 判据 = 它的游戏内 id 能在 ygocdb 卡表里换出
+    Konami 密码（`konami_id` 非空）。
+
+    用途（2026-10-08）：选代表卡当卡组图时**过滤掉必然取不到的卡** ——
+    实测「狱炎机衍生物」「灰流丽(#3891)」这类老 id / 衍生卡不在 ygocdb 里，
+    取图必然 404，让用户白点一次。
+
+    ⚠️ 只是「**可能**有」：真正的 404 仍由 `fetch_card_art()` 返回 None 兜底
+    （两处判据不要混用 —— 这里不联网）。
+    """
+    try:
+        return bool(konami_id(cid))
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
 def art_path(cid) -> Optional[str]:
     """本地缓存路径；**没有缓存返回 None**（纯本地，不联网）。"""
     konami = konami_id(cid)

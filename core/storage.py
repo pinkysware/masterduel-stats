@@ -860,6 +860,11 @@ class Storage:
             params['mode'] = MODE_UNKNOWN
         if params['mode'] == MODE_LIVE:
             return 'skipped-live'
+        # 单人模式（PvE，game_mode=9）**不入库** —— 用户 2026-10-08 口径：
+        # 「我只需要记录 PVP 的数据」。拦在同一个地方（入库口），调用方拿
+        # 'skipped-solo'。⚠️ 只拦**入库**；采集器的 record 目录（层 0 真源）照旧抓。
+        if params['mode'] == MODE_SOLO:
+            return 'skipped-solo'
         # 中途退出 / 掉线 → 判负（ended_at 留空，标记"没看到结束"）。
         # ⚠️ record 来源可以关掉这条（judge_lack_end=False）：胜负只认 winbit，
         # 判不出留 NULL 等手动补填，不许按"没看到结束"硬判负。
@@ -889,7 +894,8 @@ class Storage:
         逐条调用 ``upsert_match``（每条各自一个事务）：本项目单次最多几百局，
         开销可以忽略，换来的是单条失败不会把整批回滚掉。
         """
-        out = {'written': 0, 'skipped': 0, 'skipped-live': 0}
+        out = {'written': 0, 'skipped': 0, 'skipped-live': 0,
+               'skipped-solo': 0}
         for r in rows:
             out[self.upsert_match(r)] += 1
         return out

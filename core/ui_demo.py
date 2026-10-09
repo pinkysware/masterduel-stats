@@ -185,13 +185,13 @@ def _demo_recent_base() -> List[dict]:
     return [
         # 1 今天 · 胜 · 先攻 · 同段升段 Platinum III -> II
         _row('demo0001', 21, 0, 'Win', 1,
-             '闪刀姬', 'Sky_Striker', '烙印', 'Branded', 'Sione',
+             '闪刀姬', 'Sky_Striker', '烙印', 'Branded', 'player10',
              (5, 3), (5, 2), 'up', 'III', 'II',
              icon_after=_RANK % 'Platinum',        # 2026-09-15 补：升降段画的是当前段位图标
              badge_text='Platinum 3'),
         # 2 今天 · 负 · 后攻 · 跨大段掉段 Platinum I -> Gold I
         _row('demo0002', 20, 0, 'Lose', 0,
-             '闪刀姬', 'Sky_Striker', '天盃龙', 'Tenpai_Dragon', 'もっちゃん',
+             '闪刀姬', 'Sky_Striker', '天盃龙', 'Tenpai_Dragon', 'player11',
              (5, 1), (4, 1), 'down', 'I', 'I',
              icon_after=_RANK % 'Gold', badge_text='Platinum 1'),
         # 3 今天 · 负 · 先后未知 · 未标注（有对手名）+ **带露出卡** —— 选择器面板的
@@ -211,7 +211,7 @@ def _demo_recent_base() -> List[dict]:
         # 4 今天 · 胜 · 先攻 · 巅峰局（2026-09-28 二口径：悬浮窗只显巅峰图标；
         #    peak_rate 字段只给**看板战绩页**的段位列画「图标 + 积分」）
         _row('demo0004', 19, 0, 'Win', 1,
-             '烙印', 'Branded', '龙链巳剑', 'Ryzeal_Mitsurugi', 'ピークマスター',
+             '烙印', 'Branded', '龙链巳剑', 'Ryzeal_Mitsurugi', 'player13',
              None, None, None, '', '',
              badge_icon=PEAK_ICON, badge_text='巅峰决斗',
              peak_rate='1515.62'),
@@ -227,7 +227,7 @@ def _demo_recent_base() -> List[dict]:
              badge_text='Platinum 2'),
         # 7 昨天 · 胜 · 先攻 · 跨大段升段 Gold I -> Platinum V
         _row('demo0007', 21, 1, 'Win', 1,
-             '闪刀姬', 'Sky_Striker', '码丽丝', 'Maliss', 'Zabuza',
+             '闪刀姬', 'Sky_Striker', '码丽丝', 'Maliss', 'player12',
              (4, 1), (5, 5), 'up', 'I', 'V',
              icon_after=_RANK % 'Platinum', badge_text='Gold 1'),
         # 8 昨天 · 负 · 后攻 · 缺卡组图（回退默认图）
@@ -498,36 +498,36 @@ def demo_stats_page(mode_group=None, month=None, account=None) -> dict:
 
     # ── 本轮（当前那轮）：闪刀姬 4 把 + K9vs 3 把 ──────────────────────────────
     g1 = ('闪刀姬', _st(4, 2, 2, 2, 1, 2, 1), [
-        _prow('09-16', '23:45', 'Win', True, 'Taolanamz2', 2,
+        _prow('09-16', '23:45', 'Win', True, 'player1', 2,
               (5, 3), (5, 2), '烙印', opp_img=img('Branded')),
-        _prow('09-16', '23:27', 'Lose', False, 'なごみ', 4,
+        _prow('09-16', '23:27', 'Lose', False, 'player2', 4,
               (5, 2), (5, 2), '烙印星辰', opp_img=img('Branded_Elfnote')),
-        _prow('09-16', '23:03', 'Win', True, 'set', 1,
+        _prow('09-16', '23:03', 'Win', True, 'player3', 1,
               (5, 2), (5, 2), '', opp_img=None),
-        _prow('09-16', '22:44', 'Lose', False, 'Thragg', 5,
+        _prow('09-16', '22:44', 'Lose', False, 'player4', 5,
               None, None, '码丽丝', opp_img=img('Maliss')),
     ])
     #: ★ 这一组是**活动决斗** —— 行里照样塞了段位参数，界面**必须一个字都不画**
     #: （用户 2026-09-18 点名的现象：「活动局也显示了段位」）
     g2 = ('K9vs', _st(3, 2, 1, 2, 2, 1, 0), [
-        _prow('09-16', '23:20', 'Win', True, '卡手少年', 2,
+        _prow('09-16', '23:20', 'Win', True, 'player5', 2,
               (5, 4), (5, 3), '未知卡组', opp_img=None, mode='event'),
-        _prow('09-16', '23:05', 'Win', True, 'Revi', 9,
+        _prow('09-16', '23:05', 'Win', True, 'player6', 9,
               (5, 5), (5, 4), '未知卡组', opp_img=None, mode='event'),
-        _prow('09-16', '22:50', 'Lose', False, 'あいとー', 5,
+        _prow('09-16', '22:50', 'Lose', False, 'player7', 5,
               None, None, '', opp_img=None, mode='event'),
     ])
     # ── 上一轮（09-14 20:00 起）：**同一副闪刀姬再出现一次** ────────────────────
     #: ★ 这一轮覆盖**巅峰决斗 / DC杯**（模式列要能一眼看出三种以上）
     g3 = ('闪刀姬', _st(2, 1, 1, 1, 1, 1, 0), [
-        _prow('09-14', '21:00', 'Win', True, 'Kader', 1,
+        _prow('09-14', '21:00', 'Win', True, 'player8', 1,
               (5, 2), (5, 1), '闪刀姬', opp_img=img('Sky_Striker'),
               mode='peak'),
-        _prow('09-14', '20:40', 'Lose', False, '28K白少', 2,
+        _prow('09-14', '20:40', 'Lose', False, 'player9', 2,
               (5, 2), (5, 2), '纠罪巧', opp_img=None, mode='dc'),
     ])
     g4 = ('烙印', _st(1, 1, 0, 1, 1, 0, 0), [
-        _prow('09-14', '20:10', 'Win', True, 'Sione', 3,
+        _prow('09-14', '20:10', 'Win', True, 'player10', 3,
               (5, 3), (5, 2), '烙印', opp_img=img('Branded')),
     ])
     #: ★ 沙盒改过的胜负先套回去 —— 必须在下面 `group_header` **之前**，

@@ -80,6 +80,21 @@ def load_reference(path=None):
     return data
 
 
+def clear_reference_cache(path=None) -> None:
+    """**清掉参照库的进程内缓存** —— 刷新参照库后必须调，否则界面一直显示旧数据。
+
+    ⚠️ 2026-10-10（1.01 发布前冒烟实测出的真 bug）：`load_reference()` 把
+    `data/mdm_deck_cards.json` 永久缓存进 `_DATA_CACHE`，而全仓**没有清缓存入口**
+    -> 跑完 `tools/fetch_mdm_decks.py --all` 之后，`deck_composition()` 仍返回
+    **刷新前**的卡表（实测把文件改成只剩 3 副，界面照样报 `main=41`）。
+    于是看板那个「参照库刷新」按钮（1.01 新增）**刷了不生效**。
+
+    `path=None` = 清全部（默认参照库 + 任何显式路径）。
+    UI 侧走 `core.ui_state.clear_reference_cache()`（同一个）。
+    """
+    _DATA_CACHE.clear()
+
+
 def load_card_data(path=None):
     """`data/card_data.json` → ``{卡id: 中文名}``（分组兜底用）。"""
     path = path or CARD_DATA

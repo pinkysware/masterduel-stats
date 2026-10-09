@@ -8,7 +8,9 @@
 4. 界面吃得下（有 Qt 时整份快照过一遍 ``FloatingWindow``，不许抛）。
 """
 import json
+import io
 import os
+import re
 import sys
 import unittest
 
@@ -562,6 +564,85 @@ class DemoBanlistPageTest(_LangCnMixin, unittest.TestCase):
         for x in d['current']:
             self.assertIn(x['status'], ('禁止', '限制', '准限制'))
 
+
+
+class TestNoRealPlayerNames(unittest.TestCase):
+    """★ 发布阻塞项回归锁（2026-10-10）：**demo / 测试里不许出现真实对手名**。
+
+    背景：`core/ui_demo.py` 是**随源码发布**的文件（v1.0.0 起就在公开仓库），
+    而它的 demo 对手名一度是用户的真实对局对手（逐名能在
+    `matches.opp_player_name` 里对上）。v1.0.0 三轮审查只抓到**截图**里的名字
+    （已打码），源码这批从没清过 —— 用户 2026-10-10 拍板清掉并统一叫 `playerN`。
+
+    本锁的判据**不依赖真库**（CI/干净克隆上没有 `masterduel.db`）——
+    改为「**黑名单**」：把这次清掉的那批真名钉死，出现即红。
+    """
+
+    #: 强特征名 —— 直接子串匹配即可（这些串不会出现在正常代码里）
+    STRONG = (
+        'Taolanamz2', 'なごみ', 'Thragg', '卡手少年', 'あいとー',
+        'Kader', '28K白少', 'Sione', 'もっちゃん', 'Zabuza', 'ピークマスター',
+        '幻想乡的毛玉', '幻日のヨハネ',
+    )
+    #: 弱特征名 —— 是常见词的一部分，必须整词匹配（`Revi` ⊂ `Revision`）
+    WEAK = ('Revi',)
+
+    @classmethod
+    def _scan_text(cls, text):
+        """文本里命中的黑名单名（强 = 子串；弱 = 整词）。
+
+        ⚠️ 2026-10-10 修订：原判据只匹配「被单引号完整包裹」的名字
+        （`"'%s'" % n`），**漏掉了不带引号的引用** —— `test_fonts.py` 里
+        `'Sione0123…'` / `'もっちゃんカタカナ…'` 就是这么漏过去的。
+        """
+        hits = []
+        for n in cls.STRONG:
+            if n in text:
+                hits.append(n)
+        for n in cls.WEAK:
+            if re.search(r'(?<![0-9A-Za-z_])%s(?![0-9A-Za-z_])' % re.escape(n), text):
+                hits.append(n)
+        return hits
+
+    def _sources(self):
+        """要扫的源码文件 —— **跳过本文件自己**（黑名单就在这里面，否则自指必红）。"""
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        me = os.path.normcase(os.path.abspath(__file__))
+        for sub in ('core', 'ui', 'tools', 'tests'):
+            base = os.path.join(root, sub)
+            for dp, _dn, fns in os.walk(base):
+                if '__pycache__' in dp:
+                    continue
+                for fn in fns:
+                    if fn.endswith('.py'):
+                        p = os.path.join(dp, fn)
+                        if os.path.normcase(os.path.abspath(p)) != me:
+                            yield p
+
+    def test_no_blacklisted_real_names(self):
+        bad = []
+        for path in self._sources():
+            with io.open(path, encoding='utf-8', errors='replace') as f:
+                text = f.read()
+            for n in self._scan_text(text):
+                bad.append('%s: %s' % (os.path.basename(path), n))
+        self.assertEqual(bad, [], '这些真实对手名又出现了：%s' % bad)
+
+    def test_scan_catches_unquoted_and_ignores_substring(self):
+        """负向验证（2026-10-10 补）：**不带引号**的引用也要抓到；常见词不许误伤。
+
+        本次就是栽在「只匹配引号包裹」上 —— `'Sione0123…'` 后跟 `0`，原判据不匹配。
+        """
+        # 不带引号也要抓（本次的漏网点）
+        self.assertIn('Sione', self._scan_text("UI_OTHER = 'Sione0123456789'"))
+        self.assertIn('もっちゃん', self._scan_text("JP_SAMPLE = 'もっちゃんカタカナ'"))
+        # 引号包裹的当然要抓
+        self.assertIn('Zabuza', self._scan_text("opp = 'Zabuza'"))
+        # 弱特征名不许被常见词误伤（`Revi` ⊂ `Revision`）
+        self.assertEqual(self._scan_text('wProcessorRevision = 1'), [])
+        self.assertEqual(self._scan_text('Revision 版本'), [])
+        # 干净文本 → 无命中
+        self.assertEqual(self._scan_text("opp = 'player1'"), [])
 
 if __name__ == '__main__':
     unittest.main()

@@ -245,7 +245,13 @@ class TestMetaDecks(Base):
         self.assertEqual(names, ['Kewl Tune'])
 
     def test_set_deck_image_finds_deck(self):
-        """换图工具的卡组名解析：英文名 / 中文名 / 找不到的报错。"""
+        """换图工具的卡组名解析：英文名 / 中文名 / **表里没有的名字**。
+
+        ★ 2026-10-08 改口径（用户：「自定义卡组没有卡组卡图」）：表里找不到**不再报错**
+        —— 返回 ``(None, None)`` 表示「按名字直查」，让游戏内自组卡组名（狱神耀圣）
+        也能换图（`cmd_set` 把它存成 `data/deck_images_custom/<名字>.webp`）。
+        **真正的多个匹配**仍然报错（那种必须写清楚）。
+        """
         import set_deck_image as sdi
         self.st.init_schema()
         self.st.replace_meta_decks([
@@ -255,7 +261,7 @@ class TestMetaDecks(Base):
         self.assertEqual(sdi.find_deck(self.st, '烙印')[0]['name'], 'Branded')
         row, err = sdi.find_deck(self.st, '不存在的卡组XYZ')
         self.assertIsNone(row)
-        self.assertIn('找不到', err)
+        self.assertIsNone(err, '表里没有 = 按名字直查（自组卡组名），不再报错')
 
     def test_replace_prunes_and_keeps_id(self):
         """掉出榜单的会被清掉；仍在榜的 meta_deck_id 不变。"""
@@ -635,7 +641,8 @@ class TestUpsert(Base):
         self.assertIsNone(self.st.get_match('id-b'))
         # 批量接口也汇报跳过数
         again = self.st.upsert_many([first, second])
-        self.assertEqual(again, {'written': 1, 'skipped': 1, 'skipped-live': 0})
+        self.assertEqual(again, {'written': 1, 'skipped': 1,
+                                 'skipped-live': 0, 'skipped-solo': 0})
 
     def test_upsert_match_skips_live(self):
         """观战/回放不是对局 -> 压根不入库。"""
@@ -646,6 +653,22 @@ class TestUpsert(Base):
             'skipped-live')
         self.assertEqual(self.st.count(), 0)
 
+    def test_upsert_match_skips_solo(self):
+        """★ 2026-10-08 用户口径「我只需要记录 PVP 的数据」—— 单人局不入库。"""
+        self.st.init_schema()
+        self.assertEqual(
+            self.st.upsert_match(mk('solo1', '2026-10-06 19:20:42.263',
+                                    'Win', mode=MODE_SOLO)),
+            'skipped-solo')
+        self.assertEqual(self.st.count(), 0)
+        # 批量接口也汇报
+        again = self.st.upsert_many([
+            mk('solo2', '2026-10-07 11:19:47.075', 'Win', mode=MODE_SOLO),
+            mk('pvp1', '2026-10-08 10:56:06.800', 'Win', mode=MODE_PVP)])
+        self.assertEqual(again['skipped-solo'], 1)
+        self.assertEqual(again['written'], 1)
+        self.assertEqual(self.st.count(), 1)
+
     def test_upsert_match_abandon_becomes_lose(self):
         """天梯局没等到结束标记（中途退出/掉线）-> 直接判负，ended_at 留空。"""
         self.st.init_schema()
@@ -654,10 +677,13 @@ class TestUpsert(Base):
         got = self.st.get_match('m1')
         self.assertEqual(got['result'], 'Lose')
         self.assertIsNone(got['ended_at'])   # 保留「没看到结束」的标记
-        # 单人局不判负
-        self.st.upsert_match(mk('m2', '2026-09-09 12:40:54.045',
-                                '(未结束)', mode=MODE_SOLO))
-        self.assertEqual(self.st.get_match('m2')['result'], '(未结束)')
+        # 单人局**不入库**（用户 2026-10-08 口径「我只需要记录 PVP 的数据」）
+        # —— 也就不存在"判不判负"这回事了
+        self.assertEqual(
+            self.st.upsert_match(mk('m2', '2026-09-09 12:40:54.045',
+                                    '(未结束)', mode=MODE_SOLO)),
+            'skipped-solo')
+        self.assertIsNone(self.st.get_match('m2'))
         # 正常结束的天梯局不动
         self.st.upsert_match(mk('m3', '2026-09-10 21:25:08.464', 'Lose',
                                 mode=MODE_PVP))

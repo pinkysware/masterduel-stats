@@ -534,6 +534,114 @@ def show_cn_table(rows, ovr, todo_note=()):
             o.get('jp') or '——', ' '.join(notes)))
 
 
+def missing_image_rows(st, exists=None):
+    """库里**缺图**的站内条目 -> 可直接喂 `download_images` 的最小行表。
+
+    判「缺」= `img_file` 空，**或**那个文件已经不在了（清理过 / 换过机器）。
+    自定义条目（source='custom'）**不碰** —— 它们的图是我们自己放的，站内没有。
+    """
+    exists = exists or (lambda p: os.path.exists(os.path.join(PROJ, p)))
+    out = []
+    for r in st.list_meta_decks(include_hidden=True):
+        if (r.get('source') or '') == SOURCE_CUSTOM:
+            continue
+        p = r.get('img_file') or ''
+        if p and exists(p):
+            continue
+        out.append({'name': r['name'], 'kind': r.get('kind') or 'deck_type',
+                    'img_url': r.get('img_url')})
+    return out
+
+
+#: API 里每条卡组的**代表卡**字段名（`deck-types.card` = 该卡组的门面卡；
+#: 站内那张 `deck-type/<名字>` 图就是它 —— 2026-10-08 实测相关性 0.90~0.96）
+REP_CARD_API = 'https://www.masterduelmeta.com/api/v1/deck-types'
+
+def representative_card_id(deck_name):
+    """某卡组的**代表卡**（游戏内卡 id / gameId）；拿不到返回 None。
+
+    两步：`deck-types?name=X` 拿 `card`（ObjectId）→ `cards?_id=` 换成 `gameId`
+    （游戏内卡 id，与我们卡表同一套编号）。**只读公开 API，低频。**
+    """
+    try:
+        recs = fetch_api({'name': deck_name, 'fields': 'name,card'})
+    except Exception:                                    # noqa: BLE001
+        return None
+    #: `fetch_api` 统一返回 list（`limit=1` 的怪脾气它已经吞掉了）
+    oid = (recs[0] if recs else {}).get('card')
+    if not oid:
+        return None
+    try:
+        body, _ct = fetch('https://www.masterduelmeta.com/api/v1/cards'
+                          '?_id=%s&fields=name,gameId' % oid)
+        cards = json.loads(body.decode('utf-8', 'replace'))
+    except Exception:                                    # noqa: BLE001
+        return None
+    if isinstance(cards, list):
+        cards = cards[0] if cards else None
+    gid = (cards or {}).get('gameId')
+    return int(gid) if gid else None
+
+
+def fetch_by_representative(deck_name):
+    """站内卡组图取不到时的兜底：拿**代表卡的卡绘** -> 覆盖目录里的图路径。
+
+    返回 ``(相对路径, 说明)``；失败返回 ``(None, 原因)``。
+    """
+    from core import deck_images
+    cid = representative_card_id(deck_name)
+    if not cid:
+        return None, '拿不到代表卡'
+    tmp = deck_images.fetch_card_art(cid)
+    if not tmp:
+        return None, '代表卡 #%s 的卡绘取不到' % cid
+    try:
+        #: 覆盖目录里落**卡组名**（`resolve` 靠文件名直查命中；自组卡组也能用）
+        rel = deck_images.save_custom_image(deck_name, tmp)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    if not rel:
+        return None, '存图失败'
+    return rel, '代表卡 #%s' % cid
+
+
+def fetch_missing_images():
+    """补库里缺的卡组图（联网）。返回退出码（0 = 全部补上）。
+
+    两条腿：① 站内 `deck-type/<名字>` 图；② 取不到就**用代表卡的卡绘**兜底
+    （2026-10-08：卡组图 == 代表卡卡绘，实测相关性 0.90~0.96）。
+    """
+    st = Storage()
+    st.init_schema()
+    rows = missing_image_rows(st)
+    if not rows:
+        print('[缺图] 没有缺图的站内条目')
+        return 0
+    print('[缺图] %d 条：%s' % (len(rows), '、'.join(r['name'] for r in rows)))
+    got, _skipped, failed = download_images(rows)
+    fixed, still = 0, []
+    for r in rows:
+        name = r['name']
+        rel = got.get(name)
+        failed_names = {f[0] for f in failed}
+        if not rel or name in failed_names:
+            #: 站内图失败 —— 走代表卡兜底
+            rel2, why = fetch_by_representative(name)
+            if rel2:
+                rel = rel2
+                print('   ⇄ %-28s 站内图取不到，改用%s' % (name[:28], why))
+        if rel:
+            st.set_meta_deck_override(name, img_file=rel)
+            fixed += 1
+        else:
+            still.append(name)
+    print('[缺图] 补上 %d，失败 %d' % (fixed, len(still)))
+    for name, err in failed:
+        print('   ✗ %-28s %s' % (name[:28], err))
+    return 1 if still else 0
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding='utf-8')
@@ -550,7 +658,13 @@ def main():
                     help='不清理已掉出榜单的旧条目')
     ap.add_argument('--cn-only', action='store_true',
                     help='只把 data/deck_name_cn.csv 应用到库里（不联网、不违规）')
+    ap.add_argument('--missing-images', action='store_true',
+                    help='只补库里缺的卡组图（联网；不抓榜单、不动覆盖表）')
     args = ap.parse_args()
+
+    # ---- 0.5 只补缺图（Q17 贴完覆盖表后接着跑；2026-10-08）----
+    if args.missing_images:
+        return fetch_missing_images()
 
     # ---- 0. 只应用覆盖表（不联网）----
     if args.cn_only:

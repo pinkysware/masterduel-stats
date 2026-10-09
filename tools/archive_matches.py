@@ -413,8 +413,10 @@ def warn_unsynced(st, rows):
     db = st.list_matches(limit=None)
     known_ids = {r['match_id'] for r in db}
     known_times = {r['started_at'] for r in db}
+    # ⚠️ solo 也排除：单人局**本来就不入库**（用户 2026-10-08 口径），
+    #    不排除的话每次 --stats 都会提示「有 N 局尚未入库」，而 --sync 又不写。
     fresh = [r['match_id'] for r in rows
-             if r.get('mode') != MODE_LIVE
+             if r.get('mode') not in (MODE_LIVE, MODE_SOLO)
              and r['match_id'] not in known_ids
              and r['started_at'] not in known_times]
     if fresh:
@@ -635,6 +637,11 @@ def main():
             skipped.append(r['match_id'])
         elif status == 'skipped-live':
             # 观战/回放不是对局：库里若曾误录过，清掉（id 或开始时间命中都算）
+            n = st.delete_match(r['match_id'], r['started_at'])
+            if n:
+                removed.append(r['started_at'])
+        elif status == 'skipped-solo':
+            # 单人（PvE）不入库（用户 2026-10-08 口径）—— 库里历史误录的清掉
             n = st.delete_match(r['match_id'], r['started_at'])
             if n:
                 removed.append(r['started_at'])

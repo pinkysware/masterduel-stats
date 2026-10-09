@@ -34,6 +34,11 @@ decks, rank progress and the metagame — with UI in **English / 中文 / 日本
   read from the game memory **read-only**.
 - **Trilingual card / deck names** — a built-in table covers ~14,000 cards in
   English / Chinese / Japanese.
+- **Deck art management** — in the deck-name manager you can set art for any deck:
+  search a card name to pick its artwork, or pull it from the site tier list.
+  Custom decks (not on the tier list) get art and search too.
+- **Reference refresh from the UI** — dashboard → Settings → Data tools →
+  "Refresh reference"; no command line needed.
 
 ## Install & Run
 
@@ -41,8 +46,8 @@ decks, rank progress and the metagame — with UI in **English / 中文 / 日本
 
 | Asset | Size | Requirements |
 |---|---|---|
-| `masterduel-stats-v1.0.0-win64-full.zip` | ~193 MB | **None** — Python & all deps bundled; unzip anywhere and run `start.bat` |
-| `masterduel-stats-v1.0.0-win64-lite.zip` | ~4 MB | Python 3.13 installed; `start.bat` installs the dependencies on first run |
+| `masterduel-stats-v1.0.1-win64-full.zip` | ~193 MB | **None** — Python & all deps bundled; unzip anywhere and run `start.bat` |
+| `masterduel-stats-v1.0.1-win64-lite.zip` | ~4 MB | Python 3.13 installed; `start.bat` installs the dependencies on first run |
 | Source code (zip / tar.gz) | auto | for developers — attached automatically by GitHub for each tag |
 
 1. Install [Python 3.13](https://www.python.org/downloads/) (check *Add to PATH*,
@@ -70,6 +75,7 @@ decks, rank progress and the metagame — with UI in **English / 中文 / 日本
   ```
   python tools\fetch_mdm_decks.py --all
   ```
+  (Same thing from the UI: dashboard → Settings → Data tools → "Refresh reference")
   Refresh monthly.
 * **Banlist / deck names / deck images**: one-click tools live in the dashboard
   settings page; refresh monthly.

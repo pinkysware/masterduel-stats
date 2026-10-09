@@ -186,6 +186,81 @@ _T = {
     '看板…': ('Dashboard…', 'ダッシュボード…'),
     '退出': ('Quit', '終了'),
 
+    # ---- 卡图设置（2026-10-08 问题 1：自定义卡组没卡图）----
+    '设置卡图': ('Set Deck Art', 'デッキ画像を設定'),
+    '卡组：%s': ('Deck: %s', 'デッキ：%s'),
+    '选择本地图片…': ('Choose local image…', 'ローカル画像を選択…'),
+    '选择图片': ('Choose Image', '画像を選択'),
+    '从站内卡组取图…': ('Fetch from site deck…', 'サイトのデッキから取得…'),
+    '取图': ('Fetch', '取得'),
+    '还原为默认图': ('Reset to default', '既定に戻す'),
+    '请填站内英文名': ('Enter the site (EN) deck name',
+                    'サイト内の英名を入力してください'),
+    '站内英文名（如 Elfnote / Power Patron）':
+        ('Site deck name, e.g. Elfnote / Power Patron',
+         'サイト内デッキ名（例：Elfnote / Power Patron）'),
+    '按站内卡组名取那张 200×200 的卡图（适合自组卡组 ≈ 某站内卡组）':
+        ('Grab that deck\'s 200×200 art from the site (good when your custom deck ≈ a site deck)',
+         'サイトの 200×200 デッキ画像を取得（自組デッキがサイトのデッキに近い時）'),
+    '点一下给这个卡组设置卡图（本地图片 / 从站内取图 / 还原）':
+        ('Click to set deck art (local image / fetch from site / reset)',
+         'クリックでデッキ画像を設定（ローカル / サイト / 既定に戻す）'),
+    '设置卡图失败（图读不出来？）': ('Failed to set deck art (unreadable image?)',
+                                'デッキ画像の設定に失敗（画像が読めません？）'),
+    '设置卡图失败：%s': ('Failed to set deck art: %s',
+                      'デッキ画像の設定に失敗：%s'),
+    '站内没有「%s」这张图（自组混轴名会 404；试试最接近的站内卡组名）':
+        ('The site has no art for "%s" (custom/engine names 404; try the nearest site deck)',
+         'サイトに「%s」の画像がありません（混成名は404。近いサイト名を）'),
+    '已设置「%s」的卡图：%s': ('Deck art set for "%s": %s',
+                           '「%s」のデッキ画像を設定：%s'),
+    '已还原「%s」的卡图%s': ('Deck art reset for "%s"%s',
+                         '「%s」のデッキ画像を既定に戻しました%s'),
+    # ---- 自定义卡组只读行（2026-10-08 问题 1）----
+    '%d / %d 条（其中 %d 条不在覆盖表）':
+        ('%d / %d entries (%d not in the cover table)',
+         '%d / %d 件（うち %d 件は上書き表に無し）'),
+    '我加的自定义卡组（不在覆盖表里；只有卡图能改）':
+        ('My custom decks (not in the cover table; only art is editable)',
+         '自分で追加したデッキ（上書き表に無し。画像のみ編集可）'),
+    '我加的自定义卡组（不在覆盖表里；名字来自标注）':
+        ('My custom deck (not in the cover table; name comes from labels)',
+         '自分で追加したデッキ（上書き表に無し。名前はラベル由来）'),
+    '点一下给这个卡组设置卡图': ("Click to set this deck's art",
+                            'クリックでこのデッキの画像を設定'),
+    '这个卡组不在覆盖表里（只有卡图能改）':
+        ('This deck is not in the cover table (only art is editable)',
+         'このデッキは上書き表にありません（画像のみ編集可）'),
+    # ---- Q17 补缺图（2026-10-08）----
+    '已贴进库，正在补缺失的卡图…':
+        ('Pushed to DB; fetching missing deck art…',
+         'DBに反映済み。不足するデッキ画像を取得中…'),
+    # ---- 设置卡图：卡名搜索（2026-10-08）----
+    '用某张卡的卡图（推荐）：': ('Use a card\'s art (recommended):',
+                                       'カードの画像を使う（推奨）：'),
+    '搜卡名，如 灰流丽 / 闪刀姬－篝': ('Search a card name',
+                                    'カード名を検索'),
+    '用这张卡的卡图': ('Use this card\'s art', 'このカードの画像を使う'),
+    '先搜一张卡，再从列表里点一张': ('Search a card, then pick one from the list',
+                                     'カードを検索して一つ選んでください'),
+    '取不到那张卡的卡绘（卡表里没有 / 网络不通）': ('Could not fetch that card\'s art (not in card table / offline)',
+                                       'そのカードの画像を取得できません'),
+    '选一个卡组，取它那张 200×200 的卡图（可搜中文名 / 别名 / 日文名）':
+        ('Pick a deck and grab its 200x200 art (searchable by CN/alias/JP)',
+         'デッキを選んで 200x200 画像を取得（中・別名・日本語で検索可）'),
+    '请选一个卡组': ('Please pick a deck', 'デッキを選んでください'),
+    # ---- 设置卡图第二版（2026-10-08）----
+    '获取卡图': ("Fetch Art", "画像を取得"),
+    '取选中那张卡的卡图（只看，不落盘）': ("Fetch the selected card's art (preview only)", "選択したカードの画像を取得（プレビューのみ）"),
+    '把上面这张图设为该卡组的卡图': ("Set the image above as this deck's art", "上の画像をこのデッキの画像に設定"),
+    '正在获取卡图…': ("Fetching art…", "画像を取得中…"),
+    '先在下面选一张卡（点一行，再点它右边的「确认」）': ("Pick a card below (click a row, then its 确认 button)", "下のカードを選んでください（行をクリック→右の「確認」）"),
+    '卡图已就绪 —— 点「保存」生效': ("Art ready — click 保存 to apply", "画像の準備完了 —「保存」で適用"),
+    '已选「%s」—— 点「获取卡图」看效果，「保存」生效': ("Selected \"%s\" — click 获取卡图 to preview, 保存 to apply", "「%s」を選択 —「获取卡图」で確認、「保存」で適用"),
+    '确认': ("OK", "決定"),
+    # ---- 设置卡图：状态行不回显路径（2026-10-08）----
+    '已设置「%s」的卡图': ("Deck art set for \"%s\"",
+                             '「%s」のデッキ画像を設定しました'),
     # ---- 本地化第二批（2026-10-04 实时切换 + 全页面接线）----
     " %d平": (" %d draw", " %d引き分け"),
     " · 最近生效 %s": (" · last effective %s", " ・最近の発効 %s"),
@@ -212,6 +287,9 @@ _T = {
     "「%s」已经在表里了（没重复加）": ("\"%s\" is already in the table (not added again)", "「%s」は既に表にあります（重複追加していません）"),
     "一个都没勾": ("Nothing checked", "何もチェックされていません"),
     "上游卡表比对与更新（三语卡名）": ("Compare with and update the upstream card table (trilingual names)", "上流カードDBの比較と更新（三言語カード名）"),
+    "参照库刷新": ("Refresh Reference Decks", "参照データを更新"),
+    "刷新（几分钟）": ("Refresh (a few min)", "更新（数分）"),
+    "卡组构成的参照库（每张卡的使用率，每月一次）": ("Reference decks for compositions (per-card usage, monthly)", "構築の参照データ（カード別使用率・毎月）"),
     "下载更新": ("Download Updates", "更新をダウンロード"),
     "下面三项：禁限表 / 查卡 / 礼盒": ("Three items below: Banlist / Card Search / Gift Box", "下の3項目：リミットレギュレーション / カード検索 / プレゼントボックス"),
     "不再提示 · 之后直接按此执行": ("Don't Ask Again · Apply This Choice Directly", "今後表示しない ・ 以降はこの選択で実行"),

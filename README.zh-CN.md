@@ -28,6 +28,9 @@
 - **对手卡组标注与反推**：手动标注之外，内置基于卡表相似度的反推建议。
 - **段位与巅峰积分**：对局结束后从游戏内存**只读**读取真实段位与 RATE 积分。
 - **三语卡名 / 卡组名**：内置约 1.4 万张卡的中 / 英 / 日卡名表。
+- **卡图管理**：卡组名管理页可给任意卡组设图 —— 搜卡名挑卡绘、或从站内榜单取图；
+  自组卡组（榜单里没有的）也能配图、也能搜到。
+- **参照库一键刷新**：看板「设置 → 数据工具 → 参照库刷新」，不用敲命令行。
 
 ## 安装与运行
 
@@ -35,8 +38,8 @@
 
 | 附件 | 体积 | 需要什么 |
 |---|---|---|
-| `masterduel-stats-v1.0.0-win64-full.zip` | ~193 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `start.bat` |
-| `masterduel-stats-v1.0.0-win64-lite.zip` | ~4 MB | 需先装 Python 3.13；首次运行 `start.bat` 会自动安装依赖 |
+| `masterduel-stats-v1.0.1-win64-full.zip` | ~193 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `start.bat` |
+| `masterduel-stats-v1.0.1-win64-lite.zip` | ~4 MB | 需先装 Python 3.13；首次运行 `start.bat` 会自动安装依赖 |
 | Source code (zip / tar.gz) | 自动 | 源码包，GitHub 对每个 tag 自动附带 |
 
 1. 安装 [Python 3.13](https://www.python.org/downloads/)（勾选 *Add to PATH*，
@@ -61,6 +64,7 @@
   ```
   python tools\fetch_mdm_decks.py --all
   ```
+  （等价入口：看板「设置 → 数据工具 → 参照库刷新」，点一下就行）
 * **禁限表 / 卡组名称 / 卡组图**：看板设置页有一键工具，按月刷新即可；
 * （可选）用 Untapped 公开 API 补录历史对局：把你的账号标识写进
   `data/untapped_ids.json`（格式见 `tools/fetch_untapped_api.py` 顶部说明）。

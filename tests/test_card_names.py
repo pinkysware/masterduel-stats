@@ -231,5 +231,50 @@ class YgocdbTypeTest(unittest.TestCase):
         self.assertTrue(cn.is_extra('21600'))
 
 
+
+class SearchTest(unittest.TestCase):
+    """`card_names.search` —— 按卡名搜卡 id（2026-10-08，给「挑代表卡」用）。
+
+    用户口径：「只能输英文查很不方便」→ 中文/英文/日文卡名都要能搜。
+    """
+
+    def setUp(self):
+        self.table = {
+            100: ('灰流丽', 'Ash Blossom & Joyous Spring', '灰流うらら'),
+            200: ('灰流丽之心', 'Ash Blossom Heart', '灰流うららの心'),
+            300: ('闪刀姬－篝', 'Sky Striker Ace - Kagari', '閃刀姫－カガリ'),
+        }
+
+    def test_chinese_substring(self):
+        hits = cn.search('灰流丽', table=self.table)
+        self.assertIn(100, hits)
+        self.assertIn(200, hits)
+
+    def test_english_query(self):
+        self.assertEqual(cn.search('Kagari', table=self.table), [300])
+
+    def test_japanese_query(self):
+        self.assertIn(300, cn.search('カガリ', table=self.table))
+
+    def test_lang_filter_limits_columns(self):
+        #: 限 cn 列 -> 英文查询搜不到
+        self.assertEqual(cn.search('Kagari', table=self.table, lang='cn'), [])
+        self.assertEqual(cn.search('Kagari', table=self.table, lang='en'), [300])
+
+    def test_prefix_hits_rank_first_and_shorter_first(self):
+        """「灰流丽」是「灰流丽之心」的前缀 —— 精确/短名要排在前面。"""
+        hits = cn.search('灰流丽', table=self.table)
+        self.assertEqual(hits[0], 100)
+
+    def test_empty_query_returns_empty(self):
+        self.assertEqual(cn.search('', table=self.table), [])
+        self.assertEqual(cn.search('   ', table=self.table), [])
+
+    def test_limit_is_respected(self):
+        self.assertLessEqual(len(cn.search('灰流丽', limit=1, table=self.table)), 1)
+
+    def test_case_insensitive(self):
+        self.assertEqual(cn.search('kagari', table=self.table), [300])
+
 if __name__ == '__main__':
     unittest.main()

@@ -166,9 +166,11 @@ class DecksPage(QWidget):
     saved = Signal()
 
     def __init__(self, parent=None, csv_path=None, runner_factory=None,
-                 image_resolver=None):
+                 image_resolver=None, storage=None):
         super().__init__(parent)
         self._data = {}
+        #: 传给「卡组名管理」—— 它换图时要写库（`set_meta_deck_override`）
+        self._storage = storage
         self._tab = DEFAULT_TAB
         outer = QVBoxLayout(self)
         outer.setContentsMargins(theme.S_LG, theme.S_MD, theme.S_LG, theme.S_LG)
@@ -211,7 +213,8 @@ class DecksPage(QWidget):
         self.stack = QStackedWidget()
         self.names_page = OppDeckManager(csv_path=csv_path,
                                          runner_factory=runner_factory,
-                                         image_resolver=image_resolver)
+                                         image_resolver=image_resolver,
+                                         storage=self._storage)
         self.names_page.saved.connect(self._on_names_saved)
         #: 页签 2 = Tier 表（从「查询」搬进来的，`ui/tier_page.py` 原样内嵌）——
         #: 点芯片 → 直接切到本页的「卡组构成」页签（不再是跨页跳）

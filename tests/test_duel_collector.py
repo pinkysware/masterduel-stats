@@ -1928,5 +1928,59 @@ class TestGameGone(Base):
         self.assertEqual(self.c.on_game_gone(), [])
 
 
+# =====================================================================
+# 2026-10-08 事故回归：单实例检查被 PID 复用骗过 -> 整场零记录
+# =====================================================================
+from unittest import mock as _mock                      # noqa: E402
+from tools import duel_collector as _dc                 # noqa: E402
+
+
+class TestSingleInstanceGuard(unittest.TestCase):
+    """★ pid 文件是**陈旧判据**，而且 Windows 会**复用 pid**。
+
+    事故（2026-10-08）：10-06 的采集器 pid=15848 退出后 pid 文件留在磁盘；
+    10-08 10:26 系统把 15848 分给了 svchost；10:54 新采集器用裸
+    ``OpenProcess(SYNCHRONIZE)`` 探测成功 -> 误判「已有采集器在跑」
+    -> ``return 2`` -> 当天没有采集器在跑，**用户两局全丢**。
+    修法：``pid_alive`` 必须校验「进程镜像名 + 创建时间」。
+    """
+
+    def test_recycled_pid_is_not_collector(self):
+        """pid 活着但镜像名不是 python（svchost 等）-> 不算采集器。"""
+        with _mock.patch.object(_dc, 'proc_image_name',
+                                return_value='svchost.exe'):
+            self.assertFalse(_dc.pid_alive(15848))
+
+    def test_python_pid_is_collector(self):
+        with _mock.patch.object(_dc, 'proc_image_name',
+                                return_value='pythonw.exe'):
+            self.assertTrue(_dc.pid_alive(4242))
+
+    def test_born_mismatch_rejected(self):
+        """镜像名对但创建时间不符 = 同 pid 的另一条命 -> 拒绝。"""
+        with _mock.patch.object(_dc, 'proc_image_name',
+                                return_value='python.exe'), \
+                _mock.patch.object(_dc, 'proc_born', return_value=222):
+            self.assertFalse(_dc.pid_alive(4242, born=111))
+
+    def test_born_match_accepted(self):
+        with _mock.patch.object(_dc, 'proc_image_name',
+                                return_value='python.exe'), \
+                _mock.patch.object(_dc, 'proc_born', return_value=111):
+            self.assertTrue(_dc.pid_alive(4242, born=111))
+
+    def test_dead_pid_rejected(self):
+        with _mock.patch.object(_dc, 'proc_image_name', return_value=None):
+            self.assertFalse(_dc.pid_alive(999999))
+
+    def test_empty_pid_rejected(self):
+        self.assertFalse(_dc.pid_alive(None))
+        self.assertFalse(_dc.pid_alive(0))
+
+    def test_own_pid_accepted_for_real(self):
+        """真环境自证：本进程就是 python，必须被判成活采集器。"""
+        self.assertTrue(_dc.pid_alive(os.getpid()))
+
+
 if __name__ == '__main__':
     unittest.main()

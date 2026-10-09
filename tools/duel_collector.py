@@ -120,6 +120,9 @@ EM_WB_DRY_TRIES = 4
 ENGINE_BLOB = 0x140
 #: pid 文件（双开检测 + 启动自愈的 game pid 变化判据）
 PID_PATH = os.path.join(PROJ, 'data', 'archive', 'duel_collector.pid')
+#: 采集器进程的镜像名 —— ⚠️ Windows 会**复用 pid**，双开检测必须校验它。
+#: 2026-10-08 事故：只看 OpenProcess 成不成功，被 svchost 骗过 -> 整场零记录。
+COLLECTOR_EXES = ('python.exe', 'pythonw.exe')
 #: 默认记录根目录
 DEFAULT_RECORDS = os.path.join(PROJ, 'data', 'archive', 'duel_records')
 #: 默认 end_messages.jsonl
@@ -1967,7 +1970,9 @@ def write_heartbeat(in_duel=False, game_pid=None):
 def write_pid_file(game_pid):
     os.makedirs(os.path.dirname(PID_PATH), exist_ok=True)
     with open(PID_PATH, 'w', encoding='utf-8', newline='') as f:
-        json.dump({'collector_pid': os.getpid(), 'game_pid': game_pid,
+        json.dump({'collector_pid': os.getpid(),
+                   'collector_born': proc_born(os.getpid()),
+                   'game_pid': game_pid,
                    'at': now_str()}, f, ensure_ascii=False)
 
 
@@ -1978,19 +1983,72 @@ def clear_pid_file():
         pass
 
 
-def pid_alive(pid):
-    if not pid:
-        return False
+def proc_image_name(pid):
+    """取 pid 的**可执行文件名**（小写）；不存在 / 无权限时返回 None。"""
     try:
         import ctypes
-        SYNCHRONIZE = 0x00100000
-        h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
-        if h:
-            ctypes.windll.kernel32.CloseHandle(h)
-            return True
-        return False
+        from ctypes import wintypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not h:
+            return None
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(len(buf))
+            if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                return os.path.basename(buf.value).lower()
+            return None
+        finally:
+            k32.CloseHandle(h)
     except Exception:
+        return None
+
+
+def proc_born(pid):
+    """取 pid 的**进程创建时间**（Windows FILETIME 整数）；拿不到返回 None。
+
+    ``(pid, 创建时间)`` 才是进程的**唯一身份** —— pid 会被系统复用，
+    这个组合不会。
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not h:
+            return None
+        try:
+            c, e, k, u = (wintypes.FILETIME() for _ in range(4))
+            if k32.GetProcessTimes(h, ctypes.byref(c), ctypes.byref(e),
+                                   ctypes.byref(k), ctypes.byref(u)):
+                return (c.dwHighDateTime << 32) | c.dwLowDateTime
+            return None
+        finally:
+            k32.CloseHandle(h)
+    except Exception:
+        return None
+
+
+def pid_alive(pid, born=None):
+    """该 pid 是否指向**活着的采集器**（而不是被复用给别的进程）。
+
+    ⚠️ 不能只问 OpenProcess 成不成功 —— Windows 会**复用 pid**：
+    2026-10-08 事故，10-06 那次采集器的 pid=15848 在 10-08 10:26 被系统
+    分给了 svchost，于是 10:54 启动的新采集器误判「已有实例在跑」直接
+    return 2，**当天整场零记录**（两局全丢）。
+    所以必须校验 ①镜像名是 python/pythonw；②有创建时间记录时它也要一致。
+    """
+    if not pid:
         return False
+    if proc_image_name(pid) not in COLLECTOR_EXES:
+        return False
+    if born:
+        cur = proc_born(pid)
+        if cur is None or int(cur) != int(born):
+            return False
+    return True
 
 
 def import_just_closed(records_dir, names, log, importer=None):
@@ -2100,12 +2158,18 @@ def main(argv=None):
         % (os.getpid(), args.interval, args.emit_state))
 
     # 双开检测（P3-9）：已有活实例就提示退出，不上锁
+    # ⚠️ pid 文件是**陈旧判据**（只在启动写、优雅退出才删），被 kill 的实例
+    #    会留下它；且 pid 会被系统复用（2026-10-08 svchost 事故）。
+    #    所以这里必须用 pid_alive 校验「镜像名 + 创建时间」，别退回裸 OpenProcess。
     prev = load_pid_file()
-    if prev and pid_alive(prev.get('collector_pid')) and \
-            prev.get('collector_pid') != os.getpid():
-        log('⚠️ 已有采集器在跑（pid=%s），本实例退出（不上锁，防双写）'
-            % prev['collector_pid'])
-        return 2
+    if prev and prev.get('collector_pid') != os.getpid():
+        if pid_alive(prev.get('collector_pid'), prev.get('collector_born')):
+            log('⚠️ 已有采集器在跑（pid=%s），本实例退出（不上锁，防双写）'
+                % prev['collector_pid'])
+            return 2
+        log('（pid 文件里的 %s 已不是采集器：%s —— 按陈旧文件处理，继续启动）'
+            % (prev.get('collector_pid'),
+               proc_image_name(prev.get('collector_pid')) or '进程已不存在'))
 
     game_pids = find_pids_by_name('masterduel.exe')
     self_heal(args.records_dir, game_pids, prev, log)

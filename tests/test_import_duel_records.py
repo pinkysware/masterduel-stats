@@ -427,7 +427,7 @@ class TestPairing(Base):
                                         'ids': [21341, 12950]})
         mp = os.path.join(dst, 'manifest.json')
         man = read_json(mp)
-        man['duel_settings'] = {'names': ['幻想乡的毛玉', '示例玩家'],
+        man['duel_settings'] = {'names': ['player1', '示例玩家'],
                                 'names_direction': 'by-seat',
                                 'game_mode': 3, 'duel_start_ts': 1789298552}
         with open(mp, 'w', encoding='utf-8', newline='') as f:
@@ -435,9 +435,9 @@ class TestPairing(Base):
         self.run_import(apply=True)
         duel = read_json(os.path.join(dst, 'duel.json'))
         self.assertEqual(duel['meta']['seat'], 1)      # 同 TestSeatIntegration
-        self.assertEqual(duel['meta']['opp_player_name'], '幻想乡的毛玉')
+        self.assertEqual(duel['meta']['opp_player_name'], 'player1')
         row = self.row_by_id('rec:record_20260913_120045')
-        self.assertEqual(row['opp_player_name'], '幻想乡的毛玉')
+        self.assertEqual(row['opp_player_name'], 'player1')
 
     def test_opp_name_by_seat_without_seat_stays_null(self):
         """seat 判不出（无快照）-> 名字保持 NULL，不硬猜。"""

@@ -328,5 +328,44 @@ class RealDbTest(unittest.TestCase):
         self.assertEqual(starts, sorted(starts, reverse=True))
 
 
+class SoloFilterTest(unittest.TestCase):
+    """★ 2026-10-08：补录的**日志行 `game_mode` 是 NULL**，solo 过滤不许漏。
+
+    用户实报：悬浮窗冒出 4 行单人模式。根因 = 过滤只问
+    `mode_group(game_mode)`，而 `mode_group(None) -> None` —— 那些行
+    （`origin='log'`，日志线拿不到 game_mode）就漏过去了。
+    """
+
+    @staticmethod
+    def _row(started, game_mode, mode, result='Win'):
+        return {'match_id': 'x' + started[-5:], 'started_at': started,
+                'result': result, 'game_mode': game_mode, 'mode': mode,
+                'my_deck_name': '闪刀姬', 'opp_deck_name': None,
+                'opp_player_name': None}
+
+    def test_log_solo_row_is_filtered(self):
+        """game_mode=None + mode='solo'（补录的日志行）→ 不进悬浮窗。"""
+        rows = [self._row('2026-10-08 11:00', None, 'pvp'),
+                self._row('2026-10-08 10:00', None, 'solo'),
+                self._row('2026-10-08 09:00', None, 'pvp')]
+        rec = U.build_recent(FakeStorage(rows), decks=FakeDecks())
+        self.assertEqual([r['started_at'] for r in rec],
+                         ['2026-10-08 11:00', '2026-10-08 09:00'])
+
+    def test_game_mode_solo_still_filtered(self):
+        """原来的判据（game_mode=9）没被改坏。"""
+        rows = [self._row('2026-10-08 11:00', 3, 'pvp'),
+                self._row('2026-10-08 10:00', 9, 'solo')]
+        rec = U.build_recent(FakeStorage(rows), decks=FakeDecks())
+        self.assertEqual([r['started_at'] for r in rec],
+                         ['2026-10-08 11:00'])
+
+    def test_log_pvp_row_kept(self):
+        """补录的天梯日志行（game_mode=None, mode='pvp'）必须留着。"""
+        rows = [self._row('2026-10-08 11:00', None, 'pvp')]
+        rec = U.build_recent(FakeStorage(rows), decks=FakeDecks())
+        self.assertEqual(len(rec), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

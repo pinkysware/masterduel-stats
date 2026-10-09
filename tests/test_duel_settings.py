@@ -65,10 +65,10 @@ class TestReadDuelSettings(unittest.TestCase):
 
     def test_full_chain_neutral_pair(self):
         mem = FakeMem()
-        proc, dti = build_scene(mem, names=['幻日のヨハネ', '示例玩家'])
+        proc, dti = build_scene(mem, names=['player1', '示例玩家'])
         duel_settings.find_typeinfo = lambda *a, **k: [dti]
         got = duel_settings.read_duel_settings(proc, None, 'tbl')
-        self.assertEqual(got, {'names': ['幻日のヨハネ', '示例玩家'],
+        self.assertEqual(got, {'names': ['player1', '示例玩家'],
                                'names_direction': 'by-seat',
                                'game_mode': 3,
                                'duel_start_ts': 1726000000})

@@ -131,7 +131,7 @@ def _row(**kw):
         'my_deck_img': 'data/deck_images_custom/Sky_Striker.webp',
         'opp_deck': '烙印', 'opp_known': True,
         'opp_deck_img': 'data/deck_images_custom/Branded.webp',
-        'opp_player': '幻想乡的毛玉',
+        'opp_player': 'player1',
         'opp_deck_id': 7,
         'badge_icon': None, 'badge_text': '',
         'rank_before': (5, 2), 'rank_after': None, 'rank_delta': None,
@@ -1039,6 +1039,147 @@ def _move(dx, dy):
     return QMouseEvent(QEvent.MouseMove, QPointF(4 + dx, 4 + dy),
                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
                        QPointingDevice.primaryPointingDevice())
+
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class OwnDeckSearchTest(unittest.TestCase):
+    """★ 2026-10-08（用户）：「我添加后在悬浮窗输入名字查询不到我添加的自定义卡组」。
+
+    根因：悬浮窗那条「自定义卡组名」只写 `opp_decks`（`mark_meta_deck`），
+    而搜索走 `search_meta_decks`（只查 meta 清单）→ 刚加的名字**永远搜不到**。
+    现在把「我加过、不在 meta 任何叫法里」的名字并进搜索结果。
+    """
+
+    def setUp(self):
+        _app()
+        #: `狱神耀圣` = 真自定义（meta 里没有任何叫法）；`烙印` = Branded 的中文名
+        #: （**不该**被当成自定义再列一次，否则同一卡组出两行）。
+        self.st = _FakeStorage(
+            DECKS,
+            opp_decks=[(31, '狱神耀圣', None, 4), (32, '烙印', None, 2),
+                       (33, '未知卡组', None, 1), (34, '混轴卡组', None, 1)])
+
+    def _panel(self, **kw):
+        p = selector.DeckSelectorPanel(self.st, lang='cn', **kw)
+        self.addCleanup(p.deleteLater)
+        return p
+
+    def test_custom_name_is_findable(self):
+        p = self._panel()
+        p.search.setText('狱神耀圣')
+        names = [r.deck['name'] for r in p.deck_rows()]
+        self.assertIn('狱神耀圣', names, '我加过的名字必须能搜到')
+        self.assertFalse(p.empty_text(), '不该显示「没有匹配」')
+
+    def test_custom_name_search_by_partial(self):
+        p = self._panel()
+        p.search.setText('狱神')
+        self.assertIn('狱神耀圣', [r.deck['name'] for r in p.deck_rows()])
+
+    def test_meta_alias_is_not_duplicated(self):
+        """`烙印` 是 Branded 的中文名 —— 搜索时**不能**再冒出一行「自定义烙印」。"""
+        p = self._panel()
+        p.search.setText('烙印')
+        names = [r.deck['name'] for r in p.deck_rows()]
+        self.assertEqual(names.count('Branded'), 1,
+                         '同一卡组只许出现一次：%s' % names)
+        self.assertNotIn('烙印', names, '别名不该被当成「我加的自定义」再列一行')
+
+
+    def test_pinyin_finds_own_custom_decks_too(self):
+        """★ 2026-10-08（用户）：「我在卡组选择器里搜索自定义卡组只能输入中文才能查到，
+        输入拼音或者缩写查不到」。
+
+        根因：拼音块只跑 `self._decks`（meta 清单），漏了「我加过的卡组」那批
+        （它们在 `opp_decks` 里）。现在两边共用同一个 `pinyin_match.match`。
+        """
+        from core import pinyin_match
+        if not pinyin_match.available():
+            self.skipTest('没装 pypinyin')
+        p = self._panel()
+        #: 桩里的自定义卡组名（见 setUp 的 opp_decks）
+        for q in ('ysys', 'yushenyaosheng'):
+            p.search.setText(q)
+            names = [r.deck['name'] for r in p.deck_rows()]
+            self.assertIn('狱神耀圣', names, '拼音 %r 应命中自定义卡组' % q)
+
+    def test_placeholders_are_not_listed(self):
+        """占位条目（未知卡组 / 混轴卡组）不当卡组列出来。"""
+        p = self._panel()
+        p.search.setText('卡组')
+        rows = [r.deck['name'] for r in p.deck_rows()]
+        self.assertNotIn('混轴卡组', rows)
+        self.assertEqual(rows.count(selector.UNKNOWN_DECK_NAME), 1,
+                         '只有末尾那条固定的「未知卡组」')
+
+    def test_own_deck_pick_is_stable_and_binds_the_name(self):
+        """点搜索结果里那一条 → chosen 是**同名**的伪 meta 行（不是「自定义」那条）。"""
+        p = self._panel()
+        p.search.setText('狱神耀圣')
+        row = next(r for r in p.deck_rows() if r.deck['name'] == '狱神耀圣')
+        row.clicked.emit(row)
+        self.assertEqual(p.chosen['name'], '狱神耀圣')
+        self.assertFalse(p.chosen.get('custom'),
+                         '不能标成「自定义输入框」那条，否则高亮跑到输入框上去')
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class NoHorizontalScrollTest(unittest.TestCase):
+    """★ 2026-10-08（用户）：「卡组选择器有概率出现横向拖动条，不应该出现，
+    显示不全有时候必须拖动才能点到确认」。
+
+    两个根因（都已修）：
+      ① `DeckRow` 的名字标签 minSizeHint = **文字宽度** → 长名字（英文名可达 350px）
+         把滚动区内容撑得比视口宽；
+      ② `_fit_width` 没给**纵向**滚动条留位（默认态 6 行 > 可视 5 行，它必然出现）。
+    """
+
+    def setUp(self):
+        _app()
+        self.st = _FakeStorage(DECKS)
+
+    def _long_panel(self, **kw):
+        """带一个**很长英文名**的候选（面板最宽的情形）。"""
+        long_deck = _deck('Radiant Typhoon Zoodiac', cn='十二兽绚岚',
+                          tier='Trending')
+        st = _FakeStorage(DECKS + [long_deck])
+        p = selector.DeckSelectorPanel(
+            st, lang='en', suggestions=[long_deck], **kw)
+        self.addCleanup(p.deleteLater)
+        p.show()
+        return p
+
+    def test_long_name_never_needs_horizontal_scroll(self):
+        p = self._long_panel()
+        p.adjustSize()
+        self.assertEqual(p._scroll.horizontalScrollBar().maximum(), 0,
+                         '长卡组名不许撑出横向滚动条')
+
+    def test_horizontal_scrollbar_is_disabled(self):
+        """出口焊死：即使内容算大了也不给横向滚动条。"""
+        p = self._long_panel()
+        self.assertEqual(p._scroll.horizontalScrollBarPolicy(),
+                         Qt.ScrollBarAlwaysOff)
+
+    def test_confirm_button_is_fully_inside_the_viewport(self):
+        """右下「确定」必须整块在可视区内 —— 用户报的正是它被挤出、要拖才点到。"""
+        p = self._long_panel()
+        p.adjustSize()
+        btn = p.custom_row().btn_confirm
+        vp = p._scroll.viewport()
+        right = btn.mapTo(vp, btn.rect().topRight()).x()
+        self.assertLessEqual(right, vp.width(),
+                             '「确定」右缘 %d 超出视口 %d' % (right, vp.width()))
+
+    def test_name_labels_can_shrink(self):
+        """名字标签必须是 `Ignored`（宽度听布局的）—— 这是根因 ① 的回归锁。"""
+        from PySide6.QtWidgets import QSizePolicy
+        p = self._long_panel()
+        for row in p.deck_rows():
+            self.assertEqual(row.name_label.sizePolicy().horizontalPolicy(),
+                             QSizePolicy.Ignored)
+
 
 
 if __name__ == '__main__':

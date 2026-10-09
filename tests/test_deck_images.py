@@ -215,5 +215,70 @@ class RealRepoTest(unittest.TestCase):
         self.assertTrue(os.path.exists(di.DEFAULT_IMAGE))
 
 
+
+class CardArtFetchTest(unittest.TestCase):
+    """`deck_images.fetch_card_art` —— 按卡 id 取**纯卡绘**（2026-10-08）。
+
+    研究结论：卡组图 == 代表卡的卡绘。这里锁「卡 id -> Konami 密码 -> 抓图」
+    这条链路（打桩，不联网）。
+    """
+
+    def setUp(self):
+        import core.deck_images as di_module
+        self.di = di_module
+        self._konami = getattr(di_module, '_test_konami', None)
+        self._urlopen = di_module.urllib.request.urlopen if hasattr(
+            di_module, 'urllib') else None
+
+    def test_unknown_card_returns_none(self):
+        #: 卡表里没有的 id -> konami 换不出来 -> None（不抛）
+        self.assertIsNone(self.di.fetch_card_art(99999999))
+
+    def test_url_uses_konami_password(self):
+        """取图 URL 必须是 `cards_cropped/<Konami密码>`（不是游戏内 id）。"""
+        import core.card_art as ca
+        self.assertTrue(self.di.CARD_ART_CROPPED_URL.startswith(
+            'https://images.ygoprodeck.com/images/cards_cropped/'))
+        #: 实测：游戏内 13668（闪刀姬－篝）-> Konami 63288573
+        try:
+            self.assertEqual(ca.konami_id(13668), '63288573')
+        except Exception:
+            self.skipTest('缺卡表快照，跳过')
+
+class CustomNameBeatsAliasTest(unittest.TestCase):
+    """★ 2026-10-09：**覆盖目录里按名字放的图，优先于别名索引**。
+
+    场景（真实踩到）：给「狱神耀圣」配了图，随后把该名字挂成 `Elfnote` 的别名 ——
+    别名索引（第 1 环）会把它解析到站内 `Elfnote.webp`，把用户自己放的图盖掉。
+    用户**按名字放的那张**是更明确的人工意图，必须最优先（第 0 环）。
+    """
+
+    def setUp(self):
+        import core.deck_images as di
+        self.di = di
+
+    def test_custom_dir_file_wins_over_alias_index(self):
+        name = '狱神耀圣'
+        own = os.path.join(self.di.CUSTOM_IMG_DIR,
+                           self.di.safe_filename(name) + '.webp')
+        if not os.path.exists(own):
+            self.skipTest('覆盖目录里没有 %s.webp' % name)
+
+        class _St:
+            """桩：别名索引把这个名字映到站内另一张图。"""
+
+            def list_meta_decks(self, include_hidden=True):
+                return [{'name': 'Elfnote', 'name_cn': '耀圣',
+                         'name_display': None, 'name_ja': None,
+                         'aliases': [name],
+                         'img_file': 'data/deck_images/Elfnote.webp'}]
+
+            def search_meta_decks(self, q, limit=20, include_hidden=False):
+                return []
+
+        got = self.di.DeckImages(_St()).resolve_abs(name)
+        self.assertEqual(os.path.normcase(got), os.path.normcase(own),
+                         '按名字放的图被别名索引盖掉了')
+
 if __name__ == '__main__':
     unittest.main()

@@ -80,6 +80,7 @@ SETTINGS_PAGES: Tuple[Tuple[str, str], ...] = (
     ('数据体检', 's_audit'),
     ('抓禁限表', 's_banlist'),
     ('卡表更新', 's_cardtable'),
+    ('参照库刷新', 's_refdecks'),
     ('语言', 's_lang'),
     ('游戏启动时弹悬浮窗', 's_autoshow'),
     ('当窗口关闭时', 's_close'),
@@ -96,7 +97,7 @@ SETTINGS_KEY = 'settings'
 #: ⚠️ 「刷新数据」（s_refresh）2026-10-05 用户拍板移除 —— 常驻采集器自动做；
 #:    工具本体 tools/import_duel_records.py 保留（--apply 仍可手动跑）。
 SETTING_GROUPS = (
-    ('数据工具', ('s_audit', 's_banlist', 's_cardtable')),
+    ('数据工具', ('s_audit', 's_banlist', 's_cardtable', 's_refdecks')),
     ('界面', ('s_lang',)),
     ('行为', ('s_autoshow', 's_close', 's_autostart', 's_restart')),
 )
@@ -106,6 +107,7 @@ SETTING_NOTES = {
     's_audit': '检查库 / 卡表 / 记录目录的一致性',
     's_banlist': '从 masterduelmeta 抓禁限变更史（每月一次）',
     's_cardtable': '上游卡表比对与更新（三语卡名）',
+    's_refdecks': '卡组构成的参照库（每张卡的使用率，每月一次）',
     's_lang': '卡名 / 卡组名的显示语言（匹配一律走卡 id）',
     's_autoshow': '检测到游戏启动时，自动弹出悬浮窗',
     's_close': '点悬浮窗的 × 是隐藏到托盘还是退出',
@@ -706,6 +708,13 @@ class SettingsIndexPage(QWidget):
         self._status.setText(tr('%s：%s') % (tr(cfg.get('title') or key),
                                              tr(exit_note(cfg.get('script'), code))))
         if code == 0:
+            #: ★ 参照库刷新完必须**清进程内缓存**（2026-10-10 修的真 bug）：
+            #:   `deck_guess.load_reference()` 把 JSON 永久缓存，不清的话
+            #:   「卡组构成」页与选择器的 M5 建议**永远按旧快照算** ——
+            #:   这个按钮就等于白加。
+            if key == 's_refdecks':
+                from core import ui_state
+                ui_state.clear_reference_cache()
             self.reload_hint()                         # 跑完了 → 提醒数据已更新
 
     def reload_hint(self):
@@ -1748,7 +1757,7 @@ class DashboardWindow(QWidget):
                  on_pick_result=None, analysis_loader=None, tier_loader=None,
                  banlist_loader=None, deckview_loader=None,
                  on_fetch_decks=None, script_runner_factory=None,
-                 opp_deck_images=None,
+                 opp_deck_images=None, storage=None,
                  collector_loader=None, export_saver=None,
                  export_loader=None,
                  on_restart=None, on_set_autostart=None,
@@ -1763,6 +1772,8 @@ class DashboardWindow(QWidget):
         self._on_fetch_decks = on_fetch_decks              # Q17（app 侧接）
         #: 「卡组名管理」页签的卡组图解析（`(名字) -> 路径`；app 侧给 `DeckImages.resolve`）
         self._opp_deck_images = opp_deck_images
+        #: 「卡组名管理」换图要写库 —— storage 由 app 侧给（单测可省）
+        self._storage = storage
         #: 设置区三功能页页头的「当前数据状态」（app 侧给 `ui_state.data_status` 的包装）
         #: 标题栏的「采集器状态」（app 侧给 `ui_state.collector_status` 的包装，D4b）
         self._collector_loader = collector_loader
@@ -1883,7 +1894,8 @@ class DashboardWindow(QWidget):
             if key == 'decks':                   # ★ D3 §2：三个页签
                 page = DecksPage(
                     runner_factory=self._script_runner_factory,
-                    image_resolver=self._opp_deck_images)
+                    image_resolver=self._opp_deck_images,
+                    storage=self._storage)
                 page.deck_selected.connect(self.open_deck_view)
                 #: ⚠️ 「← 回 Tier 表」**不再跨页** —— Tier 表就是左边那个页签，
                 #: 卡组页自己切（`DecksPage._on_back`）；这里**别**再 open_page('tier')

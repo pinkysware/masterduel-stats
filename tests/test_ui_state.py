@@ -755,7 +755,7 @@ class PageRowRankScopeTest(unittest.TestCase):
 
     ROW = {
         'match_id': 'm1', 'started_at': '2026-09-16 23:45:00',
-        'result': 'Win', 'went_first': True, 'opp_player_name': 'Zabuza',
+        'result': 'Win', 'went_first': True, 'opp_player_name': 'player1',
         'total_turns': 3, 'my_deck_name': '闪刀姬', 'opp_deck_name': '烙印',
         'my_rank_before': 5, 'my_rate_before': 2,
         'my_rank_after': 5, 'my_rate_after': 1,
@@ -1019,7 +1019,7 @@ class MatchGroupsTest(unittest.TestCase):
         base = {'started_at': '2026-09-16 23:45:00', 'mode': 'pvp',
                 'game_mode': 3, 'ended_at': '2026-09-16 23:50:00',
                 'my_deck_name': '闪刀姬', 'result': 'Win', 'went_first': True,
-                'opp_player_name': 'Taolanamz2', 'total_turns': 2,
+                'opp_player_name': 'player1', 'total_turns': 2,
                 'opp_deck_name': '烙印', 'my_rank_before': 5, 'my_rate_before': 3,
                 'my_rank_after': 5, 'my_rate_after': 2}
         a = dict(base, match_id='m1')
@@ -1098,6 +1098,70 @@ class SoloExclusionTest(unittest.TestCase):
         self.assertTrue(ui_state._in_duel_calibre({'game_mode': 3}))
 
 
+
+
+class ReferenceCacheInvalidationTest(unittest.TestCase):
+    """★ 参照库刷新后必须读到**新快照**（2026-10-10 真 bug 回归锁）。
+
+    用**真参照库文件**做往返（改文件 → 清缓存 → 读），比桩更接近真实发布场景。
+    """
+
+    def _real_ref(self):
+        from core import deck_guess
+        return deck_guess.DEFAULT_REFERENCE
+
+    def test_clear_makes_the_new_file_visible(self):
+        import json
+        import shutil
+        import tempfile
+        from core.storage import Storage
+        from core.ui_state import clear_reference_cache, deck_composition
+
+        path = self._real_ref()
+        if not os.path.exists(path):
+            self.skipTest('参照库不在（干净克隆？）—— 跳过')
+        bak = tempfile.mktemp(suffix='.json')
+        shutil.copy(path, bak)
+        try:
+            st = Storage()
+            before = deck_composition(st, 'Sky Striker')
+            self.assertTrue(before.get('has_ref'), '前提：刷新前应能取到构成')
+            n_before = len(before.get('main') or [])
+
+            #: 把参照库改成只剩 3 副 —— 模拟「刷新后内容变了」
+            with open(path, encoding='utf-8') as f:
+                data = json.load(f)
+            data['decks'] = list(data['decks'].items())[:3]
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False)
+
+            #: 不清缓存 -> 仍旧数据（这正是原来的 bug，所以它必须是前提）
+            self.assertEqual(len(deck_composition(st, 'Sky Striker')
+                                 .get('main') or []), n_before)
+
+            #: 清了 -> 读到新快照
+            clear_reference_cache()
+            fresh = deck_composition(st, 'Sky Striker')
+            self.assertNotEqual(len(fresh.get('main') or []), n_before,
+                                '清缓存后仍返回旧卡表 —— 参照库刷新还是不生效')
+        finally:
+            shutil.copy(bak, path)
+            os.remove(bak)
+            clear_reference_cache()
+
+    def test_clear_is_idempotent(self):
+        """UI 侧无条件会调一次；重复调 / 没读过就调都不许抛。"""
+        from core.ui_state import clear_reference_cache
+        clear_reference_cache()
+        clear_reference_cache()
+
+    def test_ui_entry_clears_deck_guess_cache(self):
+        """UI 侧入口必须**真的**清掉 `deck_guess` 的缓存（不是自己另开一份）。"""
+        from core import deck_guess
+        from core.ui_state import clear_reference_cache
+        deck_guess._DATA_CACHE['probe'] = {'decks': {}}
+        clear_reference_cache()
+        self.assertEqual(deck_guess._DATA_CACHE, {})
 
 if __name__ == '__main__':
     unittest.main()

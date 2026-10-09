@@ -39,7 +39,8 @@ from PySide6.QtCore import QEvent, QTimer, Qt, Signal
 from PySide6.QtGui import (QColor, QFontMetrics, QPainter, QPainterPath,
                            QPen)
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QScrollArea, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QSizePolicy,
+                               QVBoxLayout, QWidget)
 
 from core import pinyin_match
 from core.deck_images import DeckImages
@@ -82,6 +83,11 @@ def _log(msg: str) -> None:
 #: 「自定义卡组名」那一条的占位文案（用户 2026-09-16 定：放在「未知卡组」**上面**）
 CUSTOM_PLACEHOLDER = '自定义卡组名…'         # 输入框的占位（没填名字时显示）
 
+#: 这些名字**不是真卡组**（占位条目 / 已弃用），选择器里不当卡组列出来。
+#: `未知卡组` 见 `core.ui_actions`（唯一来源）；`混轴卡组` 是存量的中间态条目
+#: （用户已弃用，等他用自定义卡组名替换）—— 不主动往列表里塞。
+SKIP_OWN_NAMES = (UNKNOWN_DECK_NAME, '混轴卡组')
+
 
 def custom_deck(name: str) -> dict:
     """「自定义卡组名」的伪 meta 行（字段与 meta 清单同形，走同一条 mark 链路）。
@@ -94,11 +100,37 @@ def custom_deck(name: str) -> dict:
             'name_ja': name, 'aliases': [], 'tier': None, 'custom': True}
 
 
+def own_deck(name: str) -> dict:
+    """「**我加过**的自定义卡组」的伪 meta 行。
+
+    来源 = `opp_decks` 里**不在 meta 清单里**的名字（悬浮窗「自定义卡组名」写的就是
+    这里 —— 它不碰覆盖表 CSV）。与 :func:`custom_deck` 的区别只在**选中态**：
+    `custom` 留空，这样点搜索结果里的这一条时高亮的是**那一行**，而不是底部那个
+    「自定义卡组名」输入框。
+    """
+    d = custom_deck(name)
+    d['custom'] = False
+    d['own'] = True
+    return d
+
+
 def unknown_deck() -> dict:
     """「未知卡组」那条的伪 meta 行（字段与 meta 清单同形，走同一条 mark 链路）。"""
     return {'name': UNKNOWN_DECK_NAME, 'name_cn': UNKNOWN_DECK_NAME,
             'name_display': UNKNOWN_DECK_NAME, 'name_ja': UNKNOWN_DECK_NAME,
             'aliases': [], 'tier': None}
+
+
+def _own_name_hit(query: str, hay) -> bool:
+    """`query` 是不是命中这串叫法（大小写不敏感的子串；空词 = 不命中）。
+
+    口径与 `core.deck_match` 的**模糊**一级一致（子串），不引那边的重装备 ——
+    这里只是「我加过的卡组」的兜底搜索，目标名字本来就短。
+    """
+    q = (query or '').strip().lower()
+    if not q:
+        return False
+    return any(q in str(h or '').lower() for h in (hay or ()))
 #: 面板与悬浮窗之间的缝（贴右侧定位用）
 PANEL_GAP = 8
 
@@ -268,6 +300,12 @@ class DeckRow(QFrame):
         if disp == UNKNOWN_DECK_NAME:
             disp = tr(disp)          # 只翻显示；写库仍是原串
         self.name_label = widgets.label(disp, 'body')
+        # ⚠️ 名字标签**必须可收缩**（2026-10-08 用户报「有概率出现横向拖动条」）：
+        #    `QLabel.minimumSizeHint()` 是**文字宽度** —— 长名字（实测
+        #    `Radiant Typhoon Zoodiac` = 351px）会把滚动区内容撑得比视口宽，
+        #    于是冒出一根**横向滚动条**，右缘的「确定」被挤出可视区、必须拖动才点得到。
+        #    `Ignored` = 宽度全听布局的（宽度不够时省略/裁剪，但绝不撑宽）。
+        self.name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         lay.addWidget(self.name_label, 1)
         if suggested:          # M5 反推候选置顶时的小标记（免得以为是自己搜出来的）
             mark = widgets.label(tr('建议'), 'label',
@@ -336,6 +374,10 @@ class DeckSelectorPanel(QWidget):
         self._anchor_row = None
 
         self._decks = list(storage.list_meta_decks(include_hidden=False) or [])
+        #: 我加过的对手卡组（`opp_decks`）——懒查一次、整个面板共用（每次敲键
+        #: 都查库太浪费）；`None` = 还没查过。
+        self._own_names: Optional[List[str]] = None    # opp_decks 里的卡组名
+        self._meta_keys_cache: Optional[set] = None    # meta 清单里所有叫法
         self._imgs = DeckImages(storage)
         self._prefill_name = (prefill_name or '').strip() or None
         self._sug_names = [d.get('name') for d in (suggestions or [])[:MAX_SUGGEST]
@@ -399,6 +441,10 @@ class DeckSelectorPanel(QWidget):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.NoFrame)
+        # ⚠️ 横向滚动条**一律不要**（用户 2026-10-08：「不应该出现」）——
+        #    名字标签可收缩（见 `DeckRow`）+ `_fit_width` 给纵向滚动条留位，
+        #    内容永远装得下；这里再把出口焊死，免得别处再漏一根。
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._scroll.setWidget(host)
         root.addWidget(self._scroll, 1)
 
@@ -564,7 +610,103 @@ class DeckSelectorPanel(QWidget):
         self.chosen = self._pre_deck()
 
     def _meta_by_name(self, name: str) -> Optional[dict]:
-        return next((d for d in self._decks if d.get('name') == name), None)
+        """按**站内名**在 meta 清单里找一条；找不到时回落到「我自己加过的卡组」。
+
+        ⚠️ 悬浮窗「自定义卡组名」只写 `opp_decks`（不碰覆盖表 CSV）—— 那些名字
+        不在 meta 清单里，原来一律回落 `None`，于是**预填 / 常选都看不到它们**
+        （用户 2026-10-08 报「搜不到我添加的自定义卡组」的一条链路）。
+        """
+        hit = next((d for d in self._decks if d.get('name') == name), None)
+        if hit is not None:
+            return hit
+        return own_deck(name) if self._is_own_deck(name) else None
+
+    def _ensure_caches(self) -> None:
+        """懒建两个缓存（一次算好，别每次敲键都查库）。
+
+        * `_own_names` = `opp_decks` 里的卡组名（占位条目已剔除）；
+        * `_meta_keys` = meta 清单里**所有叫法**（站内名 / 中文名 / 显示名 /
+          日文名 / 别名）—— 判「这是不是我新加的自定义卡组」要用它。
+
+        ⚠️ 只比 `name` 会把 `烙印`（= Branded 的中文名）、`Atlantean`
+        （= Mermail Atlantean 的别名）这类**已有卡组的另一种叫法**误判成自定义，
+        搜索时多出一行重复（实测 `opp_decks` 里这类有 **58 条**）。
+        """
+        if self._own_names is not None:
+            return
+        try:
+            pairs = self.storage.list_opp_decks() or []
+        except Exception:                                # noqa: BLE001
+            pairs = []
+        self._own_names = [t[1] for t in pairs
+                           if len(t) > 1 and t[1] and t[1] not in SKIP_OWN_NAMES]
+        keys = set()
+        for d in self._decks:
+            for k in (d.get('name'), d.get('name_cn'), d.get('name_display'),
+                      d.get('name_ja')):
+                k = str(k or '').strip()
+                if k:
+                    keys.add(k)
+            for a in (d.get('aliases') or []):
+                a = str(a or '').strip()
+                if a:
+                    keys.add(a)
+        self._meta_keys_cache = keys
+
+    def _meta_keys(self) -> set:
+        self._ensure_caches()
+        return self._meta_keys_cache
+
+    def _own_deck_names(self) -> List[str]:
+        self._ensure_caches()
+        return self._own_names
+
+    def _is_own_deck(self, name: str) -> bool:
+        """这个名字是不是「我加过、但不在 meta 清单里」的自定义卡组。"""
+        name = (name or '').strip()
+        if not name or name in SKIP_OWN_NAMES:
+            return False
+        if name in self._meta_keys():
+            return False      # meta 任何叫法里有 = 不是「我加的」（如 烙印/Atlantean）
+        return name in self._own_deck_names()
+
+    def _own_deck_hits_for_pinyin(self) -> List[dict]:
+        """「我加过的卡组」全量（**不过滤搜索词**）—— 给拼音匹配用。
+
+        `_own_deck_hits(query)` 是子串过滤，拼音词（`yjys`）永远不可能是它的子串，
+        所以拼音这条必须拿到**全量**再用 `pinyin_match.match` 比。
+        """
+        out, seen = [], set()
+        for name in self._own_deck_names():
+            if name in seen:
+                continue
+            seen.add(name)
+            out.append(own_deck(name))
+        return out
+
+    def _own_deck_hits(self, query: str) -> List[dict]:
+        """我加过的对手卡组里、名字（或别名）命中 `query` 的 —— 补回搜索结果。
+
+        与 `_common_decks` 同一份数据（`opp_decks`），但按搜索词过滤；
+        `未知卡组` / `混轴卡组` 这类占位条目不算真卡组，跳过。
+        """
+        out, seen = [], set()
+        try:
+            pairs = self.storage.list_opp_decks() or []
+        except Exception:                                # noqa: BLE001
+            return out
+        meta_keys = self._meta_keys()
+        for item in pairs:
+            name = item[1] if len(item) > 1 else None
+            aliases = item[2] if len(item) > 2 else None
+            if (not name or name in SKIP_OWN_NAMES or name in seen
+                    or name in meta_keys):
+                continue                        # meta 任何叫法里的不重复列
+            if not _own_name_hit(query, [name] + list(aliases or [])):
+                continue
+            seen.add(name)
+            out.append(own_deck(name))
+        return out
 
     def _current_text(self) -> str:
         """「当前标注」提示 —— 只有已标注时才显示（省空间）。"""
@@ -630,7 +772,7 @@ class DeckSelectorPanel(QWidget):
             try:
                 pairs = [(int(t[3] or 0), t[1])
                          for t in (self.storage.list_opp_decks() or [])
-                         if len(t) > 3 and t[1] and t[1] != UNKNOWN_DECK_NAME]
+                         if len(t) > 3 and t[1] and t[1] not in SKIP_OWN_NAMES]
                 pairs.sort(key=lambda p: -p[0])
                 pool = [d for d in (self._meta_by_name(nm)
                                     for _c, nm in pairs) if d is not None]
@@ -678,8 +820,11 @@ class DeckSelectorPanel(QWidget):
         widest = max([fm.horizontalAdvance(deck_display(d, self.lang))
                       for d in decks] or [0])
         mark = QFontMetrics(widgets.font(theme.F_LABEL)).horizontalAdvance(tr('建议'))
+        # ⚠️ **要给纵向滚动条留位**：默认态是 5 行 + 自定义行 = 6 行 > 可视 5 行，
+        #    纵向滚动条必然出现，它吃掉 ~10px 视口宽 —— 不留位时「正好装下」的内容
+        #    会被挤出一根**横向滚动条**（用户报的「有概率出现」正是这种场景）。
         need = (theme.S_MD * 2 + theme.THUMB + theme.S_SM + widest
-                + theme.S_SM + mark + theme.S_SM)
+                + theme.S_SM + mark + theme.S_SM + theme.SCROLL_W)
         self.setFixedWidth(max(theme.SEL_W_MIN, min(theme.SEL_W, int(need))))
 
     def _refill(self, query: str) -> None:
@@ -691,6 +836,13 @@ class DeckSelectorPanel(QWidget):
         query = (query or '').strip()
         if query:
             decks = list(self.storage.search_meta_decks(query, limit=60) or [])
+            #: ★ 2026-10-08（用户：「我添加后在悬浮窗输入名字查询不到我添加的自定义卡组」）：
+            #:    悬浮窗「自定义卡组名」只写 `opp_decks`，而 `search_meta_decks` 只查
+            #:    meta 清单 —— 于是**刚加的名字永远搜不到**。这里把「我加过、不在 meta
+            #:    清单里」的名字并进结果（按名字去重，meta 命中优先）。
+            have = {d.get('name') for d in decks}
+            decks += [d for d in self._own_deck_hits(query)
+                      if d.get('name') not in have]
             #: ★ 拼音/首字母（**中文独有**，lang=cn 才启用；2026-09-19 用户需求）：
             #:    闪刀姬敲 ``sdj``（首字母）或 ``shandaoji``（全拼）都能查到。
             #:    口径 = 拼音键（只取汉字）的子串；普通命中在前、拼音命中殿后（按
@@ -702,7 +854,10 @@ class DeckSelectorPanel(QWidget):
                 #:    Fairy Tail… 十来个），拼音命中追加在后面会被 5 行的显示上限
                 #:    挤没。cn 界面敲纯字母基本就是拼音意图，让它优先。
                 py_hits, seen = [], {d.get('name') for d in decks}
-                for d in self._decks:
+                #: ⚠️ 拼音要**同时**跑 meta 清单**和**「我加过的卡组」（2026-10-08 用户报：
+                #:    自定义卡组只能敲中文才搜得到）—— 两边用同一个 `pinyin_match.match`，
+                #:    别再各写一套。
+                for d in list(self._decks) + self._own_deck_hits_for_pinyin():
                     if d.get('name') in seen:
                         continue
                     if pinyin_match.match(query, d.get('name_cn'),
@@ -729,6 +884,10 @@ class DeckSelectorPanel(QWidget):
             self._empty_label = widgets.label(
                 tr('没有匹配「%s」的卡组 —— 点外面关闭，标注不变') % query,
                 'muted', Qt.AlignCenter)
+            # ⚠️ 空态文案里带着**用户敲的词**（可能很长）—— 不收缩同样会撑出横向
+            #    滚动条；`Ignored` 让它只在行内裁剪/居中。
+            self._empty_label.setSizePolicy(QSizePolicy.Ignored,
+                                            QSizePolicy.Preferred)
             self._empty_label.setFixedHeight(theme.ROW_H)
             self.rows_lay.addWidget(self._empty_label)
         for d in rows:

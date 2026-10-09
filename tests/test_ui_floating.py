@@ -165,7 +165,7 @@ def _row(**kw):
         'my_deck_img': 'data/deck_images_custom/Sky_Striker.webp',
         'opp_deck': '烙印', 'opp_known': True,
         'opp_deck_img': 'data/deck_images_custom/Branded.webp',
-        'opp_player': '幻想乡的毛玉',
+        'opp_player': 'player1',
         'badge_icon': 'data/rank_icons/Platinum.webp', 'badge_text': 'Platinum 2',
         'rank_before': (5, 2), 'rank_after': None, 'rank_delta': None,
         'rank_label_before': 'Platinum 2', 'rank_label_after': '',
@@ -454,10 +454,10 @@ class FloatingWindowTest(unittest.TestCase):
     def test_name_column_is_gone_player_name_in_deck_tooltip(self):
         """★ 用户 2026-09-15 晚：「去掉对手名统计」—— 列删了，名字挪进对手卡组格
         的 tooltip（信息不丢，悬停可见）。"""
-        self.win.set_snapshot(_snap(rows=[_row(opp_player='幻想乡的毛玉')]))
+        self.win.set_snapshot(_snap(rows=[_row(opp_player='player1')]))
         row = self._first_row()
         self.assertFalse(hasattr(row, 'name_label'), '对手名列应已删除')
-        self.assertIn('幻想乡的毛玉', row.opp_deck_label.toolTip())
+        self.assertIn('player1', row.opp_deck_label.toolTip())
         # 没名字就不挂多余的一段
         self.win.set_snapshot(_snap(rows=[_row(match_id='m2', opp_player=None)]))
         self.assertNotIn('对手：', self._first_row().opp_deck_label.toolTip())
@@ -917,18 +917,18 @@ class FloatingWindowTest(unittest.TestCase):
     def test_opponent_deck_name_is_shown_in_last_column(self):
         """对手卡组挪到**最后一列**：图 + 卡组名（定长省略 + 悬停看全名）。"""
         self.win.set_snapshot(_snap(
-            rows=[_row(opp_deck='幻想乡的毛玉卡组名字特别长')]))
+            rows=[_row(opp_deck='一个非常长的卡组名字示例')]))
         row = self._first_row()
         self.assertTrue(row.opp_deck_label.text().endswith('…'), )
         # tooltip = 卡组全名（被截才挂）+ 对手名一行
-        self.assertIn('幻想乡的毛玉卡组名字特别长',
+        self.assertIn('一个非常长的卡组名字示例',
                       row.opp_deck_label.toolTip())
-        self.assertIn('对手：幻想乡的毛玉', row.opp_deck_label.toolTip())
+        self.assertIn('对手：player1', row.opp_deck_label.toolTip())
         # 短名字不截；tooltip 只剩对手名那行
         self.win.set_snapshot(_snap(rows=[_row(opp_deck='烙印')]))
         row = self._first_row()
         self.assertEqual(row.opp_deck_label.text(), '烙印')
-        self.assertEqual(row.opp_deck_label.toolTip(), '对手：幻想乡的毛玉')
+        self.assertEqual(row.opp_deck_label.toolTip(), '对手：player1')
 
     def test_opponent_deck_name_is_centered(self):
         """★ 用户 2026-09-15：「位置需要调整居中」—— 名字在定宽列内居中。"""

@@ -738,5 +738,34 @@ class TestDeriveResultAndToRow(unittest.TestCase):
         self.assertIsNone(dr.dirname_time('not_a_record'))
 
 
+class TestModeOf(unittest.TestCase):
+    """★ 2026-10-08：`_mode_of` 漏了单人模式，把 `game_mode=9` 全记成 `pvp`。
+
+    用户 2026-09-26 实测拍板 `game_mode=9 = 单人模式`
+    （`core/storage.MODE_GROUP_BY_GAME_MODE`），日志线也判 `solo` ——
+    两条线对同一局必须给同一个 `mode`。
+    """
+
+    def test_solo_is_not_pvp(self):
+        self.assertEqual(dr._mode_of(9), 'solo')
+
+    def test_live_is_seven(self):
+        self.assertEqual(dr._mode_of(7), 'live')
+
+    def test_other_modes_are_pvp(self):
+        for gm in (3, 19, 12, 15, 21):
+            self.assertEqual(dr._mode_of(gm), 'pvp', 'game_mode=%s' % gm)
+
+    def test_none_is_unknown(self):
+        self.assertEqual(dr._mode_of(None), 'unknown')
+
+    def test_agrees_with_storage_solo_group(self):
+        """口径只有一份：solo 的 id 必须来自 `core.storage`，不许本模块硬编码。"""
+        from core.storage import (MODE_GROUP_BY_GAME_MODE, MODE_GROUP_SOLO)
+        for gm, grp in MODE_GROUP_BY_GAME_MODE.items():
+            want = 'solo' if grp == MODE_GROUP_SOLO else 'pvp'
+            self.assertEqual(dr._mode_of(gm), want, 'game_mode=%s' % gm)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -102,6 +102,41 @@ def display(card_id, lang='cn', table=None):
     return None
 
 
+def search(query, limit=30, table=None, lang=None):
+    """按**任意语言卡名**模糊搜卡 id（子串、大小写不敏感）。
+
+    给「挑一张代表卡当卡组图」用（用户 2026-10-08：「只能输英文查很不方便」）——
+    敲中文「灰流丽」/ 英文「Ash」/ 日文「灰流」都能命中同一张。
+
+    * ``lang`` 给了就**只搜那一列**（界面按当前语言搜更准）；
+      不给就三列都搜（``langs`` = cn/en/jp）。
+    * 排序：**前缀命中优先**，然后名字短的优先（「灰流丽」先于「灰流丽之心」），
+      最后按卡 id 升序（稳定）。
+    * ``limit`` 截断；``query`` 为空返回空表。
+    """
+    q = (query or '').strip().lower()
+    if not q:
+        return []
+    table = load() if table is None else table
+    cols = [LANGS.index(lang)] if lang in LANGS else list(range(len(LANGS)))
+    hits = []
+    for cid, names in table.items():
+        best = None
+        for i in cols:
+            nm = (names[i] if i < len(names) else '') or ''
+            low = nm.lower()
+            pos = low.find(q)
+            if pos < 0:
+                continue
+            cand = (pos, len(low))
+            if best is None or cand < best:
+                best = cand
+        if best is not None:
+            hits.append((best[0], best[1], cid))
+    hits.sort()
+    return [cid for _p, _l, cid in hits[:max(1, int(limit))]]
+
+
 def is_known(card_id, table=None):
     """这张卡 id 在表里吗（``int`` / ``str`` 都认）。
 
