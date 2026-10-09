@@ -82,3 +82,5 @@ __pycache__/
 
 python_path.txt
 
+# 启动器运行日志（**本机运行产物**，不该进版本库）
+data/launcher.log
