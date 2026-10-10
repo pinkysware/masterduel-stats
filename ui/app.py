@@ -751,6 +751,14 @@ class MasterDuelUiApp(object):
         except Exception:                                # noqa: BLE001
             pass
 
+        # ---- 退出兜底：QApplication 退出必经这里（2026-10-10）----
+        #: 标题栏「×」和托盘「退出」都走 `quit()`，那里已经收了采集器；
+        #: 但**还有别的路子会让 QApplication 退出**（Windows 会话注销、
+        #: `qapp.quit()` 被别处调用、界面崩了走 Qt 的默认退出…）——
+        #: 那几条路不经过 `quit()`，采集器就会留下。
+        #: 幂等：`_stop_collector` 跑两次只是「第二次发现进程已不在」。
+        self.qapp.aboutToQuit.connect(self._stop_collector)
+
     # ------------------------------------------------------------ 主循环
     def current_account(self) -> Optional[str]:
         """悬浮窗跟随看板的账号选择（QSettings ``dash/account``，2026-10-03）。
@@ -1570,7 +1578,25 @@ class MasterDuelUiApp(object):
             self.win.save_size()
         except Exception:
             pass
+        #: ★ **连采集器一起收掉**（2026-10-10）——`start.bat` 一次拉起两个进程，
+        #:   界面退出只关自己这个，采集器那个 pythonw 会**继续在后台跑**：
+        #:   用户以为全退了其实没有、而且目录都删不掉（Device or resource busy）。
+        #:   ⚠️ 判据借采集器自己的 `pid_alive`（镜像名 + 创建时间），
+        #:      **不按裸 pid 杀** —— pid 会被系统复用（2026-10-08 丢两局的事故）。
+        self._stop_collector()
         self.qapp.quit()
+
+    def _stop_collector(self) -> None:
+        """收掉采集器（**幂等 + 不抛**）。demo 模式与「隐藏到托盘」都不走这里。"""
+        if getattr(self, '_demo', False):
+            return
+        try:
+            from ui.collector_ctl import stop_collector
+            how = stop_collector()
+            if how not in ('no-pid-file', 'not-running'):
+                print('[退出] 采集器：%s' % how)
+        except Exception:                                # noqa: BLE001
+            pass
 
     def run(self) -> int:
         self.refresh()
