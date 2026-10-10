@@ -126,6 +126,69 @@ class TestFetchApiResponseShape(_StubBase):
 
 
 
+class TestPlaceholderNeverInDb(unittest.TestCase):
+    """🔴 回归锁：**默认卡图绝不能被当成真图写进 `meta_decks.img_file`**。
+
+    事故（2026-10-10，用户实机测试发布包发现）：`core.deck_images.find_image_file`
+    以前拿 `_default.webp` 兜底，而 `custom_rows()` 直接把它当「找到的图」落库
+    —— 实测污染 14 条（`Yummy` / `Fur Hire` / `Orcust` / `Radiant Typhoon` /
+    `Rescue-ACE` / `Vanquish Soul` …）。库里存着占位图后，`DeckImages.resolve`
+    第 1 环的别名索引会**永远命中它**，用户后来把真图下载回来也显示不出来。
+    """
+
+    def setUp(self):
+        import shutil
+        from core import deck_images as di
+        self._di = di
+        self.cus = tempfile.mkdtemp(prefix='cusimg3_')
+        self.std = tempfile.mkdtemp(prefix='stdimg3_')
+        self.addCleanup(shutil.rmtree, self.cus, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self.std, ignore_errors=True)
+        di.CUSTOM_IMG_DIR, self._o1 = self.cus, di.CUSTOM_IMG_DIR
+        di.IMG_DIR, self._o2 = self.std, di.IMG_DIR
+        di.DEFAULT_IMAGE, self._o3 = os.path.join(self.cus, '_default.webp'), di.DEFAULT_IMAGE
+        self.addCleanup(setattr, di, 'CUSTOM_IMG_DIR', self._o1)
+        self.addCleanup(setattr, di, 'IMG_DIR', self._o2)
+        self.addCleanup(setattr, di, 'DEFAULT_IMAGE', self._o3)
+        with open(di.DEFAULT_IMAGE, 'wb') as f:
+            f.write(b'RIFF____WEBP')
+
+    def test_custom_rows_leaves_img_file_empty(self):
+        """自定义条目没有真图时 `img_file` 必须是 None（**不是** `_default.webp`）。"""
+        ovr = {'我自组的混轴': dict(cn='我的卡组', jp=None, display=None,
+                                    aliases=[], tier='Tier3', hidden=False, note=None)}
+        rows = fmd.custom_rows(ovr, known_names=set())
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]['img_file'],
+                          '没真图就该留空 —— 占位图进库会永久盖住真图')
+
+    def test_custom_rows_uses_real_image_when_present(self):
+        """真有图时照常取到（别把这条正路也堵死）。"""
+        with open(os.path.join(self.std, '我自组的混轴.webp'), 'wb') as f:
+            f.write(b'RIFF____WEBP')
+        ovr = {'我自组的混轴': dict(cn='我的卡组', jp=None, display=None,
+                                    aliases=[], tier='Tier3', hidden=False, note=None)}
+        rows = fmd.custom_rows(ovr, known_names=set())
+        self.assertTrue((rows[0]['img_file'] or '').endswith('我自组的混轴.webp'))
+        self.assertNotIn('_default.webp', rows[0]['img_file'])
+
+    def test_download_failure_leaves_img_file_empty(self):
+        """站内图下载失败 → **留空**，好让 `missing_image_rows` 下次补上。
+
+        ⚠️ 用一个磁盘上**肯定没有**的名字（`_find_in` 先按已有文件跳过），
+        否则会走「已存在 → 跳过」分支，压根到不了下载那段。
+        """
+        def boom(*a, **k):
+            raise OSError('offline')
+        fmd.fetch, orig = boom, fmd.fetch
+        self.addCleanup(setattr, fmd, 'fetch', orig)
+        got, _skipped, failed = fmd.download_images(
+            [{'name': ' TotallyMissingDeck ', 'kind': 'deck_type', 'img_url': None}])
+        self.assertEqual(got.get(' TotallyMissingDeck '), None,
+                         '下载失败必须留空，不能塞默认图')
+        self.assertTrue(failed)
+
+
 class TestMissingImageRows(unittest.TestCase):
     """`missing_image_rows` —— 「库里哪些站内条目缺图」（2026-10-08 问题 1）。
 

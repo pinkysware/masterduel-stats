@@ -1774,11 +1774,46 @@ class TestDeckNameCn(unittest.TestCase):
         with open(os.path.join(cus, 'X.webp'), 'wb') as f:
             f.write(b'RIFF____WEBP')
         self.assertIn('cusimg_', fmd.local_image_for('X'), '应优先自定义目录')
-        # 查不到图 → 回退默认卡图；连默认图都没有才返回 None
-        self.assertIsNone(fmd.local_image_for('查不到'))
+
+        # 🔴 查不到图 → **诚实地返回 None，绝不返回默认图**（2026-10-10 改口径）。
+        #    旧行为是回落 `_default.webp`，于是 `fetch_meta_decks.custom_rows`
+        #    分不清「找到真图」与「拿到兜底」，把默认图当**真图路径**写进了
+        #    `meta_decks.img_file`（实测污染 14 条）。库被污染后别名索引永远命中
+        #    `_default.webp`，用户后来下载回真图也显示不出来。
+        self.assertIsNone(fmd.local_image_for('查不到'),
+                          '查不到图必须返回 None，不能拿默认图冒充')
+        # 默认图放在磁盘上也**不该**被直查命中（它不是某个卡组的图）
         with open(os.path.join(cus, '_default.webp'), 'wb') as f:
             f.write(b'RIFF____WEBP')
-        self.assertIn('_default.webp', fmd.local_image_for('查不到'))
+        self.assertIsNone(fmd.local_image_for('查不到'),
+                          '默认图存在也不该被当成该卡组的图')
+        # 但按名字**真的有**图时（自定义目录）照常命中
+        with open(os.path.join(cus, 'Y.webp'), 'wb') as f:
+            f.write(b'RIFF____WEBP')
+        self.assertIn('Y.webp', fmd.local_image_for('Y'))
+
+    def test_resolve_still_falls_back_to_default(self):
+        """界面那条链（`DeckImages.resolve`）**仍要兜底默认图** —— 界面永远有图。"""
+        from core import deck_images as di
+        cus = tempfile.mkdtemp(prefix='cusimg2_')
+        std = tempfile.mkdtemp(prefix='stdimg2_')
+        self.addCleanup(shutil.rmtree, cus, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, std, ignore_errors=True)
+        with open(os.path.join(cus, '_default.webp'), 'wb') as f:
+            f.write(b'RIFF____WEBP')
+
+        di.CUSTOM_IMG_DIR, old_cus = cus, di.CUSTOM_IMG_DIR
+        di.IMG_DIR, old_std = std, di.IMG_DIR
+        old_def = di.DEFAULT_IMAGE
+        di.DEFAULT_IMAGE = os.path.join(cus, '_default.webp')
+        self.addCleanup(setattr, di, 'CUSTOM_IMG_DIR', old_cus)
+        self.addCleanup(setattr, di, 'IMG_DIR', old_std)
+        self.addCleanup(setattr, di, 'DEFAULT_IMAGE', old_def)
+
+        self.assertTrue(di.DeckImages(None).is_placeholder('查不到'),
+                        '界面侧应回落到默认图')
+        self.assertTrue(di.DeckImages(None).is_placeholder(''),
+                        '空名也回落到默认图')
 
     def test_display_name_priority(self):
         self.assertEqual(fmd.display_name(
