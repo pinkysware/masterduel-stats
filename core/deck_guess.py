@@ -168,6 +168,18 @@ def expand(ids, groups):
     return out
 
 
+#: **共用参照数据的卡组**（用户 2026-10-10 定，原 `ui_state.REF_SHARED_WITH`）：
+#: 键 = 我们清单里的独立条目，值 = 它读哪条站内卡组的逐卡使用率。
+#: 这张表**只写用户明确说过的**（「共用」），不推断 —— 猜错会让使用率对不上。
+#: ★ 2026-10-11 用户拍板：这些条目**也进 AI 建议候选**（`build_index` 注入），
+#: 且**同分时排在前**（`sort_candidates` tiebreak）—— 用户原话：
+#: 「建议直接出『狱神耀圣』」（此前对手用狱神耀圣时建议只会到「耀圣」一级，
+#: 手选才能落到独立条目）。
+SHARED_REFERENCE = {
+    '狱神耀圣': 'Elfnote',
+}
+
+
 def build_index(reference, groups):
     """参照库 → ``{站内名: {tier, source_name, total, cards:{名字组: per}}}``。
 
@@ -193,6 +205,12 @@ def build_index(reference, groups):
                      'source_name': d.get('source_name') or name,
                      'total': d.get('total'),
                      'cards': cards}
+    # ★ 共用参照数据的独立条目也进候选（2026-10-11 用户拍板）：
+    #   卡表与原条目完全一致 -> 打分必然同分 -> 由 `sort_candidates` 的
+    #   tiebreak 保证同分时**排在原条目前面**（建议直接出「狱神耀圣」）。
+    for shared_name, src_name in SHARED_REFERENCE.items():
+        if src_name in out and shared_name not in out:
+            out[shared_name] = dict(out[src_name], shared=True)
     return out
 
 
@@ -344,6 +362,7 @@ def guess_deck(revealed_ids, index, groups, prefill_tiers=PRE_FILL_TIERS):
         cands.append({
             'name': name, 'tier': tier,
             'source_name': d.get('source_name') or name,
+            'shared': bool(d.get('shared')),
             'in_prefill_set': tier in (prefill_tiers or ()),
             'hits': hits, 'bayes': score, 'confidence': conf,
             'explained': hits, 'revealed': n,
@@ -365,11 +384,14 @@ def sort_candidates(cands, mode='hits'):
     ``mode='hits'``（默认，用户口径）= 命中数优先、层内 bayes；
     ``mode='bayes_per_hit'`` = 研究里的对照打分器（回测拿来对比用）。
     """
+    # tiebreak 里的 `not c.get('shared')`：同分时**共用参照数据的独立条目
+    # 排在站内原条目前面**（狱神耀圣 > 耀圣，2026-10-11 用户拍板）。
     if mode == 'bayes_per_hit':
         key = lambda c: (-(c['bayes'] / c['hits']) if c['hits'] else 1e9,  # noqa: E731
-                         -c['hits'], c['name'])
+                         -c['hits'], not c.get('shared'), c['name'])
     else:
-        key = lambda c: (-c['hits'], -c['bayes'], c['name'])               # noqa: E731
+        key = lambda c: (-c['hits'], -c['bayes'],                        # noqa: E731
+                         not c.get('shared'), c['name'])
     cands.sort(key=key)
     return cands
 

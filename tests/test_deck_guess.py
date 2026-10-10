@@ -39,6 +39,30 @@ def deck(tier, total, cards):
             'cards': {str(k): {'per': v, 'at': 1} for k, v in cards.items()}}
 
 
+class TestSharedReference(unittest.TestCase):
+    """共用参照数据的独立条目进建议候选（2026-10-11 用户拍板）。
+
+    用户原话「建议直接出『狱神耀圣』」—— 此前对手用狱神耀圣（= Elfnote
+    卡表）时，建议只会到「耀圣」（Elfnote）一级，独立条目要手选才能落到。
+    """
+
+    def test_build_index_injects_shared_decks(self):
+        data = ref({'Elfnote': deck('Tier3', 10, GENERIC)})
+        idx, _ = dg.prepare(data, GROUPS)
+        self.assertIn('狱神耀圣', idx)
+        self.assertEqual(idx['狱神耀圣']['cards'], idx['Elfnote']['cards'])
+
+    def test_shared_deck_wins_tie_and_stays_in_candidates(self):
+        data = ref({'Elfnote': deck('Tier3', 10, GENERIC)})
+        idx, _ = dg.prepare(data, GROUPS)
+        ids = [k for k, v in GENERIC.items() if v > 0]     # 露出的是本卡组的卡
+        cands = dg.suggest({'opp_revealed_ids': ids}, idx, GROUPS)
+        names = [c['name'] for c in cands]
+        self.assertEqual(names[0], '狱神耀圣',
+                         '同分时共用条目要排前（用户拍板）')
+        self.assertIn('Elfnote', names, '站内原条目仍在候选里')
+
+
 class TestGroups(unittest.TestCase):
     def test_alt_art_same_group(self):
         g = dg.build_name_groups(names={22747: ('S:P小夜骑士', '', ''),

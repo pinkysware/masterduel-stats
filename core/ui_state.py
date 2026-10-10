@@ -1527,9 +1527,9 @@ def _art_path(cid) -> Optional[str]:
 #: 它们是同一副；猜错会让使用率静默地对不上。
 #: 「隐藏卡组不列出」（见 AGENTS 铁律 7）—— 这里的 `hidden` 是**卡组名**的隐藏标记，
 #: 不是 `meta_decks.hidden`，两者无关。
-REF_SHARED_WITH = {
-    '狱神耀圣': 'Elfnote',
-}
+#: ★ 2026-10-11 迁到 `core.deck_guess.SHARED_REFERENCE`（建议候选也要用它，
+#: 那边不能反向 import 本模块）—— 这里保留原名字做兼容别名。
+from core.deck_guess import SHARED_REFERENCE as REF_SHARED_WITH  # noqa: E402
 
 
 def match_ref_key(name, decks, storage=None) -> Optional[str]:
