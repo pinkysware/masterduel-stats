@@ -739,6 +739,18 @@ class MasterDuelUiApp(object):
         self.timer.setInterval(interval_ms)
         self.timer.timeout.connect(self.tick)
 
+        # ---- 首跑播种（2026-10-10）：库里没有 meta_decks 就后台联网抓一次 ----
+        # 发布包**故意不带** `masterduel.db`（运行期数据），首次打开时卡组清单
+        # / 选择器 / Tier 表全是空的，卡组图也没有。这里补上那条链路：
+        # 后台跑 `fetch_meta_decks.py`（清单 + 下图），静默失败、不阻塞界面。
+        # 详见 `ui/first_run.py` 的模块文档。
+        self._firstrun_proc = None
+        try:
+            from ui.first_run import ensure_meta_decks
+            ensure_meta_decks(self)
+        except Exception:                                # noqa: BLE001
+            pass
+
     # ------------------------------------------------------------ 主循环
     def current_account(self) -> Optional[str]:
         """悬浮窗跟随看板的账号选择（QSettings ``dash/account``，2026-10-03）。

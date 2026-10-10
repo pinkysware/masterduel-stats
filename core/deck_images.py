@@ -254,19 +254,26 @@ def remove_custom_image(name: str) -> list:
 
 
 def find_image_file(name: Optional[str]) -> Optional[str]:
-    """**文件名直查**（工具链用）—— 自定义目录优先，其次站内，最后默认图。
+    """**文件名直查**（工具链用）—— 自定义目录优先，其次站内。**找不到返回 None**。
 
     不碰数据库、不需要 storage：`tools/fetch_meta_decks.py` 建清单时还没有
-    meta_decks 表可查，只能按文件名约定找。找不到（连默认图也没有）返回 None。
+    meta_decks 表可查，只能按文件名约定找。
 
     ⚠️ 与 `DeckImages.resolve` 的区别：那个是**名字解析链**
     （要 storage 查别名索引），面向界面；这个是**文件名约定**，面向工具链。
     两者共用本函数，别再各写一份。
+
+    🔴 **绝不返回 `DEFAULT_IMAGE`**（2026-10-10 修的真事故）：以前兜底会把默认图
+    当成「找到的图」返回，调用方（`fetch_meta_decks.custom_rows`）分不清
+    「找到真图」和「拿到兜底」，于是把 `deck_images_custom/_default.webp`
+    **当成真图路径写进了 `meta_decks.img_file`** —— 实测污染 14 条（`Yummy` /
+    `Fur Hire` / `Orcust` / `Radiant Typhoon` / `Rescue-ACE` / `Vanquish Soul` …）。
+    库被污染后，**用户后来把真图放进 `deck_images/` 也救不回来**：别名索引命中
+    的正是这个 `_default.webp` 路径（`resolve` 第 1 环 `os.path.exists` 通过），
+    于是永远显示默认图 —— 这正是发布包首次打开大量卡组默认化的直接原因。
+    要默认图请调 :meth:`DeckImages.resolve` 或显式用 `DEFAULT_IMAGE`。
     """
-    p = _find_in(CUSTOM_IMG_DIR, name or '') or _find_in(IMG_DIR, name or '')
-    if p is None and os.path.exists(DEFAULT_IMAGE):
-        p = DEFAULT_IMAGE
-    return p
+    return _find_in(CUSTOM_IMG_DIR, name or '') or _find_in(IMG_DIR, name or '')
 
 
 def build_index(meta_decks: Iterable[dict]) -> Dict[str, str]:
@@ -359,8 +366,11 @@ class DeckImages(object):
             if hit and os.path.exists(os.path.join(PROJ, hit)):
                 return os.path.join(PROJ, hit)
 
-        # 3) 文件名直查（自定义条目 / 手动替换的图）+ 默认图兜底
-        return find_image_file(name)
+        # 3) 文件名直查（自定义条目 / 手动替换的图）
+        #    ⚠️ `find_image_file` **不再兜底默认图**（见其文档）—— 默认图在这里显式加，
+        #    保证界面仍然「永远有图」，而工具链拿得到诚实的 None。
+        return (find_image_file(name)
+                or (DEFAULT_IMAGE if os.path.exists(DEFAULT_IMAGE) else None))
 
     # ------------------------------------------------- 给 UI 的小便利
     def is_placeholder(self, name: Optional[str]) -> bool:

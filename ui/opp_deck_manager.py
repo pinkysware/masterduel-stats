@@ -1065,11 +1065,15 @@ class OppDeckManager(QWidget):
     def _reset_deck_image(self, item, name: str) -> None:
         """还原：删掉覆盖目录里的图，回到站内图 / 默认图。"""
         removed = deck_images.remove_custom_image(name)
-        back = deck_images.find_image_file(name) or ''
+        back = deck_images.find_image_file(name)
         #: 还原同样要清缓存（覆盖图被删；`round_pixmap` 连**缺图也缓存 None**）
         widgets.forget_pixmap(name)
         widgets.forget_pixmap(os.path.join(PROJ, name))
-        self._write_back(img_rel=(deck_images.rel_or_abs(back) if back else None),
+        #: ⚠️ **回落到空串而不是 None**（2026-10-10 修的真事故）：
+        #: `set_meta_deck_override` 约定 None = 「这项没意见、不动」，空串 = 「清空」。
+        #: 库里若存着 `_default.webp` 当假图（历史污染），这里不清掉就永远显示默认图；
+        #: 清空后 `DeckImages.resolve` 会重新走真图链，装了 `deck_images/` 就能显示真图。
+        self._write_back(img_rel=(deck_images.rel_or_abs(back) if back else ''),
                          name=name)
         if callable(self._resolver):
             try:
@@ -1107,7 +1111,10 @@ class OppDeckManager(QWidget):
         不在 meta 表，`DeckImages.resolve` 靠文件名直查命中，不需要写库）。
 
         ⚠️ 站内条目必须写：`resolve()` 第 1 环的别名索引用的是库里的 `img_file`，
-        不写的话站内那张旧图会一直盖住新换的（CLI 的 `cmd_set` 同理）。"""
+        不写的话站内那张旧图会一直盖住新换的（CLI 的 `cmd_set` 同理）。
+        ⚠️ `img_rel` **传空串 = 清空该列**（还原卡图时用；`set_meta_deck_override`
+        约定 None = 不动、空串 = 清空）。只有 ``None`` 才表示「别碰」。
+        """
         st = self._storage
         if st is None or img_rel is None:
             return

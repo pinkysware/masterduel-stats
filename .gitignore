@@ -16,8 +16,13 @@ data/untapped_api_raw.json
 # 卡组覆盖表的只读导出（给用户看的，真源是 data/deck_name_cn.csv，可随时重新生成）
 data/deck_name_cn.xlsx
 
-# 本地卡组图（可从 masterduelmeta 重新下载，`tools/fetch_meta_decks.py`）
-data/deck_images/
+# ⚠️ `data/deck_images/` **要入库**（2026-10-10 改，推翻原「可再生就不带」口径）：
+#   38 张站内卡组图共 604KB，是「首次打开就有卡图」的**唯一**保障。
+#   原以为排除出包也没关系（可从 masterduelmeta 重新下载），但代码里**没有
+#   首跑自动补图**这一步 —— 该目录只由 `fetch_meta_decks.py` 联网抓取时写入。
+#   结果：发布包首次打开时 33 个站内卡组（Elfnote / Blue-Eyes / HEROs …）全是默认图，
+#   用户点「卡表更新」也修不了（那按钮刷的是卡名表，与卡组图无关）。
+#   604KB 换离线可用，值。重新下载：`tools/fetch_meta_decks.py`。
 
 # 上游卡表原始包（13MB+，可从 ygocdb / GetDeck 重新下载；代码用的是 data/card_data.json）
 ygocdb.com.cards/
@@ -67,7 +72,14 @@ data/present_box_cache.json
 data/untapped_api_raw.json
 data/untapped_ids.json
 data/card_art/
-data/deck_images/
+# ⚠️ `data/deck_images/` **要入库**（2026-10-10 改）——
+#   这 38 张站内卡组图共 515KB，是「首次打开就有卡图」的**唯一**保障：
+#   它原本被排除出发布包，理由是「可再生，首跑联网自动补」，
+#   但代码里根本没有首跑补图这一步（`deck_images/` 只由
+#   `fetch_meta_decks.py` 联网抓取时写入），于是发布包首次打开时
+#   那 33 个站内卡组（Elfnote / Blue-Eyes / HEROs …）永远只有默认图，
+#   而用户点「卡表更新」修不了（那按钮刷的是卡名表，与卡组图无关）。
+#   515KB 换「离线可用」，值。见 `tools/fetch_meta_decks.py`。
 data/deck_name_cn.xlsx
 p.json
 tmp/

@@ -502,8 +502,10 @@ def download_images(rows, dest=IMG_DIR, width=IMG_WIDTH, verbose=True):
             if verbose:
                 print('   ↓ %-28s %6d B  %s' % (r['name'][:28], len(body), ext))
         except Exception as e:                      # noqa: BLE001
-            if os.path.exists(DEFAULT_IMAGE):       # 下不到就用默认卡图，别留空
-                got[r['name']] = _rel_or_abs(DEFAULT_IMAGE)
+            # 🔴 下不到就**留空**，绝不把 `DEFAULT_IMAGE` 当成真图写进库
+            #（2026-10-10 修的真事故）：占位图一旦进了 `img_file`，别名索引会永远
+            # 命中它，用户后来把真图下载回来也显示不出来。留空则 `missing_image_rows`
+            # 下次仍会把它列出来补图。界面侧由 `DeckImages.resolve` 兜底成默认图。
             failed.append((r['name'], str(e)[:60]))
     return got, skipped, failed
 
@@ -713,6 +715,20 @@ def main():
         if img_ovr:
             print('[换图] %d 个站内条目的图来自 deck_images_custom/（手动替换）'
                   % img_ovr)
+
+        # ---- 清掉历史污染：img_file 指向默认图的（2026-10-10 修的真事故）----
+        # `find_image_file` 以前拿默认图兜底，`custom_rows` 分不清「找到真图」与
+        # 「拿到兜底」，就把 `_default.webp` 当成真图写进了库。库里存着它以后，
+        # `DeckImages.resolve` 第 1 环的别名索引会永远命中默认图 —— 用户后来把
+        # 真图下载回来也显示不出来。清成空串后 `resolve` 会重新走真图链。
+        polluted = [r['name'] for r in st.list_meta_decks(include_hidden=True)
+                    if (r.get('img_file') or '') == _rel_or_abs(DEFAULT_IMAGE)]
+        for nm in polluted:
+            st.set_meta_deck_override(nm, img_file='')
+        if polluted:
+            print('[修图] 清掉 %d 条指向默认图的假图（改回空，等真图/兜底图接管）: %s'
+                  % (len(polluted), '、'.join(polluted[:12])
+                     + ('…' if len(polluted) > 12 else '')))
         print()
         show_cn_table(st.list_meta_decks(include_hidden=True), ovr, todo_note)
         blank = [r['name'] for r in site

@@ -184,9 +184,13 @@ def cmd_reset(st, deck_name):
         if os.path.exists(p):
             os.remove(p)
             removed.append(os.path.basename(p))
-    back = fmd.local_image_for(row['name'])       # 覆盖图没了，自动回落到站内图/默认图
-    st.set_meta_deck_override(row['name'], img_file=back)
-    print('[还原] %s -> %s%s' % (row['name'], back,
+    back = fmd.local_image_for(row['name'])       # 覆盖图没了，回落到站内图
+    #: ⚠️ 回落成**空串**而不是 None（2026-10-10 修的真事故）：`set_meta_deck_override`
+    #: 约定 None = 「不动这一项」，空串 = 「清空」。库里若存着历史污染的
+    #: `_default.webp` 假图，不清掉就永远显示默认图；清空后 `DeckImages.resolve`
+    #: 会重新走真图链。`local_image_for` 现在找不到真图就诚实返回 None。
+    st.set_meta_deck_override(row['name'], img_file=(back or ''))
+    print('[还原] %s -> %s%s' % (row['name'], back or '（空，界面回落到默认图）',
                                ('（已删 %s）' % '、'.join(removed)) if removed else ''))
     return 0
 
