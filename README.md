@@ -46,8 +46,8 @@ decks, rank progress and the metagame — with UI in **English / 中文 / 日本
 
 | Asset | Size | Requirements |
 |---|---|---|
-| `masterduel-stats-v1.0.2-win64-full.zip` | ~194 MB | **None** — Python & all deps bundled; unzip anywhere and run `MDStats.exe` |
-| `masterduel-stats-v1.0.2-win64-lite.zip` | ~5 MB | Python 3.13 installed; `MDStats.exe` installs the dependencies on first run |
+| `masterduel-stats-v1.0.3-win64-full.zip` | ~194 MB | **None** — Python & all deps bundled; unzip anywhere and run `MDStats.exe` |
+| `masterduel-stats-v1.0.3-win64-lite.zip` | ~5 MB | Python 3.13 installed; `MDStats.exe` installs the dependencies on first run |
 | Source code (zip / tar.gz) | auto | for developers — attached automatically by GitHub for each tag |
 
 **The easy way:** install [Python 3.13](https://www.python.org/downloads/)
