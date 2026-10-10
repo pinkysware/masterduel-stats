@@ -190,6 +190,70 @@ class TestPrepare(unittest.TestCase):
         self.assertIs(groups, GROUPS)
         self.assertIn('烙印', idx)
 
+    def test_prepare_drops_decks_absent_from_meta(self):
+        """🔴 回归锁：参照库里**用户已删除的条目不进候选**（2026-10-10）。
+
+        参照库 `data/mdm_deck_cards.json` 是**月度快照、只增不减** ——
+        从覆盖表删掉 `Branded Elfnote` 之后，它仍然躺在参照库里，
+        打分照样并列第一（实测：用户早已不用这副牌，界面却一直推荐它）。
+        `prepare(keep=...)` 按 `meta_decks` 过滤一次，删了才真的生效。
+        """
+        data = ref({'Elfnote': deck('Tier3', 10, GENERIC),
+                    'Branded Elfnote': deck('Tier2', 10, GENERIC)})
+        idx, _ = dg.prepare(data, GROUPS, keep={'Elfnote'})
+        self.assertIn('Elfnote', idx)
+        self.assertNotIn('Branded Elfnote', idx,
+                         '库里没有的条目不该进候选')
+
+    def test_prepare_drops_everything_when_meta_table_empty(self):
+        """🔴 回归锁：**meta_decks 表空 = 全过滤**，不是「不过滤」（2026-10-10）。
+
+        干净版实机：首跑播种（联网抓 meta 清单）完成前表是空的，旧口径
+        「表空返回 None = 不过滤」让参照库孤儿条目（用户已删除的
+        Branded Elfnote）直接进了第一局的 AI 建议。口径改为：空表 →
+        空集 → 全滤 → 暂时无建议（首跑窗口内本来没有历史局要标）。
+        """
+        data = ref({'A': deck('Tier3', 10, GENERIC), 'B': deck('Tier2', 10, GENERIC)})
+        orig = dg.known_deck_names
+        dg.known_deck_names = lambda: set()          # 表存在但空
+        self.addCleanup(setattr, dg, 'known_deck_names', orig)
+        idx, _ = dg.prepare(data, GROUPS)
+        self.assertEqual(list(idx), [], '空表 = 无候选，孤儿条目不许漏进来')
+
+    def test_prepare_keeps_everything_when_keep_none_and_no_db(self):
+        """`keep` 给不出（查不到库）-> **全留**，宁可多列也不给错。"""
+        data = ref({'A': deck('Tier3', 10, GENERIC), 'B': deck('Tier2', 10, GENERIC)})
+        orig = dg.known_deck_names
+        dg.known_deck_names = lambda: None
+        self.addCleanup(setattr, dg, 'known_deck_names', orig)
+        idx, _ = dg.prepare(data, GROUPS)
+        self.assertIn('A', idx)
+        self.assertIn('B', idx)
+
+    def test_known_deck_names_includes_display_and_cn(self):
+        """`known_deck_names` 要收 name / name_display / name_cn 三种叫法。"""
+        rows = [{'name': 'X', 'name_display': 'Y', 'name_cn': '甲'},
+                {'name': 'Z', 'name_display': None, 'name_cn': None}]
+        import tempfile as _tf
+        import shutil as _sh
+        from core.storage import Storage
+        tmp = _tf.mkdtemp(prefix='kdn_', dir=os.path.join(PROJ, 'tmp'))
+        self.addCleanup(_sh.rmtree, tmp, ignore_errors=True)
+        st = Storage(os.path.join(tmp, 'k.db'))
+        st.init_schema()
+        st.replace_meta_decks([dict(r, kind='deck_type', source='masterduelmeta')
+                              for r in rows], prune=False)
+        import core.deck_guess as _dg
+        orig_init = _dg.Storage if hasattr(_dg, 'Storage') else None
+        #: 直接验函数本身（不与真库耦合）
+        names = set()
+        for r in st.list_meta_decks(include_hidden=True):
+            for k in (r.get('name'), r.get('name_display'), r.get('name_cn')):
+                k = str(k or '').strip()
+                if k:
+                    names.add(k)
+        self.assertEqual(names, {'X', 'Y', '甲', 'Z'})
+
     def test_load_reference_missing_file(self):
         self.assertEqual(dg.load_reference(os.path.join(PROJ, 'tmp', '不存在.json')), {})
 

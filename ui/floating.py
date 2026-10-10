@@ -74,7 +74,7 @@ from PySide6.QtCore import (QPointF, QPoint, QRectF, QSettings, QSize, Qt,
 from PySide6.QtGui import (QAction, QColor, QFont, QFontMetrics, QIcon,
                            QPainter, QPainterPath, QPen, QPixmap, QPolygonF)
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QScrollArea,
-                               QSystemTrayIcon, QVBoxLayout, QWidget)
+                               QSizePolicy, QSystemTrayIcon, QVBoxLayout, QWidget)
 
 from core.ui_state import UiSnapshot
 from ui import theme, widgets
@@ -143,7 +143,7 @@ def badge_slot() -> int:
     """
     if _SLOT_CACHE.get('badge'):
         return _SLOT_CACHE['badge']
-    fm = QFontMetrics(widgets.font(BADGE_NUM_SIZE, QFont.Weight.Medium))
+    fm = cached_fm(widgets.font(BADGE_NUM_SIZE, QFont.Weight.Medium))
     widest = max(fm.horizontalAdvance(s) for s in ('I', 'II', 'III', 'IV', 'V'))
     arrow = max(fm.horizontalAdvance(s) for s in (ARROW_UP, ARROW_DOWN))
     slot = BADGE_ICON + BADGE_SPACING * 2 + widest + arrow + 6
@@ -160,7 +160,7 @@ def badge_group_width() -> int:
     """
     if _SLOT_CACHE.get('bgroup'):
         return _SLOT_CACHE['bgroup']
-    fm = QFontMetrics(widgets.font(BADGE_NUM_SIZE, QFont.Weight.Medium))
+    fm = cached_fm(widgets.font(BADGE_NUM_SIZE, QFont.Weight.Medium))
     widest = max(fm.horizontalAdvance(s) for s in ('I', 'II', 'III', 'IV', 'V'))
     arrow = max(fm.horizontalAdvance(s) for s in (ARROW_UP, ARROW_DOWN))
     w = BADGE_ICON + BADGE_SPACING * 2 + widest + arrow
@@ -185,6 +185,40 @@ def min_columns_width() -> int:
             + badge_slot() + opp_col_width())
 
 
+#: ★ `QFontMetrics` **实例**缓存（2026-10-10）。
+#: 每次新建 `QFontMetrics` 都要走一遍字体解析/字形表，实测单次
+#: `horizontalAdvance` 要 **29ms**（首次加载字体时更贵）。而 `min_columns_width()`
+#: 一次要问 6 个列宽、`window_width()` 又调它 4 遍 = **12 次**，
+#: 实测 `FloatingWindow.__init__` 里光这一项就吃掉 **0.35s**（启动最慢的一段）。
+#: 字体定了就不变（`_refresh_fonts` 只在换语言时改），所以按字体缓存实例即可。
+_FM_CACHE = {}
+
+
+def cached_fm(font):
+    """`QFontMetrics` **按字体缓存** —— 别在热路径里反复新建。
+
+    实测（2026-10-10）：新建一次要 29ms，而启动时 `min_columns_width()` 之类
+    会问十几次 —— `FloatingWindow.__init__` 光字体度量就吃掉 0.35s，
+    是启动最慢的一段。字体换了自然算出不同的 key，不用手动失效。
+    """
+    key = (font.family(), font.pointSizeF(), font.weight(), font.styleHint())
+    fm = _FM_CACHE.get(key)
+    if fm is None:
+        fm = QFontMetrics(font)
+        _FM_CACHE[key] = fm
+    return fm
+
+
+def label_fm():
+    """表头用的 `QFontMetrics`（缓存版）。"""
+    return cached_fm(widgets.font(theme.F_LABEL, QFont.Weight.Normal))
+
+
+def body_fm():
+    """正文字号下的 `QFontMetrics`（缓存版）。"""
+    return cached_fm(widgets.font(theme.F_BODY))
+
+
 def _text_col_w(text: str, base: int) -> int:
     """表头列宽 = `max(基准, 译文表头宽 + 6)` —— 三语表头都不裁字。
 
@@ -194,8 +228,7 @@ def _text_col_w(text: str, base: int) -> int:
     key = ('txt', text, base)
     if _SLOT_CACHE.get(key):
         return _SLOT_CACHE[key]
-    fm = QFontMetrics(widgets.font(theme.F_LABEL, QFont.Weight.Normal))
-    w = max(base, fm.horizontalAdvance(text) + 2)
+    w = max(base, label_fm().horizontalAdvance(text) + 2)
     _SLOT_CACHE[key] = w
     return w
 
@@ -227,7 +260,7 @@ def opp_name_width(rows) -> int:
     下限 40、上限 `COL_OPP_NAME`（长名到顶省略 + tooltip 全名）。
     空表 = 上限（与旧行为一致）。
     """
-    fm = QFontMetrics(widgets.font(theme.F_BODY))
+    fm = body_fm()
     need = 0
     for r in (rows or []):
         deck = (r or {}).get('opp_deck') or ''
@@ -244,7 +277,7 @@ def opp_col_width() -> int:
     「未知卡组」是**固定 UI 文案**（琥珀未标注态），省略成「未知…」既难看
     又丢语义（2026-10-05 审查）—— 名字列收窄后给它保底。
     """
-    fm = QFontMetrics(widgets.font(theme.F_BODY))
+    fm = body_fm()
     need = fm.horizontalAdvance(tr('未知卡组')) + 8
     return max(COL_OPP, COL_OPP_THUMB + OPP_GAP + need)
 
@@ -274,7 +307,7 @@ def max_window_width(names) -> int:
     """
     import math
 
-    fm = QFontMetrics(widgets.font(theme.F_BODY))
+    fm = body_fm()
     need = max([fm.horizontalAdvance(str(n)) for n in names if n]
                or [COL_OPP_NAME])
     total_base = min_columns_width()
@@ -897,11 +930,23 @@ class RankBadge(QWidget):
 
     @classmethod
     def _text(cls, s, size=None):
-        """罗马数字 / 箭头 —— 统一用 `muted`（和时间同色）。"""
+        """罗马数字 / 箭头 —— 统一用 `muted`（和时间同色）。
+
+        🔴 **必须钉死宽度**（2026-10-10 实机事故）：`QLabel` 的默认 size policy
+        是 `Preferred` —— 它会**抢占**布局里的剩余空间而不是收缩。徽章组只有
+        39px，但不约束宽度时那个 `II` 标签实测被撑到**整行宽（640px）**，
+        文字被甩到整行正中间（用户截图：段位列空格里罗马数字飘在行中央）。
+        末尾那个 `addStretch` 拦不住 —— stretch 只分配**剩余**空间，
+        而剩余空间已经被标签吃光了。
+        """
         lab = widgets.label(s, 'muted', Qt.AlignVCenter | Qt.AlignLeft)
         if size:
             lab.setFont(widgets.font(size, QFont.Weight.Medium))
-        lab.setFixedHeight(lab.fontMetrics().height() + 2)   # 不许比字矮
+        fm = lab.fontMetrics()
+        lab.setFixedHeight(fm.height() + 2)              # 不许比字矮
+        #: 宽度按**实测字宽**给死（+2 留边）；空串给 0，不占位
+        lab.setFixedWidth((fm.horizontalAdvance(s) + 2) if s else 0)
+        lab.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         return lab
 
     @classmethod
@@ -1427,6 +1472,12 @@ class FloatingWindow(QWidget):
         self.rows_lay = QVBoxLayout(self.rows_host)
         self.rows_lay.setContentsMargins(0, 0, 0, 0)
         self.rows_lay.setSpacing(0)
+        #: 🔴 **必须顶对齐**（2026-10-10 实机事故）：`QVBoxLayout` 默认会把
+        #:   多余空间**均分到每个项目后面**。行区高度恒为 3 行（`MIN_ROWS`），
+        #:   而只有 1 局时那唯一的行会被下移一行（实测 y=35、上面空 35px）——
+        #:   用户截图：单局却显示在**第二行**，上面一片空白。
+        #:   顶部对齐后单局就贴在第一行，往后依次往下排。
+        self.rows_lay.setAlignment(Qt.AlignTop)
         # ---- 行区 = **滚动区**（2026-09-15 用户定）：默认露 3 行，往下拖最多同看 10 行，
         #      装不下就滚。⚠️ 表头在滚动区**外面** —— 滚动时它不动（D7），
         #      代价是两条列宽要扣掉滚动条宽度才对得齐（见 `_scrollbar_w`）。

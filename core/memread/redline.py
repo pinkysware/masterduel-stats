@@ -71,6 +71,12 @@ FORBIDDEN_ACCESS_BITS = {
     'PROCESS_SUSPEND_RESUME': 0x0800,
 }
 
+#: 终止位：**唯一的合法用途** = 结束我们自己拉起的后台进程
+#: （``ui/collector_ctl`` 收采集器）。红线管的是「不许碰**游戏**进程」，
+#: 收自家子进程不在此列 —— 但常量名不许散落业务代码，要用从这里拿。
+#: ⚠️ 这不是游戏内存的写权限：对游戏进程连 OpenProcess 都不走这条路。
+TERMINATE_ACCESS_BIT = FORBIDDEN_ACCESS_BITS['PROCESS_TERMINATE']
+
 # ------------------------------------------------------------- 3. 游戏文件保护
 
 #: 游戏安装目录里**绝对不允许被写**的文件。只读也必须走 open_game_file()。

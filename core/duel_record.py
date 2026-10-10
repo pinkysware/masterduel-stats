@@ -564,8 +564,13 @@ def _summary(events, payloads, bin_for):
                      if turns else None),
         'revealed': revealed,
         'opp_revealed_ids': None,    # seat 判出后才映射
-        'counts': dict(sorted((k, v) for k, v in
-                              _count_labels(events).items())),
+        # 2026-10-10 实机（record_20261010_193859）：控制器内存被复用时
+        # read_sysstr 打印性过滤会让 label 变 None/乱码单字，None 混进
+        # sorted() 直接 TypeError（'<' not supported str/None）—— 整局
+        # import 失败。归一成 '#unknown' 保排序，计数照留（不吞信息）。
+        'counts': dict(sorted(
+            (('#unknown' if k is None else k), v)
+            for k, v in _count_labels(events).items())),
     }
     return summ
 

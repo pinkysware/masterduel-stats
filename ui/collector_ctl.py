@@ -60,7 +60,7 @@ def _load_pid() -> dict:
         return {}
 
 
-def stop_collector(timeout_ms: int = 3000) -> str:
+def stop_collector(timeout_ms: int = 1500) -> str:
     """收掉采集器进程。返回一句人话（给日志/状态行用）。
 
     ``'no-pid-file'``   没有 pid 文件（没起过采集器）
@@ -97,6 +97,74 @@ def stop_collector(timeout_ms: int = 3000) -> str:
     return _terminate(int(pid), timeout_ms)
 
 
+def collector_running() -> bool:
+    """采集器**现在**是否在跑（读 pid 文件 + 严格判据）。"""
+    data = _load_pid()
+    pid = data.get('collector_pid')
+    if not pid:
+        return False
+    try:
+        sys.path.insert(0, os.path.join(PROJ, 'tools'))
+        from duel_collector import pid_alive
+    except Exception:                                    # noqa: BLE001
+        # 拿不到判据时**保守当成在跑** —— 别因为判断不了就把采集器再拉一个
+        return _alive_raw(int(pid))
+    try:
+        return bool(pid_alive(pid, data.get('collector_born')))
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
+def start_collector(minutes: int = 0, interval: int = 2.0) -> Optional[int]:
+    """**拉起一个采集器进程**（返回 pid；失败返回 None）。
+
+    为什么需要（2026-10-10 实机事故）：界面退出时会收掉采集器（见模块头），
+    但**重新启动的那一侧不一定带着它** —— `start.bat` / `MDStats.exe` 是一次性
+    拉起两个，用户若只起了界面（或上次是异常退出），采集器就没了：
+    表现为「打了一局，界面零记录」，而日志里连一行启动记录都没有。
+
+    所以界面启动时自查一遍：**不在就把它拉起来**（见 `ensure_collector`）。
+    """
+    if collector_running():
+        return None
+    script = os.path.join(PROJ, 'tools', 'duel_collector.py')
+    if not os.path.exists(script):
+        return None
+    import subprocess
+    #: 无窗口启动（对齐 start.bat 的 `start "" "%PYW%"`）。
+    #: ⚠️ **不要加 `DETACHED_PROCESS`**（2026-10-10 实测踩过）：加了它
+    #:    `Popen` 返回的是那个「脱离的启动壳」的 pid，**不是**采集器真正的 pid
+    #:    —— 实测返回 None / 对不上号。`CREATE_NO_WINDOW` 本身就够安静了。
+    flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0) if os.name == 'nt' else 0
+    #: 🔴 **必须用 pythonw**（2026-10-10 实机事故）：`sys.executable` 在开发环境
+    #:   是 `python.exe`（**带控制台**），界面退出时补拉的采集器就**闪一个黑框**
+    #:   —— 用户原话「退出后会闪一个黑框」。项目里早有 `pythonw()` 这个函数
+    #:   （`ui/app.py`，当初为「重启界面不闪黑框」写的），这里复用它。
+    exe = sys.executable
+    _w = os.path.join(os.path.dirname(exe), 'pythonw.exe')
+    if os.path.exists(_w):
+        exe = _w
+    args = [exe, script, '--minutes', str(int(minutes)),
+            '--interval', str(interval)]
+    try:
+        proc = subprocess.Popen(args, cwd=PROJ, close_fds=True,
+                                creationflags=flags)
+    except Exception:                                    # noqa: BLE001
+        return None
+    _log('[collector_ctl] 采集器不在，已拉起 pid=%s' % proc.pid)
+    return proc.pid
+
+
+def ensure_collector(minutes: int = 0) -> Optional[int]:
+    """界面启动时的保险：**采集器不在就拉起来**（在则什么都不做）。"""
+    try:
+        if collector_running():
+            return None
+        return start_collector(minutes=minutes)
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
 def _terminate(pid: int, timeout_ms: int) -> str:
     """先温和结束（WM_CLOSE），超时再强杀。"""
     if os.name == 'nt':
@@ -104,20 +172,53 @@ def _terminate(pid: int, timeout_ms: int) -> str:
     return _terminate_posix(pid)
 
 
+def _kill_win_native(pid: int) -> bool:
+    """用 Win32 API 结束进程 —— **不起子进程、不碰控制台**（返回是否成功）。
+
+    🔴 **为什么不用 `taskkill`**（2026-10-10 实机事故，两个坑）：
+    1. `taskkill` 本身是**控制台程序**。用 `subprocess.run` 调它会**分配一个
+       控制台窗口** —— 用户看到的就是「退出时闪一个黑框」。本进程是无窗口的
+       （pythonw），子进程默认不继承控制台，于是每调一次就闪一次。
+    2. 不带 `/F` 的 `taskkill` 发 WM_CLOSE，对无窗口进程**完全无效** ——
+       采集器是 pythonw，没有窗口可关。实测温和版 **3.96 秒**、`/F` 版 **0.73 秒**，
+       每次退出都在空等（用户当时反馈「关闭很慢」）。
+
+    `OpenProcess(终止位)` + `TerminateProcess` 是同一件事
+    **不经过任何外部程序**：没有控制台、没有窗口、瞬时完成。
+    """
+    try:
+        import ctypes
+        from core.memread.redline import TERMINATE_ACCESS_BIT
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(TERMINATE_ACCESS_BIT, False, int(pid))
+        if not h:
+            return False
+        try:
+            return bool(k32.TerminateProcess(h, 1))
+        finally:
+            k32.CloseHandle(h)
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
 def _terminate_win(pid: int, timeout_ms: int) -> str:
-    """Windows：先 `taskkill /PID`（无 /F，走正常退出），再等，最后 `/F`。"""
-    import subprocess
-    try:
-        subprocess.run(['taskkill', '/PID', str(pid)],
-                       capture_output=True, timeout=max(1, timeout_ms // 1000))
-    except Exception:                                    # noqa: BLE001
-        pass
-    if _wait_gone(pid, timeout_ms):
-        return 'stopped'
-    try:
-        subprocess.run(['taskkill', '/F', '/PID', str(pid)], capture_output=True)
-    except Exception:                                    # noqa: BLE001
-        pass
+    """Windows：**直接**结束进程，等它消失。
+
+    走 :func:`_kill_win_native`（Win32 API），**不起 `taskkill` 子进程** ——
+    后者是控制台程序，会在退出瞬间闪一个黑框（用户 2026-10-10 实机反馈）。
+
+    强制结束不丢数据：对局数据逐拍落盘、pid 文件与心跳都是「尽力写」；
+    万一留下 `state=open` 的记录目录，下次启动的 `import_just_closed` 会收口，
+    **不依赖进程优雅退出**。
+    """
+    if not _kill_win_native(pid):
+        # Win32 失败（权限不足 / 进程已没了）—— 再退回 taskkill 兜底
+        import subprocess
+        try:
+            subprocess.run(['taskkill', '/F', '/PID', str(pid)],
+                           capture_output=True, timeout=2)
+        except Exception:                                # noqa: BLE001
+            pass
     return 'stopped' if _wait_gone(pid, 2000) else 'denied'
 
 

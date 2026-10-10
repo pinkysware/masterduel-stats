@@ -1163,6 +1163,43 @@ class ReferenceCacheInvalidationTest(unittest.TestCase):
         clear_reference_cache()
         self.assertEqual(deck_guess._DATA_CACHE, {})
 
+class RefSharedWithTest(unittest.TestCase):
+    """自组卡组**共用参照库**（2026-10-10 用户口径）。
+
+    「狱神耀圣」站内没有这一条，但构成与 `Elfnote`（耀圣）是同一副 ——
+    所以读 Elfnote 的逐卡使用率，不必重复抓一份快照。
+    """
+
+    def _decks(self):
+        return {'Elfnote': {'cards': {'1': {'per': 90, 'at': 1}},
+                            'tier': 'Tier3', 'total': 1}}
+
+    def test_shared_deck_resolves_to_partner(self):
+        """共用表命中 -> 落到那个键。"""
+        self.assertEqual(ui_state.match_ref_key('狱神耀圣', self._decks()), 'Elfnote')
+
+    def test_shared_mapping_takes_priority_over_fuzzy(self):
+        """⚠️ **必须在模糊匹配之前**：`狱神耀圣` 参照库里没有自己的键，
+        若先走 `search_meta_decks` 的模糊匹配，会被匹配到别的条目上去
+        （「耀圣杀手旋律」之类），共用的关系就废了。"""
+        self.assertEqual(ui_state.match_ref_key('狱神耀圣', self._decks()), 'Elfnote')
+
+    def test_normal_name_unaffected(self):
+        """没登记共用的名字照旧按原逻辑走。"""
+        self.assertEqual(ui_state.match_ref_key('Elfnote', self._decks()), 'Elfnote')
+
+    def test_unknown_name_returns_none(self):
+        self.assertIsNone(ui_state.match_ref_key('不存在的卡组', self._decks()))
+
+    def test_shared_no_reference_no_crash(self):
+        """参照库整个是空的 -> 返回 None，不抛。"""
+        self.assertIsNone(ui_state.match_ref_key('狱神耀圣', {}))
+
+    def test_shared_only_when_partner_present(self):
+        """共用目标本身不在参照库（还没抓那份）-> 别硬凑，返回 None。"""
+        self.assertIsNone(ui_state.match_ref_key('狱神耀圣', {'别的': {}}))
+
+
 if __name__ == '__main__':
     unittest.main()
 

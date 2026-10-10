@@ -122,7 +122,15 @@ def ensure_meta_decks(app) -> Optional[object]:
         except Exception:                                # noqa: BLE001
             pass
 
-    runner = ScriptRunner('tools/fetch_meta_decks.py', [], parent=app)
+    #: 🔴 **不要传 `parent=app`**（2026-10-10 实机事故）：`MasterDuelUiApp` 是
+    #: **普通 Python 类、不是 QObject**，而 `ScriptRunner`（QObject 子类）会把
+    #: `parent` 交给 `QObject.__init__` —— 那要求 parent 必须是 QObject，
+    #: 于是抛 `TypeError: QObject.__init__() called with wrong argument types`。
+    #: ⚠️ 这个异常被 `ui/app.py` 启动处的 `try/except` 吞掉，**首跑播种从未真正
+    #: 启动**：`first_run.log` 只留下一行「开始」、没有「完成」，
+    #: `meta_decks` 永远 0 行 → 卡组选择器搜不到任何卡组。
+    #: 生命周期不靠 parent —— `app._firstrun_proc` 持有强引用，够了。
+    runner = ScriptRunner('tools/fetch_meta_decks.py', [])
     runner.done.connect(on_done)
     app._firstrun_proc = runner
     runner.start()

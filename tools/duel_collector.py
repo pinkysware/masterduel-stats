@@ -38,6 +38,7 @@ import argparse
 import json
 import os
 import struct
+import traceback
 import sys
 import time
 from datetime import datetime
@@ -45,6 +46,21 @@ from datetime import datetime
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
+
+# 🔴 `tools/` **自己**也必须在 sys.path 里（2026-10-10 实机事故）。
+#:   本文件里有多处 `import import_duel_records` / `import backfill_my_rank`
+#:   （收局入库、段位补写、启动自愈），那些模块**与本脚本同目录**。
+#:   Python **不会**把脚本所在目录自动加进 `sys.path` ——
+#:   `sys.path[0]` 是**脚本的父目录**。所以：
+#:   * 从项目根跑 `python tools/duel_collector.py` -> `sys.path[0]` 是 `tools/`，
+#:     **恰好**能 import 到（开发期一直这么跑，所以从没暴露）；
+#:   * 发布包用 `pythonw tools\duel_collector.py` 启动（工作目录钉在包根），
+#:     `sys.path[0]` 变成包根，import **全部失败**，日志只留一行
+#:     `ModuleNotFoundError: No module named 'import_duel_records'`，
+#:     **对局采到了、却进不了库**（用户实测：打了一局，界面零记录）。
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 from core import duel_record
 from core.app_service import DuelSessionTracker, EV_DUEL_END, EV_DUEL_START
@@ -1825,14 +1841,14 @@ class Runtime(Hooks):
             f.write(json.dumps(rec, ensure_ascii=False) + '\n')
 
     def import_record(self, dir_name):
-        import import_duel_records as idr      # 同目录 tools/
+        import import_duel_records as idr      # 同目录（见文件头 _HERE）
         from core.storage import Storage
         return idr.process(records_dir=self.records_dir, storage=Storage(),
                            apply=True, only=dir_name)
 
     def backfill_rank(self, dir_name):
         """段位探测落盘后补进库（与 `tools/backfill_my_rank.py` 共用 apply_one）。"""
-        import backfill_my_rank as bmr         # 同目录 tools/
+        import backfill_my_rank as bmr         # 同目录（见文件头 _HERE）
         from core.storage import Storage
         return bmr.apply_one(Storage(), self.records_dir, dir_name)
 
@@ -2066,7 +2082,7 @@ def import_just_closed(records_dir, names, log, importer=None):
             if importer is not None:
                 importer(name)
             else:
-                import import_duel_records as idr      # 同目录 tools/
+                import import_duel_records as idr      # 同目录（见文件头 _HERE）
                 from core.storage import Storage
                 st = Storage()
                 st.init_schema()
@@ -2206,6 +2222,11 @@ def main(argv=None):
     connected_pid = None
     deadline = (time.time() + args.minutes * 60) if args.minutes else None
     tries = 0
+    exit_code = 0
+
+    def _tb(e):
+        """兜底日志带全 traceback —— 静默死亡唯一的目击证人就是它。"""
+        return ''.join(traceback.format_exception(type(e), e, e.__traceback__))
     try:
         while deadline is None or time.time() < deadline:
             pids = find_pids_by_name('masterduel.exe')
@@ -2236,31 +2257,56 @@ def main(argv=None):
                     time.sleep(args.interval)
                     continue
             ts = now_str()
-            in_duel, mode, finished = sample_engine(rt)
-            write_heartbeat(in_duel=bool(in_duel), game_pid=connected_pid)
+            # ⚠️ 采样与心跳在 observe 的 try 之外 —— 这里任何异常都会带崩
+            #    整个进程（2026-10-10 交接：主循环曾只有 KeyboardInterrupt）。
+            #    采样读的是被游戏随时复用的内存，出错大概率是这一拍的数据
+            #    坏了，不是代码坏了：记日志、下一拍重试即可。
+            try:
+                in_duel, mode, finished = sample_engine(rt)
+                write_heartbeat(in_duel=bool(in_duel), game_pid=connected_pid)
+            except Exception as e:                          # noqa: BLE001
+                log('采样异常（下一拍重试）：%r' % _tb(e))
+                time.sleep(args.interval)
+                continue
             try:
                 for line in collector.observe(ts, in_duel, game_mode=mode,
                                               finished=finished):
                     log(line)
-            except Exception as e:
-                log('采集异常（不中断循环）：%r' % e)
+            except Exception as e:                          # noqa: BLE001
+                log('采集异常（不中断循环）：%r' % _tb(e))
             time.sleep(args.interval)
     except KeyboardInterrupt:
         log('Ctrl-C —— 优雅退出')
+    except Exception as e:                                  # noqa: BLE001
+        # 兜底闸（2026-10-10 交接点名）：连接、pid 探测等循环体外围的
+        # 漏网异常不许静默带走进程 —— 记全 traceback 再收口退出。
+        log('主循环未捕获异常，退出前收口：%r %s' % (e, traceback.format_exc()))
+        exit_code = 1
     finally:
         # 优雅退出：tracker.flush + 当前局收口 + **所有** open 目录标 final
         # （终审裁决 2 的零成本闸门：只有被 kill 才会留 open）
-        for line in collector._close_current(now_str(), 'flushed',
-                                             time.time()):
-            log(line)
-        scans, _br = hooks.scan_records()
-        for s in scans:
-            if s.get('state') == 'open':
-                rc.finalize_open(s['dir'], reason='flushed')
-                log('  已标 final（flushed）：%s' % s['name'])
-        log('=== duel_collector 退出 ===')
-        clear_pid_file()
-    return 0
+        # ⚠️ 收口各步独立 try：它是死因现场的最后一块拼图，绝不能因为
+        #    自己再炸而半途而废（留 open 目录 + 无日志）。
+        try:
+            for line in collector._close_current(now_str(), 'flushed',
+                                                 time.time()):
+                log(line)
+        except Exception as e:                              # noqa: BLE001
+            log('收口 _close_current 失败：%r' % _tb(e))
+        try:
+            scans, _br = hooks.scan_records()
+            for s in scans:
+                if s.get('state') == 'open':
+                    rc.finalize_open(s['dir'], reason='flushed')
+                    log('  已标 final（flushed）：%s' % s['name'])
+        except Exception as e:                              # noqa: BLE001
+            log('收口 finalize_open 失败：%r' % _tb(e))
+        try:
+            log('=== duel_collector 退出 ===')
+            clear_pid_file()
+        except Exception as e:                              # noqa: BLE001
+            log('收口 clear_pid_file 失败：%r' % _tb(e))
+    return exit_code
 
 
 if __name__ == '__main__':

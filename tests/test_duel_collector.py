@@ -1982,5 +1982,42 @@ class TestSingleInstanceGuard(unittest.TestCase):
         self.assertTrue(_dc.pid_alive(os.getpid()))
 
 
+class TestToolsOnSysPath(unittest.TestCase):
+    """🔴 回归锁：`tools/` 必须在采集器的 `sys.path` 里（2026-10-10 实机事故）。
+
+    采集器里有三处 `import import_duel_records` / `import backfill_my_rank`
+    （收局入库、段位补写、启动自愈），那些模块**与本脚本同目录**。
+    Python **不会**把脚本所在目录加进 `sys.path` —— `sys.path[0]` 是**脚本的父目录**：
+
+    * 开发期从项目根跑 `python tools/duel_collector.py` -> `sys.path[0]` 恰好是
+      `tools/`，所以 import 成功，**这个 bug 一直藏着**；
+    * 发布包用 `pythonw tools\duel_collector.py` 启动（工作目录钉在包根），
+      `sys.path[0]` 变成包根 -> 三处 import **全部失败**，日志只留一行
+      `ModuleNotFoundError`，**对局采到了却进不了库**
+      （用户实测：打了一局，界面零记录）。
+    """
+
+    def test_tools_dir_is_importable(self):
+        """当前解释器下，`import import_duel_records` 必须成。"""
+        self.assertIn(_dc._HERE, sys.path,
+                      'tools/ 必须显式加进 sys.path')
+        import import_duel_records          # noqa: F401
+        import backfill_my_rank             # noqa: F401
+
+    def test_works_when_cwd_is_project_root(self):
+        """**发布包的启动条件**：cwd = 项目根、脚本在 tools/ —— 仍要能 import。
+
+        这条不依赖「当前 cwd 恰好是哪儿」，直接断言 `sys.path` 里能定位到模块。
+        """
+        import importlib.util as _u
+        for mod in ('import_duel_records', 'backfill_my_rank'):
+            spec = _u.find_spec(mod)
+            self.assertIsNotNone(spec, '%s 定位不到' % mod)
+            self.assertIn(
+                os.path.dirname(os.path.abspath(spec.origin)),
+                [_dc._HERE],
+                '%s 不该只在 %s 里找得到' % (mod, _dc._HERE))
+
+
 if __name__ == '__main__':
     unittest.main()

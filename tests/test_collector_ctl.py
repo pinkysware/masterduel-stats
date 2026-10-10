@@ -137,6 +137,60 @@ class TestStopCollector(unittest.TestCase):
         self.assertEqual(killed, [], '判据不可用时必须放弃，不能盲杀')
 
 
+class TestEnsureCollector(unittest.TestCase):
+    """界面启动时的保险：采集器不在就拉起来（2026-10-10）。
+
+    ⚠️ **全部用桩**：这组测试**绝不许**真去起采集器（它每 2 秒扫一次游戏内存，
+    真起会把测试机占满、也会污染开发库）。`start_collector` 在 setUp 里
+    就被打桩掉。
+    """
+
+    def setUp(self):
+        _tmp = os.path.join(PROJ, 'tmp')
+        os.makedirs(_tmp, exist_ok=True)
+        self.tmp = tempfile.mkdtemp(prefix='cctl2_', dir=_tmp)
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self._orig_pid = cc.PID_PATH
+        cc.PID_PATH = os.path.join(self.tmp, 'duel_collector.pid')
+        self.addCleanup(setattr, cc, 'PID_PATH', self._orig_pid)
+        #: 🔴 先把「真的会起进程」的那个函数打桩掉，再动别的
+        self.started = []
+        self._orig_start = cc.start_collector
+        cc.start_collector = lambda **kw: self.started.append(kw) or 4242
+        self.addCleanup(setattr, cc, 'start_collector', self._orig_start)
+
+    def _write_pid(self, pid=4242, born=111):
+        with open(cc.PID_PATH, 'w', encoding='utf-8') as f:
+            json.dump({'collector_pid': pid, 'collector_born': born}, f)
+
+    def _stub_running(self, value):
+        self._orig = cc.collector_running
+        cc.collector_running = lambda: value
+        self.addCleanup(setattr, cc, 'collector_running', self._orig)
+
+    def test_ensure_does_nothing_when_running(self):
+        """采集器在跑 -> **不重复拉**（否则会起第二个，白白吃内存）。"""
+        self._stub_running(True)
+        self.assertIsNone(cc.ensure_collector())
+        self.assertEqual(self.started, [], '已在跑时不该再拉一个')
+
+    def test_ensure_starts_when_missing(self):
+        """采集器不在 -> 拉起一个。"""
+        self._stub_running(False)
+        self.assertEqual(cc.ensure_collector(), 4242)
+        self.assertEqual(len(self.started), 1, '应该正好起一个')
+
+    def test_ensure_never_raises(self):
+        """判据抛异常也**不许炸** —— 界面启动不能因为它失败。"""
+        self._orig = cc.collector_running
+
+        def boom():
+            raise RuntimeError('pid_alive 挂了')
+
+        cc.collector_running = boom
+        self.addCleanup(setattr, cc, 'collector_running', self._orig)
+        cc.ensure_collector()          # 不抛即通过
+
 class SimpleNamespaceModule(object):
     """`sys.modules` 里塞的替身：暴露 `pid_alive`。"""
 

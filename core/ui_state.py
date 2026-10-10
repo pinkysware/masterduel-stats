@@ -1519,6 +1519,19 @@ def _art_path(cid) -> Optional[str]:
         return None
 
 
+#: 自组卡组 → **共用参照库哪个键**（2026-10-10，用户口径）。
+#:
+#: 「狱神耀圣」是用户自组的牌，站内没有这一条，但它的构成与 `Elfnote`
+#: （耀圣）**是同一副** —— 所以直接读 Elfnote 的逐卡使用率，不必重复抓一份。
+#: ⚠️ 这张表**只写用户明确说过的**（「共用」），**不推断**：两个卡组像 ≠ 用户认为
+#: 它们是同一副；猜错会让使用率静默地对不上。
+#: 「隐藏卡组不列出」（见 AGENTS 铁律 7）—— 这里的 `hidden` 是**卡组名**的隐藏标记，
+#: 不是 `meta_decks.hidden`，两者无关。
+REF_SHARED_WITH = {
+    '狱神耀圣': 'Elfnote',
+}
+
+
 def match_ref_key(name, decks, storage=None) -> Optional[str]:
     """把**任意叫法**落到参照库的键（站内英文名）—— 落不到返回 ``None``。
 
@@ -1529,6 +1542,12 @@ def match_ref_key(name, decks, storage=None) -> Optional[str]:
     name = (name or '').strip()
     if not name or not decks:
         return None
+    #: ★ 先问「共用表」（2026-10-10）：`狱神耀圣` 读 `Elfnote` 的卡表。
+    #: 必须在下面那些匹配**之前** —— 它在参照库里没有自己的键，
+    #: 否则 `search_meta_decks` 会把它模糊匹配到别的条目上去。
+    shared = REF_SHARED_WITH.get(name)
+    if shared and shared in decks:
+        return shared
     if name in decks:
         return name
     low = name.lower()
@@ -1970,9 +1989,16 @@ def deck_composition(storage, ref_name=None, per_min: int = 0,
         ref = {}
     lang = lang or _ui_lang()
     disp = _display_map(storage, lang)
+    #: ⚠️ 显示名**优先用用户点的那个**（2026-10-10）：`狱神耀圣` 共用
+    #: `Elfnote` 的卡表后 `key` 是 `Elfnote`，直接 `disp.get(key)` 会显示成
+    #: 「耀圣」—— 用户点的是狱神耀圣，页头就该写狱神耀圣。
+    #: `disp` 是 `meta_decks` 的中文名表，自组条目（source='custom'）也在里面。
+    _own = (str(ref_name or '').strip()
+            and (disp.get(str(ref_name).strip()) or
+                 _deck_display_row({'name_cn': ref_name}, lang)))
     data: Dict[str, object] = {
         'name': key or (ref_name or ''),
-        'display': ((disp.get(key) if key else '')
+        'display': (_own or (disp.get(key) if key else '')
                     or _deck_display_row(ref, lang) or ref_name or ''),
         'tier': ref.get('tier'),
         'total': int(ref.get('total') or 0),

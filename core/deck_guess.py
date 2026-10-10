@@ -196,8 +196,54 @@ def build_index(reference, groups):
     return out
 
 
-def prepare(reference, groups=None):
-    """``(参照库索引, 名字组)`` —— CLI 一次准备好、逐局复用。"""
+def known_deck_names():
+    """`meta_decks` 表里真实存在的条目名（含显示名）—— 拿不到返回 None。
+
+    用来把参照库里**我们不认可的条目**剔掉（见 :func:`prepare`）。
+    查不到（无库 / 异常）时返回 ``None`` = **不过滤**，宁可多列候选也不给错。
+
+    ⚠️ 2026-10-10 实机（干净版第一局）：**表空 ≠ 不过滤** —— 首跑播种
+    （first_run 后台抓 meta 清单，联网要几分钟）完成前表就是空的，这窗口
+    期打的局会把参照库里的孤儿条目（用户已删除、如 Branded Elfnote）直接
+    列进 AI 建议。用户口径「删了就不该再出现」→ 空表返回**空集** =
+    全过滤 = 暂时没有建议（首跑窗口内本来也没有历史局要标，可接受）。
+    """
+    try:
+        from core.storage import Storage
+        rows = Storage().list_meta_decks(include_hidden=True) or []
+    except Exception:                                    # noqa: BLE001
+        return None
+    if not rows:
+        return set()
+    names = set()
+    for r in rows:
+        for k in (r.get('name'), r.get('name_display'), r.get('name_cn')):
+            k = str(k or '').strip()
+            if k:
+                names.add(k)
+    return names or None
+
+
+def prepare(reference, groups=None, keep=None):
+    """``(参照库索引, 名字组)`` —— CLI 一次准备好、逐局复用。
+
+    ⚠️ ``keep``：**只保留这些条目**（`None` = 全留）。
+    参照库 `data/mdm_deck_cards.json` 是**月度快照、只增不减** —— 里面
+    仍然留着我已从覆盖表删掉的条目，于是删了也照样出现在候选里
+    （2026-10-10 实测：删掉 `Branded Elfnote` 后它仍并列第一，
+    而用户早已不用这副牌）。所以这里按 `meta_decks` 过滤一次：
+    **用户不认可的条目不进候选**。
+    """
+    if keep is None:
+        keep = known_deck_names()
+    # ⚠️ keep 是**空集**也要过滤（= 全滤 = 无候选）—— 首跑播种窗口期的口径
+    #    见 `known_deck_names`。所以这里判 `is not None`，不能 `if keep:`。
+    if keep is not None:
+        decks = reference.get('decks') or {}
+        dropped = [k for k in decks if k not in keep]
+        if dropped:
+            reference = dict(reference)
+            reference['decks'] = {k: v for k, v in decks.items() if k in keep}
     groups = build_name_groups() if groups is None else groups
     return build_index(reference, groups), groups
 

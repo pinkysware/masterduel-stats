@@ -100,4 +100,28 @@ def prepare_app(qapp=None, style_sheet=None) -> List[str]:
     app = qapp or QApplication.instance() or QApplication([])
     fams = load_app_fonts()
     app.setStyleSheet(theme.qss() if style_sheet is None else style_sheet)
+    _warm_up_fonts()
     return fams
+
+
+def _warm_up_fonts() -> None:
+    """**预热字体**（2026-10-10，用户反馈「打开很慢」时定位到的）。
+
+    Qt 第一次对某个字体族做字形度量时，要现场解析字体文件并建字形表 ——
+    实测首个 `horizontalAdvance()` 要 **0.26~0.36 秒**，之后同字体的所有字号
+    都是 0ms。而启动早期必然有人量字（列宽全靠 `QFontMetrics`），所以这笔钱
+    只是**迟早**要付；挪到这里付，至少不和「建窗口」抢在同一处，
+    也让 `_warm_up_fonts` 之后的时间线干净（后续步骤都已是热的）。
+
+    量一个**覆盖三语 + 数字**的串即可 —— 建的是字体的字形表，不是逐字缓存。
+    失败无所谓（只是没预热），所以**不抛**。
+    """
+    try:
+        from PySide6.QtGui import QFontMetrics
+        from ui import theme, widgets
+        for size in (theme.F_LABEL, theme.F_BODY, theme.F_TITLE):
+            fm = QFontMetrics(widgets.font(size))
+            for s in ('卡组结果先后段位对手', 'DeckResultRankOpp', '总览统计'):
+                fm.horizontalAdvance(s)
+    except Exception:                                    # noqa: BLE001
+        pass

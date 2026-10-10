@@ -25,7 +25,8 @@ os.environ.setdefault(
 
 try:
     from PySide6.QtCore import QPoint, QSize, Qt
-    from PySide6.QtWidgets import QApplication, QLabel, QWidget
+    from PySide6.QtWidgets import (QApplication, QLabel, QSizePolicy,
+                                   QWidget)
     HAVE_QT = True
 except Exception:                                          # pragma: no cover
     HAVE_QT = False
@@ -613,6 +614,107 @@ class FloatingWindowTest(unittest.TestCase):
     def _badge_texts(self):
         return [lab.text() for lab in self._badge().findChildren(QLabel)
                 if lab.text()]
+
+    # ------------------------------------------------------ 行区顶对齐
+    def test_rows_start_at_top_when_fewer_than_capacity(self):
+        """🔴 回归锁：**行数少于行区容量时，第一行必须贴在顶**（2026-10-10 实机事故）。
+
+        `QVBoxLayout` 默认把多余空间**均分到每个项目后面**。行区高度恒为
+        `MIN_ROWS` 行，而只有 1 局时那唯一的行会被下移一行（实测 y=35，
+        上面空 35px）—— 用户截图：单局却显示在**第二行**，上面一片空白，
+        看起来像「排序错了」。
+
+        这里锁的是**垂直起点**：第一行 y 必须为 0。
+        """
+        self.win.show()
+        QApplication.processEvents()
+        self.win.set_snapshot(_snap(rows=[_row()]))
+        QApplication.processEvents()
+        rows = self.win.row_widgets()
+        self.assertEqual(len(rows), 1)
+        top = rows[0].mapTo(self.win.rows_host,
+                             rows[0].rect().topLeft()).y()
+        self.assertEqual(top, 0,
+                         '单局时第一行必须贴顶（实测被下移到 y=%d）' % top)
+
+    def test_rows_stack_without_gaps(self):
+        """多行依次往下排、**步进均匀**（顶对齐 + 行间那条 hairline）。
+
+        ⚠️ 步进是 `MATCH_ROW_H + 分隔线`（实测 35 = 34 + 1），
+        **不是**行高本身 —— 行之间本来就有一条细线，别把判据写成 `i * h`。
+        """
+        self.win.show()
+        QApplication.processEvents()
+        self.win.set_snapshot(_snap(rows=[_row(), _row(), _row(),
+                                          _row(), _row()]))
+        QApplication.processEvents()
+        rows = self.win.row_widgets()
+        self.assertEqual(len(rows), 5)
+        ys = [r.mapTo(self.win.rows_host, r.rect().topLeft()).y()
+              for r in rows]
+        self.assertEqual(ys[0], 0, '第一行贴顶')
+        step = ys[1] - ys[0]
+        self.assertGreaterEqual(step, floating.theme.MATCH_ROW_H,
+                                '步进至少要有一个行高（不能重叠）')
+        for i, y in enumerate(ys):
+            self.assertEqual(y, i * step,
+                             '第 %d 行 y=%d，应为 %d（步进要均匀）'
+                             % (i + 1, y, i * step))
+
+    def test_badge_text_not_stretched_to_full_row_width(self):
+        """🔴 回归锁：徽章里的文字**不许**被撑成整行宽（2026-10-10 实机事故）。
+
+        `QLabel` 默认 size policy 是 `Preferred` —— 它会**抢占**布局剩余空间
+        而不是收缩。徽章组只有 `badge_group_width()`（实测 39px），但不给宽度
+        约束时那个 `II` 标签实测被撑到**整行宽（640px）**，文字被甩到整行正中央
+        （用户截图：段位列空格里罗马数字飘在行中间）。
+        末尾那个 `addStretch` 拦不住 —— stretch 只分配**剩余**空间，
+        而剩余空间已经被标签吃光了。
+
+        判据：徽章内**每个**带文字的标签，宽度都必须 <= 徽章组宽度。
+        """
+        self.win.set_snapshot(_snap(rows=[_row()]))
+        badge = self._badge()
+        group_w = badge._group.width()
+        self.assertGreater(group_w, 0, '先要拿到徽章组的实际宽度')
+        for lab in badge.findChildren(QLabel):
+            if not lab.text():
+                continue
+            self.assertLessEqual(
+                lab.width(), group_w,
+                '标签 %r 宽 %d 超过徽章组宽 %d —— 又被撑开了'
+                % (lab.text(), lab.width(), group_w))
+
+    def test_badge_text_width_follows_content(self):
+        """宽度按**实测字宽**给，不是固定值（不同语言/字号都要对）。
+
+        ⚠️ 只看**文字标签**：`_side` 的图标也是 QLabel 但装的是 pixmap、
+        宽度由 `setFixedSize` 给死，不归 `_text` 管。
+        """
+        self.win.set_snapshot(_snap(rows=[_row()]))
+        badge = self._badge()
+        seen = 0
+        for lab in badge.findChildren(QLabel):
+            if not lab.text():
+                continue
+            seen += 1
+            fm = lab.fontMetrics()
+            #: 断言「**不超过**字宽 + 留边」而不是精确相等 ——
+            #: 布局收尾时 Qt 可能再收一点（实测 26 -> 24）。
+            #: 真正要保证的是「不被撑大」，缩小是无害的。
+            self.assertLessEqual(
+                lab.width(), fm.horizontalAdvance(lab.text()) + 2,
+                '标签 %r 宽 %d 超过字宽 %d —— 又被撑开了'
+                % (lab.text(), lab.width(), fm.horizontalAdvance(lab.text())))
+            self.assertGreater(lab.width(), 0, '有字就该有宽度')
+        self.assertGreater(seen, 0, '这条得先真的渲染出一个文字标签才有意义')
+
+    def test_badge_text_helper_empty_takes_no_space(self):
+        """`_text('')` 宽度 0（不占位）—— 直接测那个 helper，别混进图标。"""
+        lab = RankBadge._text('')
+        self.assertEqual(lab.width(), 0)
+        self.assertEqual(lab.sizePolicy().horizontalPolicy(),
+                         QSizePolicy.Fixed)
 
     def test_badge_shows_roman_numeral_not_the_full_label(self):
         """★ 那一格是**段位图标 + 罗马数字**，不是 `Platinum 2` 全称（全称在 tooltip）。
@@ -1853,6 +1955,78 @@ class RetranslateInPlaceTest(unittest.TestCase):
         self.assertEqual(self.win.windowTitle(), 'Master Duel Stats')
         self.assertEqual(len(self.win._rows), n_rows, '快照行不能丢')
         self.assertEqual(self.win.width(), w0, '窗口几何不能变')
+
+
+class RestartMustNotKillCollector(unittest.TestCase):
+    """🔴 回归锁：「重启界面」**不许**收掉采集器（2026-10-10 实机事故）。
+
+    `restart_ui()` 走 `qapp.quit()`，而退出联动接在 `aboutToQuit` 上 ——
+    不加守卫的话，点一次「重启界面」就会把采集器连带杀掉，正在打的那局
+    整局丢失。实测第五局（20:47 胜）就是这么没的：重启后日志只剩
+    「控制器 60s 未找到」，record 目录一个都没建。
+
+    「重启界面」只该换 UI 进程；采集器是**另一个进程**，与它无关。
+    """
+
+    def _bare_app(self):
+        from ui.app import MasterDuelUiApp
+        app = MasterDuelUiApp.__new__(MasterDuelUiApp)   # 不走 __init__（不起 Qt）
+        app._demo = False
+        app._restarting = False
+        return app
+
+    def test_stop_collector_runs_normally(self):
+        """普通退出（不是重启）-> 采集器照收。"""
+        import ui.collector_ctl as cc
+        app = self._bare_app()
+        calls = []
+        orig = cc.stop_collector
+        cc.stop_collector = lambda *a, **k: calls.append(1) or 'stopped'
+        self.addCleanup(setattr, cc, 'stop_collector', orig)
+        app._stop_collector()
+        self.assertEqual(calls, [1], '正常退出必须收采集器')
+
+    def test_restarting_suppresses_stop(self):
+        """★ 重启期间 -> **不收**（这一条就是那个 bug 的回归锁）。"""
+        import ui.collector_ctl as cc
+        app = self._bare_app()
+        app._restarting = True
+        calls = []
+        orig = cc.stop_collector
+        cc.stop_collector = lambda *a, **k: calls.append(1) or 'stopped'
+        self.addCleanup(setattr, cc, 'stop_collector', orig)
+        app._stop_collector()
+        self.assertEqual(calls, [], '重启界面期间绝不能收采集器')
+
+    def test_restart_ui_sets_flag_before_quit(self):
+        """`restart_ui()` 必须**先置标记再 quit**（顺序反了就来不及）。"""
+        from ui.app import MasterDuelUiApp
+        import ui.app as app_mod
+        app = self._bare_app()
+        seen = {}
+        qapp = type('Q', (), {})()
+
+        def fake_quit():
+            seen['restarting_at_quit'] = app._restarting
+
+        qapp.quit = fake_quit
+        app.qapp = qapp
+        orig = app_mod.QProcess
+        started = {}
+
+        class FakeProc(object):
+            @staticmethod
+            def startDetached(exe, args, cwd):      # noqa: N802
+                started['ok'] = True
+        app_mod.QProcess = FakeProc
+        self.addCleanup(setattr, app_mod, 'QProcess', orig)
+        try:
+            app.restart_ui()
+        finally:
+            pass
+        self.assertTrue(started.get('ok'), '应先起新进程')
+        self.assertTrue(seen.get('restarting_at_quit'),
+                        'quit 那一刻标记必须已经是 True')
 
 
 if __name__ == '__main__':

@@ -745,11 +745,25 @@ class MasterDuelUiApp(object):
         # 后台跑 `fetch_meta_decks.py`（清单 + 下图），静默失败、不阻塞界面。
         # 详见 `ui/first_run.py` 的模块文档。
         self._firstrun_proc = None
+        #: 「重启界面」期间为 True —— 那时**不许**收采集器（见 `restart_ui`）。
+        self._restarting = False
+        #: 采集器已经收过了（`quit` 与 `aboutToQuit` 各叫一次，只收一次）
+        self._collector_stopped = False
         try:
             from ui.first_run import ensure_meta_decks
             ensure_meta_decks(self)
-        except Exception:                                # noqa: BLE001
-            pass
+        except Exception as _e:                           # noqa: BLE001
+            #: ⚠️ **必须留痕，不能静默吞掉**（2026-10-10 实机事故）：
+            #:   这里原本是裸 `pass`，首跑播种抛的 `TypeError` 被它吃掉，
+            #:   界面上**什么迹象都没有**（不报错、不弹窗），只有
+            #:   `data/archive/first_run.log` 停在「开始」那一行、
+            #:   `meta_decks` 永远 0 行 —— 表现为「卡组选择器搜不到任何卡组」，
+            #:   极难定位。写进日志，下次有人报这个现象就能一眼看到。
+            try:
+                from ui.first_run import _log
+                _log('[first_run] 启动失败（被吞掉的异常）：%r' % (_e,))
+            except Exception:                            # noqa: BLE001
+                pass
 
         # ---- 退出兜底：QApplication 退出必经这里（2026-10-10）----
         #: 标题栏「×」和托盘「退出」都走 `quit()`，那里已经收了采集器；
@@ -758,6 +772,25 @@ class MasterDuelUiApp(object):
         #: 那几条路不经过 `quit()`，采集器就会留下。
         #: 幂等：`_stop_collector` 跑两次只是「第二次发现进程已不在」。
         self.qapp.aboutToQuit.connect(self._stop_collector)
+
+        # ---- 启动兜底：采集器不在就把它拉起来（2026-10-10）----
+        #: `start.bat` / `MDStats.exe` 是一次性拉起两个进程，**正常路径不用管**。
+        #: 但上次界面退出会收掉采集器（`_stop_collector`），而这一侧若没连带
+        #: 把它带起来，采集器就**永远缺席** —— 表现为「打了一局，界面零记录」，
+        #: 日志里连一行启动记录都没有（2026-10-10 实机撞到）。
+        #: ⚠️ **必须延迟几秒**再查：`start.bat` 里采集器是先起的、界面后起，
+        #:    界面起来那一刻采集器可能正在写 pid 文件 —— 查太早会误判「不在」
+        #:    而拉起第二个。留 6 秒余量。
+        if not self._demo:
+            QTimer.singleShot(6000, self._ensure_collector)
+
+    def _ensure_collector(self) -> None:
+        """启动后自查：采集器不在就拉一个（**幂等 + 不抛**）。"""
+        try:
+            from ui.collector_ctl import ensure_collector
+            ensure_collector()
+        except Exception:                                # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------ 主循环
     def current_account(self) -> Optional[str]:
@@ -1432,6 +1465,10 @@ class MasterDuelUiApp(object):
         够本进程把锁放掉，所以不会撞「已经在跑了」。
         """
         exe, args, cwd = restart_command()
+        #: ★ 先置标记再起新进程（2026-10-10）：`qapp.quit()` 会触发
+        #:   `aboutToQuit` -> `_stop_collector`，那会把采集器杀掉，
+        #:   正在打的那局整局丢。重启界面只换 UI 进程，采集器**必须留着**。
+        self._restarting = True
         QProcess.startDetached(exe, args, cwd)
         self.qapp.quit()
 
@@ -1578,21 +1615,33 @@ class MasterDuelUiApp(object):
             self.win.save_size()
         except Exception:
             pass
-        #: ★ **连采集器一起收掉**（2026-10-10）——`start.bat` 一次拉起两个进程，
-        #:   界面退出只关自己这个，采集器那个 pythonw 会**继续在后台跑**：
-        #:   用户以为全退了其实没有、而且目录都删不掉（Device or resource busy）。
-        #:   ⚠️ 判据借采集器自己的 `pid_alive`（镜像名 + 创建时间），
-        #:      **不按裸 pid 杀** —— pid 会被系统复用（2026-10-08 丢两局的事故）。
-        self._stop_collector()
+        #: 采集器由 **`aboutToQuit` → `_stop_collector`** 收（启动时连的兜底），
+        #: 这里**不再显式调一遍** —— 收一次要等进程真的消失（实测 ~0.7s），
+        #: 连等两轮会让「关闭很慢」（用户 2026-10-10 实机反馈）。
         self.qapp.quit()
 
     def _stop_collector(self) -> None:
-        """收掉采集器（**幂等 + 不抛**）。demo 模式与「隐藏到托盘」都不走这里。"""
+        """收掉采集器（**幂等 + 不抛**）。demo 模式与「隐藏到托盘」都不走这里。
+
+        🔴 **「重启界面」期间一律不收**（2026-10-10 用户实机事故）：
+        `restart_ui()` 走的是 `qapp.quit()`，会触发 `aboutToQuit` ->
+        采集器被连带杀掉，而新界面起来时那一局**正在进行**。
+        表现：点一次「重启界面」，正在打的那局整局丢失 —— 实测第五局
+        （20:47 胜）就是这么没的：重启后日志只剩「控制器 60s 未找到」，
+        record 目录一个都没建。
+        「重启界面」只该换 UI 进程，采集器是**另一个进程**，跟它无关。
+        """
         if getattr(self, '_demo', False):
             return
+        if getattr(self, '_restarting', False):
+            return          # 重启界面 ≠ 退出程序：采集器留着继续采
+        if getattr(self, '_collector_stopped', False):
+            return          # 已经收过了（quit + aboutToQuit 会各叫一次）
         try:
             from ui.collector_ctl import stop_collector
             how = stop_collector()
+            #: 标记置**无论收没收到** —— 否则 `aboutToQuit` 那轮又会空等一次
+            self._collector_stopped = True
             if how not in ('no-pid-file', 'not-running'):
                 print('[退出] 采集器：%s' % how)
         except Exception:                                # noqa: BLE001

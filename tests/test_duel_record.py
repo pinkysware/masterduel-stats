@@ -145,6 +145,23 @@ class TestDecode(unittest.TestCase):
         self.assertEqual(cap['first_seen_at'], '2026-09-13 12:21:46')
         self.assertEqual(cap['last_saved_at'], '2026-09-13 12:26:29')
 
+    def test_none_label_does_not_crash_sort(self):
+        """2026-10-10 实机（record_20261010_193859）：控制器内存被复用时
+        label 可能整批变 None/乱码单字，_summary 对 counts 排序时 None 与
+        str 混比 TypeError —— 整局 import 失败。归一 '#unknown' 后必须
+        正常出 summary。"""
+        events = [{'seq': 0, 'label': None, 'dataindex': 0},
+                  {'seq': 1, 'label': 'ShowTurn', 'dataindex': 0},
+                  {'seq': 2, 'label': None, 'dataindex': 1},
+                  {'seq': 3, 'label': '出', 'dataindex': 0}]
+        summ = dr._summary(events, {}, lambda arr: b'')
+        self.assertEqual(summ['counts'].get('#unknown'), 2)
+        self.assertEqual(summ['counts'].get('ShowTurn'), 1)
+        self.assertEqual(summ['counts'].get('出'), 1)
+        # 键必须可两两比较（再也不会 TypeError）
+        self.assertEqual(sorted(summ['counts']),
+                         ['#unknown', 'ShowTurn', '出'])
+
     def test_minimal_summary(self):
         s = self.duel_min['summary']
         self.assertEqual(s['total_turns'], 1)
