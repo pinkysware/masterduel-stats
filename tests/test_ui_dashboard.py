@@ -841,6 +841,34 @@ class StatsPageTest(unittest.TestCase):
         self.assertIn(':hover', css)
         self.assertEqual(chips[0].height(), theme.PAGE_ROW_H - 6)   # 原与「日志」按钮同高（列已移除）
 
+    def test_opp_deck_chip_shows_suggestion_like_floating(self):
+        """🔴 回归锁：看板对手卡组格 = **悬浮窗同款显示**（2026-10-11 用户口径）。
+
+        未标注但有 M5 反推建议的行显示**建议名/建议图**（保留琥珀 `!` 未确认态），
+        不是一律「未知卡组！」——悬浮窗那格一直显示建议，看板却空着，
+        用户看到的是两边不一致。
+        """
+        row = {'opp_deck': None, 'opp_deck_img': None,
+               'suggest_name': '耀圣', 'suggest_img': 'x.webp',
+               'match_id': 'm1', 'opp_known': False}
+        chip = dashboard.OppDeckChip(row)
+        texts = [lab.text() for lab in chip.findChildren(QLabel)]
+        self.assertIn('耀圣', texts)
+        self.assertIn('!', texts)                    # 未确认角标保留
+        thumbs = chip.findChildren(QLabel)
+        self.assertTrue(any(t.pixmap() is not None for t in thumbs),
+                        '建议图要显示出来')
+
+    def test_opp_deck_chip_marked_wins_over_suggestion(self):
+        """真标注了就显示标注值，建议只在没有标注时顶上。"""
+        row = {'opp_deck': '魔术师', 'opp_deck_img': 'a.webp',
+               'suggest_name': '耀圣', 'suggest_img': 'x.webp',
+               'match_id': 'm1', 'opp_known': True}
+        chip = dashboard.OppDeckChip(row)
+        texts = [lab.text() for lab in chip.findChildren(QLabel)]
+        self.assertIn('魔术师', texts)
+        self.assertNotIn('!', texts)                 # 已标注无角标
+
     def test_unknown_opp_deck_chip_is_amber(self):
         """未标注 = 琥珀 `!` + 「未知卡组」（与悬浮窗同款）。"""
         chips = self.page.findChildren(dashboard.OppDeckChip)

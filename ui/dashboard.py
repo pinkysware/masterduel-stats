@@ -1198,6 +1198,24 @@ class MonthHeatCard(QWidget):
         super().mousePressEvent(ev)
 
 
+def _fingerprint(data) -> str:
+    """页面数据的指纹 —— reload 的「没变就不重建」闸门用（2026-10-11）。
+
+    🔴 用户实测：「卡组选择器点确认后会卡住几秒」。根因 = 点确认 ->
+    `app.refresh()` -> `reload()` 把 8 个页**全量重建**（战绩页 53 行 ×
+    8 列控件 + 禁限表 130 张整卡图 + Tier 103 条芯片），全挤在同一帧。
+    数据层实测每页 <150ms，**重建才是大头**。数据没变 = 页保持原样。
+    """
+    import hashlib
+    import json
+    try:
+        blob = json.dumps(data, sort_keys=True, default=str, ensure_ascii=False)
+        return hashlib.md5(blob.encode('utf-8')).hexdigest()
+    except Exception:                                # noqa: BLE001
+        # 不可序列化就退回 id() —— 等于「每次都当变了」（与旧行为一致，别更糟）
+        return 'id:%s' % id(data)
+
+
 class OppDeckChip(QWidget):
     """逐局行那格：对手卡组 —— **按钮样**（可点 → 标注）。缺 = 琥珀 `!` + 「未知卡组」。
 
@@ -1223,9 +1241,12 @@ class OppDeckChip(QWidget):
             'OppDeckChip:hover { border: 1px solid %s; }'
             % (theme.SURFACE2, theme.HAIRLINE, theme.R_MD,
                theme.HAIRLINE_STRONG))
-        name = row.get('opp_deck') or ''
-        img = row.get('opp_deck_img')
-        known = bool(name)
+        # 🔴 2026-10-11 用户口径：「应该和悬浮窗是相同显示」—— 未标注但有
+        # M5 反推建议的行，显示**建议的卡组名/图**（同悬浮窗），保留琥珀 `!`
+        # 未确认态；真标注了才用标注值。
+        name = row.get('opp_deck') or row.get('suggest_name') or ''
+        img = row.get('opp_deck_img') or row.get('suggest_img')
+        known = bool(row.get('opp_deck'))
         lay = QHBoxLayout(self)
         lay.setContentsMargins(theme.S_XS, 0, theme.S_XS, 0)
         lay.setSpacing(theme.S_XS)
@@ -1865,6 +1886,7 @@ class DashboardWindow(QWidget):
     def _build_pages(self) -> None:
         """构建全部页控件 —— `_build` 首建 + 切语言原地重译共用（2026-10-05）。"""
         self.pages = {}
+        self._page_fps = {}      # 各页数据指纹（reload 闸门，见 _fingerprint）
         for name, key in NAV_PAGES:
             sub, hint = PAGE_HINTS[key]
             if key == 'stats':                       # ★ D1：战绩页是真内容，不是占位
@@ -2134,6 +2156,10 @@ class DashboardWindow(QWidget):
                 data = self._deckview_loader(self._deck_view_name) or {}
             except Exception:
                 data = {}                    # 数据层炸了也别把窗口带崩
+        fp = _fingerprint(data)
+        if self._page_fps.get('deckview') == fp:
+            return                       # 数据没变 -> 页保持原样（卡顿修复 2026-10-11）
+        self._page_fps['deckview'] = fp
         page.set_data(data)
 
     def _reload_decks(self) -> None:
@@ -2211,8 +2237,14 @@ class DashboardWindow(QWidget):
                     data = {}
             except Exception:
                 data = {}                    # 数据层炸了也别把窗口带崩
-        page.set_data(data)
+        # ⚠️ 账号按钮**每次都要更新**（切换账号后数据可能不变但品牌位要跟着换
+        #    —— 单测 test_set_account_reloads_with_account 抓过），放在闸门之前。
         self._update_account_button(data.get('accounts') or [])
+        fp = _fingerprint(data)
+        if self._page_fps.get('stats') == fp:
+            return                       # 数据没变 -> 页保持原样（卡顿修复 2026-10-11）
+        self._page_fps['stats'] = fp
+        page.set_data(data)
 
     def reload(self) -> None:
         """向数据层要新数据并重画「战绩」+「对局分析」等页（**窗口自己不查库**）。
@@ -2262,6 +2294,10 @@ class DashboardWindow(QWidget):
                 data = self._export_loader(page.month(), page.mode_group()) or {}
             except Exception:
                 data = {}                    # 数据层炸了也别把窗口带崩
+        fp = _fingerprint(data)
+        if self._page_fps.get('export') == fp:
+            return                       # 数据没变 -> 页保持原样（卡顿修复 2026-10-11）
+        self._page_fps['export'] = fp
         page.set_data(data)
 
     def set_export_loader(self, loader) -> None:
@@ -2300,6 +2336,10 @@ class DashboardWindow(QWidget):
                 data = self._tier_loader() or {}
             except Exception:
                 data = {}                    # 数据层炸了也别把窗口带崩
+        fp = _fingerprint(data)
+        if self._page_fps.get('tier') == fp:
+            return                       # 数据没变 -> 页保持原样（卡顿修复 2026-10-11）
+        self._page_fps['tier'] = fp
         page.set_tier_data(data)
 
     def _reload_analysis(self) -> None:
@@ -2315,6 +2355,10 @@ class DashboardWindow(QWidget):
                                              self._analysis_mode) or {}
             except Exception:
                 data = {}                    # 数据层炸了也别把窗口带崩
+        fp = _fingerprint(data)
+        if self._page_fps.get('analysis') == fp:
+            return                       # 数据没变 -> 页保持原样（卡顿修复 2026-10-11）
+        self._page_fps['analysis'] = fp
         page.set_data(data)
 
     def set_went_first(self, value) -> None:

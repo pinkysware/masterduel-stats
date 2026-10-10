@@ -1273,6 +1273,7 @@ class MasterDuelUiApp(object):
             data = ui_state.stats_page_data(self.storage, mode_group=mode_group,
                                             month=month, account=account)
             imgs = self._deck_images()
+            unmarked = []
             for name, st, rows in data.get('groups') or []:
                 try:
                     st['img'] = imgs.resolve(name)
@@ -1284,6 +1285,12 @@ class MasterDuelUiApp(object):
                                              if r.get('opp_deck') else None)
                     except Exception:
                         r['opp_deck_img'] = None
+                    if not r.get('opp_known'):
+                        unmarked.append(r)
+            # 🔴 2026-10-11 用户口径：「看板的对手卡组应该和悬浮窗相同显示」——
+            # 未标注的行也挂 M5 反推建议（走同一份 `_sug_cache`，不重算）。
+            # OppDeckChip 会显示建议名/图 + 琥珀 `!`（未确认态）。
+            self._attach_suggestions(unmarked)
             return data
         return load
 
