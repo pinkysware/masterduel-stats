@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from typing import Optional
 
 from PySide6.QtCore import QLockFile, QProcess, QSettings, Qt, QTimer
@@ -1069,8 +1070,26 @@ class MasterDuelUiApp(object):
         回落到英文站内名：**悬浮窗建议名是英文、一键采纳落库的 `opp_deck_name`
         也是英文**（2026-09-16 实机事故：库里全成了 'Blue-Eyes'/'Exosister'）。
         """
+        #: 🔴 空索引要**重载**（2026-10-11 实机回归）：首跑播种完成前
+        #: `meta_decks` 表是空的，「空表 = 全过滤」口径让启动那一刻加载到的
+        #: `_guess_index` 是个**空 dict**（不是 None）—— 且它只在启动时加载
+        #: 一次，于是首跑窗口启动的进程**永远没有建议**（实测第一局对手烙印，
+        #: 建议一格空白）。这里发现空索引就节流重试：播种完成后自动恢复。
         if getattr(self, '_guess_index', None) is None:
             return []
+        if not self._guess_index:
+            now = time.monotonic()
+            if now - getattr(self, '_guess_reload_at', -1e9) < 30.0:
+                return []
+            self._guess_reload_at = now
+            try:
+                idx, groups = deck_guess.load_index()
+            except Exception:                            # noqa: BLE001
+                return []
+            if not idx:
+                return []
+            self._guess_index, self._guess_groups = idx, groups
+            self._sug_cache.clear()     # 之前以「无建议」缓存的局全部重算
         try:
             cands = deck_guess.suggest(row, self._guess_index,
                                        self._guess_groups)

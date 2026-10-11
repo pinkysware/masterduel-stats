@@ -362,6 +362,44 @@ class DemoGuardTest(SettingsPatchedTest):
         self.assertEqual(len(a._sug_cache), 2)     # 已标注那行不进缓存（设计如此）
         self.assertTrue(all(k == k for k in a._sug_cache))   # 键必须可哈希
 
+    def test_guess_for_reloads_empty_index_and_clears_cache(self):
+        """🔴 回归锁：**空索引要重载**（2026-10-11 实机，第一局无建议）。
+
+        首跑播种完成前 meta_decks 表是空的，「空表 = 全过滤」让启动那一刻
+        加载到的 `_guess_index` 是**空 dict**（不是 None），且它只在启动时
+        加载一次 —— 首跑窗口启动的进程永远没有建议。guess_for 必须节流
+        重载，重载成功后清空 `_sug_cache`（旧条目都是以「无建议」缓存的）。
+        """
+        a = app_mod.MasterDuelUiApp.__new__(app_mod.MasterDuelUiApp)
+        a._sug_cache = {(): None}                  # 旧口径留下的「无建议」缓存
+        a._guess_index = {}                        # 空 dict = 触发重载（不是 None）
+        a._guess_groups = None
+        a._guess_reload_at = -1e9                  # 上次重载：很久以前
+        a.storage = mock.Mock(**{'list_meta_decks.return_value': []})
+        fake_index = {'Blue-Eyes': {'tier': 1, 'cards': {'青眼': 60}}}
+        with mock.patch.object(app_mod.deck_guess, 'load_index',
+                               return_value=(fake_index, {'g': 1})) as li:
+            out = a.guess_for({'opp_revealed_ids': [1, 2]})
+        self.assertEqual(a._guess_index, fake_index, '重载结果要替换空索引')
+        self.assertEqual(a._sug_cache, {}, '重载成功必须清「无建议」缓存')
+        li.assert_called_once()
+        # 第二拍：索引已非空，不再触发重载
+        with mock.patch.object(app_mod.deck_guess, 'load_index') as li2:
+            a.guess_for({'opp_revealed_ids': [1, 2]})
+            li2.assert_not_called()
+
+    def test_guess_for_reloads_empty_index_throttled(self):
+        """重载有 30s 节流：刚试过失败就别每拍都砸磁盘。"""
+        import time as _time
+        a = app_mod.MasterDuelUiApp.__new__(app_mod.MasterDuelUiApp)
+        a._sug_cache = {}
+        a._guess_index = {}
+        a._guess_groups = None
+        a._guess_reload_at = _time.monotonic()     # 刚刚重载过 -> 节流窗口内
+        with mock.patch.object(app_mod.deck_guess, 'load_index') as li:
+            a.guess_for({'opp_revealed_ids': [1, 2]})
+            li.assert_not_called()
+
     def test_guess_for_fills_display_names_from_meta(self):
         """★ 候选必须带上 meta 清单的显示字段 —— 不补的话 `deck_display()`
         回落到英文站内名：悬浮窗建议名是英文、**一键采纳落库的 `opp_deck_name`
