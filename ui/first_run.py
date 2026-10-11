@@ -135,10 +135,11 @@ def ensure_meta_decks(app) -> Optional[object]:
     app._firstrun_proc = runner
     runner.start()
 
-    #: 🔴 **第二段：缺图兜底**（2026-10-11 实机：第一局对手烙印，建议图是
-    #: 悠悠兜底）—— 榜单抓图只覆盖**当期榜单上**的卡组（实测 39 张），
-    #: 榜外条目（Branded / Tearlaments …）一张图都没有。种子完成后跑
-    #: `--missing-images`：站内图 404 时自动改用**代表卡卡绘**补齐。
+    #: 🔴 **第二段：缺图兜底** —— 榜单抓图只覆盖**当期榜单上**的卡组
+    #: （实测 39 张）；榜外、以及站内图 404 的条目首跑后没有图（除非用户
+    #: 自己放了覆盖图——`deck_images_custom/` 优先且下载会跳过）。
+    #: 种子完成后跑 `--missing-images`：站内图 404 时自动改用**代表卡卡绘**
+    #: 补齐，新用户的条目才不落悠悠兜底。
     def _then_missing():
         # ⚠️ 补图那只**不占 `_firstrun_proc`** —— 那个属性的语义是
         # 「清单播种」的 runner，`on_done` 抓完就把它清掉（单测锁着
