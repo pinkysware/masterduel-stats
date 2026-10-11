@@ -740,6 +740,33 @@ class SelectorTest(unittest.TestCase):
         dlg = self._dlg()
         self.assertEqual(len(dlg.deck_rows()), len(DECKS))
 
+    def test_display_name_collision_dedupes_own_and_meta(self):
+        """🔴 回归锁（2026-10-11 实机）：own_deck 与 meta 条目**显示名相同**时
+        只出一行 —— 去重键必须是**显示名**，站内英文名做键挡不住中文名撞车
+        （实机：搜 mss 出两个『魔术师』，一行图对一行图错）。
+
+        桩：meta 有 `Magician`（name_cn=魔术师），opp_decks 也有用户加的
+        「魔术师」（显示名相同、站内名不同）—— 搜「魔术师」只出一行。
+        """
+        decks = DECKS + [_deck('Magician', cn='魔术师')]
+        st = _FakeStorage(decks, opp_decks=[(8, '魔术师', None, 1)])
+        dlg = selector.DeckSelectorPanel(st, {})
+        self.addCleanup(dlg.deleteLater)
+        dlg.search.setText('魔术师')
+        names = [r.deck['name'] for r in dlg.deck_rows()]
+        self.assertEqual(names.count('魔术师') + names.count('Magician'), 1,
+                         '同显示名只出一行：%r' % names)
+
+    def test_own_deck_found_by_chinese_search_after_dedup(self):
+        """用户口径：「正常流程先搜索，搜不到才填自定义」—— 加过的卡组
+        **必须搜得到**（中文直接搜 own_deck）。"""
+        st = _FakeStorage(DECKS, opp_decks=[(8, '魔术师', None, 1)])
+        dlg = selector.DeckSelectorPanel(st, {})
+        self.addCleanup(dlg.deleteLater)
+        dlg.search.setText('魔术师')
+        names = [r.deck['name'] for r in dlg.deck_rows()]
+        self.assertIn('魔术师', names, '加过的自定义卡组中文必须搜得到')
+
     def test_search_filters(self):
         dlg = self._dlg()
         dlg.search.setText('雷火')

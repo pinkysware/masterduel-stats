@@ -657,6 +657,15 @@ class DeckSelectorPanel(QWidget):
         self._ensure_caches()
         return self._meta_keys_cache
 
+    def _disp_key(self, d: dict) -> str:
+        """候选的去重键 = **显示名**（2026-10-11）：同显示名只出一条。
+
+        站内英文名做键挡不住中文名撞车（实机：meta 的 Magician 与
+        own_deck 的『魔术师』双列）。meta 与 own_deck 的伪行字段同形，
+        都走 `deck_display`。"""
+        name = deck_display(d, self.lang) or d.get('name') or ''
+        return str(name).strip().lower()
+
     def _own_deck_names(self) -> List[str]:
         self._ensure_caches()
         return self._own_names
@@ -839,10 +848,14 @@ class DeckSelectorPanel(QWidget):
             #: ★ 2026-10-08（用户：「我添加后在悬浮窗输入名字查询不到我添加的自定义卡组」）：
             #:    悬浮窗「自定义卡组名」只写 `opp_decks`，而 `search_meta_decks` 只查
             #:    meta 清单 —— 于是**刚加的名字永远搜不到**。这里把「我加过、不在 meta
-            #:    清单里」的名字并进结果（按名字去重，meta 命中优先）。
-            have = {d.get('name') for d in decks}
+            #:    清单里」的名字并进结果。
+            #: 🔴 2026-10-11（用户实机：搜 mss 出两个「魔术师」）：去重键必须用
+            #:    **显示名**而不是站内英文名 —— 撞车发生在中文名上时（own_deck 与
+            #:    meta 条目同显示名、站内名不同），旧键挡不住，用户看到两行同名字。
+            #:    显示名相同 = 同一副牌的两种叫法，meta 命中优先（先例：烙印/Atlantean）。
+            have = {self._disp_key(d) for d in decks}
             decks += [d for d in self._own_deck_hits(query)
-                      if d.get('name') not in have]
+                      if self._disp_key(d) not in have]
             #: ★ 拼音/首字母（**中文独有**，lang=cn 才启用；2026-09-19 用户需求）：
             #:    闪刀姬敲 ``sdj``（首字母）或 ``shandaoji``（全拼）都能查到。
             #:    口径 = 拼音键（只取汉字）的子串；普通命中在前、拼音命中殿后（按
@@ -853,18 +866,19 @@ class DeckSelectorPanel(QWidget):
                 #:    纯字母查询里直配的**模糊**命中可以很多（`ly` 撞上 Purrely /
                 #:    Fairy Tail… 十来个），拼音命中追加在后面会被 5 行的显示上限
                 #:    挤没。cn 界面敲纯字母基本就是拼音意图，让它优先。
-                py_hits, seen = [], {d.get('name') for d in decks}
+                #: 🔴 去重键同上：**显示名**（同显示名的 own_deck 不再重复列）。
+                py_hits, seen = [], {self._disp_key(d) for d in decks}
                 #: ⚠️ 拼音要**同时**跑 meta 清单**和**「我加过的卡组」（2026-10-08 用户报：
                 #:    自定义卡组只能敲中文才搜得到）—— 两边用同一个 `pinyin_match.match`，
                 #:    别再各写一套。
                 for d in list(self._decks) + self._own_deck_hits_for_pinyin():
-                    if d.get('name') in seen:
+                    if self._disp_key(d) in seen:
                         continue
                     if pinyin_match.match(query, d.get('name_cn'),
                                           d.get('name_display'),
                                           *(d.get('aliases') or [])):
                         py_hits.append(d)
-                        seen.add(d.get('name'))
+                        seen.add(self._disp_key(d))
                 decks = py_hits + decks
             rows = self._ordered(decks, inject=False)[:MAX_ROWS - 1] + [unknown_deck()]
         else:
