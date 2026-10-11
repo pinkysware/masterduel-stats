@@ -1175,8 +1175,7 @@ def cross_matrix(storage, went_first=None, hide_pseudo: bool = True,
     row_names.sort(key=lambda x: (-row_n[x], x))   # 行序 = 行（对手）总场次降序
     #: 出口翻译（轴/格/列汇总用同一个映射，键内部保持原值 —— 2026-10-04 用户：
     #: 分析页卡组名要跟语言走）。cn 恒等。
-    _resolve = (_name_resolver(storage, _ui_lang())
-                if _ui_lang() != 'cn' else None)
+    _resolve = _name_resolver(storage, _ui_lang())
     _disp: Dict[str, str] = {}
 
     def _d(name: str) -> str:
@@ -1477,10 +1476,10 @@ def _deck_display_row(row, lang) -> str:
 def _name_resolver(storage, lang):
     """任意叫法（站内名/中文名/显示英文名/日文名/别名）→ 该语言的显示名。
 
-    认不出（用户自命名等）**原样返回**；cn 恒等（存的名字就是显示名）。
+    认不出（用户自命名等）**原样返回**。
+    ⚠️ 2026-10-12 起 cn 不再恒等：对局分析的分组名可能是**站内名**（跟随卡组名
+    管理），cn 也要映射回中文名（中文名本来就恒等映射回自己，无害）。
     """
-    if lang == 'cn':
-        return lambda s: (s or '')
     try:
         rows = storage.list_meta_decks(include_hidden=True) or []
     except Exception:                                        # noqa: BLE001

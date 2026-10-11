@@ -2014,21 +2014,31 @@ class Storage:
         if until:
             clauses.append('started_at <= ?')
             args.append(until)
+        #: ★ 对手分组 = **卡组身份**（opp_decks 当前名，LEFT JOIN）——
+        #:   管理页改名后矩阵自动跟随（2026-10-12 用户：对局分析要跟卡组名管理
+        #:   关联）。没绑定的局回退**名字快照**（老数据/悬空 id 都不至于丢行）。
+        opp_expr = ("COALESCE(NULLIF(TRIM(od.name), ''), %s)" % OPP_DECK_EXPR)
+        my_expr = _deck_expr('my_deck_name')
         sql = (
             "SELECT %s AS my_deck, %s AS opp_deck,"
             "  COUNT(*) AS n,"
             "  COALESCE(SUM(result = 'Win'), 0)  AS w,"
             "  COALESCE(SUM(result = 'Lose'), 0) AS l,"
             "  COALESCE(SUM(result = 'Draw'), 0) AS d"
-            " FROM matches WHERE %s"
-            " GROUP BY my_deck, opp_deck"
+            " FROM matches"
+            " LEFT JOIN opp_decks od ON od.opp_deck_id = matches.opp_deck_id"
+            " WHERE %s"
+            " GROUP BY %s, %s"
             " ORDER BY n DESC, my_deck ASC, opp_deck ASC"
-            % (_deck_expr('my_deck_name'), OPP_DECK_EXPR,
-               ' AND '.join(clauses)))
+            % (my_expr, opp_expr, ' AND '.join(clauses), my_expr, opp_expr))
         with self._open() as conn:
             rows = conn.execute(sql, args).fetchall()
-        return [(r['my_deck'], r['opp_deck'], r['n'], r['w'], r['l'], r['d'])
-                for r in rows]
+        #: 分组名（站内名 / 老快照）→ **当前显示名**（中文名优先）—— 覆盖表改名
+        #: 在这里生效，矩阵与 `mark_opponent --cross` 都吃这份（2026-10-12）
+        disp = self.meta_deck_display_map()
+        return [(r['my_deck'],
+                 disp.get(r['opp_deck'], r['opp_deck']),
+                 r['n'], r['w'], r['l'], r['d']) for r in rows]
 
     def get_deck_distribution(self, since=None, until=None):
         """卡组分布 -> [(卡组名, 场次)]，只统计已结束的对局。

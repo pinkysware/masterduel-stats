@@ -216,6 +216,24 @@ _T = {
                            '「%s」のデッキ画像を設定：%s'),
     '已还原「%s」的卡图%s': ('Deck art reset for "%s"%s',
                          '「%s」のデッキ画像を既定に戻しました%s'),
+    # ---- 管理页分组 / 自定义行转正（2026-10-12）----
+    '%d / %d 条（其中 %d 条待保存进覆盖表）':
+        ('%d / %d entries (%d pending save into the cover table)',
+         '%d / %d 件（うち %d 件は保存待ち）'),
+    '—— 自定义卡组 ——': ('—— Custom decks ——',
+                       '—— カスタムデッキ ——'),
+    '日文名': ('Japanese name', '日本語名'),
+    '日文名（留空 = 未填）': ('Japanese name (blank = unset)',
+                         '日本語名（空欄 = 未入力）'),
+    '已移除「%s」（还没进覆盖表，不用保存）':
+        ('Removed "%s" (not in the cover table; no save needed)',
+         '「%s」を消しました（上書き表に無し。保存不要）'),
+    '我加的自定义卡组（还没进覆盖表 —— 可直接编辑，点「保存」并进去）':
+        ('My custom decks (not in the cover table yet — edit here and press Save)',
+         '自分で追加したデッキ（上書き表に未登録。編集して「保存」で追加）'),
+    '没有新卡组 —— 顺手补缺失的卡图…':
+        ('No new decks — backfilling missing deck art…',
+         '新しいデッキは無し — 無い画像を取得中…'),
     # ---- 自定义卡组只读行（2026-10-08 问题 1）----
     '%d / %d 条（其中 %d 条不在覆盖表）':
         ('%d / %d entries (%d not in the cover table)',

@@ -21,9 +21,23 @@ from __future__ import annotations
 import os
 import sys
 
-from PySide6.QtCore import QObject, QProcess, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def utf8_env_pairs(base=None):
+    """子进程环境里**钉 UTF-8** 的键值对（纯函数，可单测）。
+
+    QProcess 管道里 Python 子进程的 stdout 默认跟系统 locale（中文 Windows =
+    GBK）—— 脚本打印 `✔` / `★` 这类符号直接 UnicodeEncodeError
+    （2026-10-12「参照库刷新」实测，退出码 1）。而本类按 **UTF-8 解码**
+    （`_on_read`），所以子进程必须钉成 UTF-8，两边才对得上。
+    """
+    env = dict(base if base is not None else os.environ)
+    env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONUTF8'] = '1'
+    return env
 
 
 class ScriptRunner(QObject):
@@ -46,6 +60,11 @@ class ScriptRunner(QObject):
     def _make_proc(self):
         proc = QProcess(self)
         proc.setWorkingDirectory(PROJ)
+        #: 子进程 stdout 钉 UTF-8（见 `utf8_env_pairs`——GBK 管道打 ✔ 会崩）
+        env = QProcessEnvironment.systemEnvironment()
+        for k, v in utf8_env_pairs().items():
+            env.insert(k, v)
+        proc.setProcessEnvironment(env)
         return proc
 
     def running(self) -> bool:

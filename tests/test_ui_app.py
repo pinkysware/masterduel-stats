@@ -653,9 +653,9 @@ class _StubRunner(QObject):
         self.started = True
 
 
-def _cover_csv(tmpdir, rows=(('Branded', '', '烙印', '', '', 'Tier2', '', ''),
-                             ('Odion', '', '利希德', '', '', 'Trending', 'Y', ''))):
-    """造一份**临时**覆盖表（8 列表头 + 两行）。"""
+def _cover_csv(tmpdir, rows=(('Branded', '烙印', '', '', 'Tier2', '', ''),
+                             ('Odion', '利希德', '', '', 'Trending', 'Y', ''))):
+    """造一份**临时**覆盖表（7 列表头 + 两行）。"""
     path = os.path.join(tmpdir, 'deck_name_cn.csv')
     with io.open(path, 'w', encoding='utf-8-sig', newline='') as f:
         f.write(','.join(deck_csv_mod.COLUMNS) + '\n')

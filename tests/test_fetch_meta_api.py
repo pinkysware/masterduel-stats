@@ -341,5 +341,151 @@ class TestFetchByRepresentative(unittest.TestCase):
         self.assertIn('取不到', why)
 
 
+class TestTopdeckScope(unittest.TestCase):
+    """「大师一 ∪ 新卡」口径（2026-10-12 用户拍板）：聚合 / 已知过滤 / 请求参数。"""
+
+    DECKS = [
+        dict(deckType=dict(name='Invoked'), rankedType=dict(name='Master I'),
+             main=[{'card': {'_id': 'a1'}, 'amount': 3}], extra=[], side=[]),
+        dict(deckType=dict(name='Invoked'), rankedType=dict(name='Master V'),
+             main=[{'card': {'_id': 'NEW1'}, 'amount': 2}], extra=[], side=[]),
+        dict(deckType=dict(name='Power Patron'), rankedType=dict(name='Master V'),
+             main=[{'card': {'_id': 'x'}, 'amount': 1}],
+             extra=[{'card': {'_id': 'NEW1'}, 'amount': 1}], side=[]),
+        dict(deckType=dict(name='BareRef'), rankedType=None,
+             main=[{'card': 'NEW1', 'amount': 1}], extra=[], side=[]),
+        dict(deckType=dict(name='Stale Deck'), rankedType=dict(name='Master V'),
+             main=[{'card': {'_id': 'x'}, 'amount': 1}], extra=[], side=[]),
+        dict(deckType=dict(name=''), rankedType=None, main=[], extra=[], side=[]),
+    ]
+
+    def test_union_and_counts(self):
+        rows, stats = fmd.topdeck_union_rows(self.DECKS, {'NEW1'})
+        by = {r['name']: r for r in rows}
+        self.assertEqual(by['Invoked']['master1'], 1)
+        self.assertEqual(by['Invoked']['new_cards'], 1)
+        #: 额外区的新卡也算「新卡口径」
+        self.assertEqual(by['Power Patron']['new_cards'], 1)
+        self.assertEqual(by['Power Patron']['master1'], 0)
+        #: 卡引用是裸 id（非对象）也能命中
+        self.assertEqual(by['BareRef']['new_cards'], 1)
+        self.assertNotIn('Stale Deck', by, '两个口径都不中 -> 不进')
+        self.assertNotIn('', by, '无卡组名的行跳过')
+        self.assertEqual(stats, (6, 1, 3))
+
+    def test_no_newcards_means_master1_only(self):
+        rows, _stats = fmd.topdeck_union_rows(self.DECKS, set())
+        self.assertEqual(sorted(r['name'] for r in rows), ['Invoked'])
+
+    def test_rows_shape(self):
+        rows, _stats = fmd.topdeck_union_rows(self.DECKS[:1], set())
+        r = rows[0]
+        self.assertEqual(r['kind'], 'deck_type')
+        self.assertIsNone(r['tier'], '口径行只是候选，tier 恒空')
+        self.assertIsNone(r['power'])
+        self.assertEqual(r['slug'], 'Invoked')
+
+    def test_split_known_all_names(self):
+        rows, _stats = fmd.topdeck_union_rows(self.DECKS, {'NEW1'})
+        rows2 = rows + [dict(name='Mitsurugi Yummy', kind='deck_type')]
+        #: invoked 已在库；mitsurugi yummy 是 Yummy Engine 行的显示名
+        fresh, seen = fmd.split_topdeck_new(rows2, {'invoked', 'mitsurugi yummy'})
+        self.assertEqual([r['name'] for r in fresh],
+                         ['BareRef', 'Power Patron'])
+        self.assertEqual(sorted(seen), ['Invoked', 'Mitsurugi Yummy'])
+
+    def test_fetch_params(self):
+        calls = []
+
+        def fake(params, base=None):
+            calls.append((base, dict(params)))
+            if base and base.endswith('/cards'):
+                return [{'_id': 'a'}, {'_id': None}]
+            return []
+
+        old, fmd.fetch_api = fmd.fetch_api, fake
+        try:
+            self.assertEqual(fmd.fetch_new_card_ids(30), {'a'})
+            self.assertEqual(fmd.fetch_topdecks(30), [])
+        finally:
+            fmd.fetch_api = old
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0], fmd.NEWCARDS_URL)
+        self.assertEqual(calls[0][1]['release[$gte]'], '(days-30)')
+        self.assertEqual(calls[0][1]['alternateArt[$ne]'], 'true')
+        self.assertEqual(calls[1][0], fmd.TOPDECKS_URL)
+        self.assertEqual(calls[1][1]['created[$gte]'], '(days-30)')
+        self.assertEqual(calls[1][1]['limit'], '0')
+
+
+
+class TestTopdeckKnownLower(unittest.TestCase):
+    """口径行去重的「已知名」来源（2026-10-12：Stun 挂结界像别名引出的坑）。"""
+
+    def test_tier_and_db_names(self):
+        #: engine 行（混轴）与 custom 条目的全部叫法都要跳过
+        db = [dict(name='Yummy Engine', name_display='Mitsurugi Yummy',
+                   aliases=['Yummy'], kind='engine', source='masterduelmeta'),
+              dict(name='狱神耀圣', name_cn='狱神耀圣', source='custom',
+                   kind='deck_type', aliases=[])]
+        known = fmd.topdeck_known_lower(['Branded'], db, {})
+        self.assertTrue({'branded', 'yummy engine', 'mitsurugi yummy',
+                         'yummy', '狱神耀圣'} <= known)
+
+    def test_db_site_rows_are_not_known(self):
+        """普通站内条目**不算已知** —— 口径行要继续进 all_rows，活过 prune
+        （2026-10-12 事故：被 skip 后遭 prune，又被重建成 custom）。"""
+        db = [dict(name='Invoked', source='masterduelmeta', kind='deck_type')]
+        known = fmd.topdeck_known_lower([], db, {})
+        self.assertNotIn('invoked', known)
+
+    def test_ovr_aliases_and_display_count(self):
+        ovr = {'Banquet FTK': {'aliases': ['Stun', 'Barrier Statue'],
+                               'display': ''},
+               'Yummy Engine': {'aliases': [], 'display': 'Mitsurugi Yummy'}}
+        known = fmd.topdeck_known_lower([], [], ovr)
+        self.assertIn('stun', known)
+        self.assertIn('barrier statue', known)
+        self.assertIn('mitsurugi yummy', known)
+
+    def test_ovr_keys_do_not_count(self):
+        #: 站内英文名键 = 「要建条目」—— 算进去会把正要新建的卡组挡在门外
+        ovr = {'DoomZ': {'aliases': [], 'display': ''}}
+        known = fmd.topdeck_known_lower([], [], ovr)
+        self.assertNotIn('doomz', known)
+
+
+
+class TestSiteNames(unittest.TestCase):
+    """站内全量名单（管理页「爬取 / 自定义」分组判据的数据源）。"""
+
+    def test_fetch_params_and_dedupe(self):
+        calls = []
+
+        def fake(params, base=None):
+            calls.append(dict(params))
+            return [{'name': 'Branded'}, {'name': 'Branded'},
+                    {'name': 'DoomZ'}, {'name': ''}]
+
+        old, fmd.fetch_api = fmd.fetch_api, fake
+        try:
+            names = fmd.fetch_site_deck_names()
+        finally:
+            fmd.fetch_api = old
+        self.assertEqual(calls, [{'limit': '3000', 'fields': 'name'}])
+        self.assertEqual(names, ['Branded', 'DoomZ'])
+
+    def test_write_and_roundtrip(self):
+        import json
+        import tempfile
+        d = tempfile.mkdtemp(prefix='mdm-site-')
+        p = os.path.join(d, 'site_deck_names.json')
+        fmd.write_site_names(['Branded', 'DoomZ'], path=p)
+        with open(p, encoding='utf-8') as f:
+            payload = json.load(f)
+        self.assertEqual(payload['names'], ['Branded', 'DoomZ'])
+        self.assertIn('fetched_at', payload)
+
+
 if __name__ == '__main__':
     unittest.main()

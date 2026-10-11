@@ -10,7 +10,10 @@
 * 改的是覆盖表 `data/deck_name_cn.csv`（**唯一真源**），保存后自动跑一次
   `tools/fetch_meta_decks.py --cn-only` 把表贴进库（**不联网**，只把 CSV 写进
   `meta_decks`）—— 所以在这里改完，选择器 / 看板立刻生效。
-* 能改四样：**中文名 / 别名 / 显示英文名 / 隐藏**；「站内英文名」是**连接键**只读。
+* 能改四样：**中文名 / 别名 / 日文名 / 隐藏**；「站内英文名」是**连接键**只读。
+*（2026-10-12 用户：编辑位原是「显示英文名」，完全用不上 —— 换成日文名。
+*  数据列「显示英文名」**保留**（参照库改名机制还靠它，Yummy Engine 一行在用），
+*  只是页面不再露出；要改走 Excel。）
 * ⚠️ 清单来自 CSV 本身（不查库）：库是 CSV 的投影，改库没意义（下次 `--cn-only` 就冲掉了）。
 
 ★ 2026-09-21 二轮（用户实测五条，这里是其中三条）：
@@ -41,6 +44,8 @@ from ui.script_runner import ScriptRunner
 
 #: 项目根（卡图路径相对项目根，存图时要拼回来）
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+#: 站内全量名单（分组判据的数据源）—— fetch_meta_decks.SITE_NAMES_PATH 同一份
+_SITE_NAMES_PATH = os.path.join(PROJ, 'data', 'site_deck_names.json')
 #: 覆盖表的默认位置（真源；`core.deck_csv.CN_CSV` 是唯一来源）
 DEFAULT_CSV = deck_csv.CN_CSV
 #: 保存后跑这条命令把表贴进库（**不联网**，只读 CSV 写库）
@@ -51,7 +56,7 @@ PUSH_ARGS = ['--cn-only']
 NAME_W = 180
 #: 缩略图边长（与 `widgets.thumb_label` 的默认一致）
 THUMB = 22
-#: 三列宽度比例（中文名 / 别名 / 显示英文名）
+#: 三列宽度比例（中文名 / 别名 / 日文名）
 #: ⚠️ 2026-09-21 用户：「缩小中文名的列宽」—— 中文名两个字就够，别名常一串
 #:    （`METABEAT / Barrier Statue / 深渊`），所以 3:4:3 → **2:5:3**。
 COL_STRETCH = (2, 5, 3)
@@ -129,7 +134,7 @@ def _del_style() -> str:
 
 
 class OppDeckHeaderRow(QWidget):
-    """表头：`[图] 站内英文名 | 中文名 | 别名 | 显示英文名 | 隐藏`。
+    """表头：`[图] 站内英文名 | 中文名 | 别名 | 日文名 | 隐藏`。
 
     ⚠️ 边距 / 间距 / 各列宽 / 伸缩比必须与 :class:`OppDeckRow` **逐字一致**，
     否则表头与下面那些输入框对不齐（本页用户实测反馈第 1 条就是因为没有表头）。
@@ -148,9 +153,9 @@ class OppDeckHeaderRow(QWidget):
         name.setStyleSheet('color: %s; background: transparent;' % theme.INK_SUBTLE)
         hl.addWidget(name)
         for text, tip, stretch in zip(
-                ('中文名', '别名', '显示英文名'),
+                ('中文名', '别名', '日文名'),
                 (tr('中文名'), tr('别名（多个用 / 分隔）'),
-                 tr('显示英文名（留空 = 用站内名）')),
+                 tr('日文名（留空 = 未填）')),
                 COL_STRETCH):
             lab = _lab(tr(text), 'muted', size=theme.PAGE_F_SMALL)
             lab.setStyleSheet('color: %s; background: transparent;'
@@ -633,7 +638,7 @@ class SetImageDialog(QDialog):
 
 
 class OppDeckRow(QWidget):
-    """一行：`[图] 站内英文名 | 中文名 | 别名 | 显示英文名 | 隐藏 | 删`。"""
+    """一行：`[图] 站内英文名 | 中文名 | 别名 | 日文名 | 隐藏 | 删`。"""
 
     #: 点了这一行的「删除」（参数 = 自己）—— 由管理器负责真的从表里拿掉
     deleted = Signal(object)
@@ -664,15 +669,18 @@ class OppDeckRow(QWidget):
         self.cn.setPlaceholderText(tr('中文名'))
         self.alias = QLineEdit(deck_csv.get(row, idx, '别名'))
         self.alias.setPlaceholderText(tr('别名（多个用 / 分隔）'))
-        self.en = QLineEdit(deck_csv.get(row, idx, '显示英文名'))
-        self.en.setPlaceholderText(tr('留空 = 用站内名'))
-        for edit in (self.cn, self.alias, self.en):
+        #: ★ 2026-10-12 用户：这格原来是「显示英文名」（几乎没人用）——
+        #: 换成**日文名**（CSV 里早就有这列，页面上一直没露出来）。
+        #: 「显示英文名」列不在页面出现，要改走 Excel。
+        self.jp = QLineEdit(deck_csv.get(row, idx, '日文名'))
+        self.jp.setPlaceholderText(tr('日文名'))
+        for edit in (self.cn, self.alias, self.jp):
             edit.setFont(widgets.font(theme.F_BODY_SM))
             edit.setFixedHeight(_edit_h())          # ★ 按字高算，别写死 22
             edit.setStyleSheet(_edit_style())       # ★ 紧内边距，别用全局那套
         hl.addWidget(self.cn, COL_STRETCH[0])
         hl.addWidget(self.alias, COL_STRETCH[1])
-        hl.addWidget(self.en, COL_STRETCH[2])
+        hl.addWidget(self.jp, COL_STRETCH[2])
         self.hidden = widgets.TickBox(tr('隐藏'))
         self.hidden.setFont(widgets.font(theme.F_BODY_SM))
         self.hidden.setChecked(deck_csv.get(row, idx, '隐藏').upper() == 'Y')
@@ -692,11 +700,11 @@ class OppDeckRow(QWidget):
         hl.addWidget(self.btn_del)
 
     def matches(self, query: str) -> bool:
-        """搜索过滤（站内名 / 中文名 / 别名 / 显示英文名 / 日文名 都认）。"""
+        """搜索过滤（站内名 / 中文名 / 别名 / 日文名 都认）。"""
         q = (query or '').strip().lower()
         if not q:
             return True
-        parts = [self.cn.text(), self.en.text(), self.alias.text(),
+        parts = [self.cn.text(), self.jp.text(), self.alias.text(),
                  deck_csv.get(self.csv_row, self.idx, '站内英文名'),
                  deck_csv.get(self.csv_row, self.idx, '日文名'),
                  deck_csv.get(self.csv_row, self.idx, '备注')]
@@ -706,7 +714,7 @@ class OppDeckRow(QWidget):
         """把界面上的值写回 CSV 行（就地改）。"""
         deck_csv.set_cell(row, idx, '中文名', self.cn.text().strip())
         deck_csv.set_cell(row, idx, '别名', self.alias.text().strip())
-        deck_csv.set_cell(row, idx, '显示英文名', self.en.text().strip())
+        deck_csv.set_cell(row, idx, '日文名', self.jp.text().strip())
         deck_csv.set_cell(row, idx, '隐藏', 'Y' if self.hidden.isChecked() else '')
 
 
@@ -769,42 +777,9 @@ class NewDeckRow(QWidget):
         self.edit.clear()
 
 
-class CustomOnlyRow(QWidget):
-    """只读行：`[图] 名字` —— 给「我加过、但不在覆盖表里」的自定义卡组用。
-
-    这些名字来自 `opp_decks`（悬浮窗「自定义卡组名」写的就是它），**不在 CSV 里**
-    —— 所以名字不可改、也不能从这里删（删它要动 `opp_decks` / 已有标注）。
-    唯一能改的是**卡图**（点图 → 同一条设置链路）。
-    """
-
-    image_clicked = Signal(object)
-
-    def __init__(self, name: str, img: str = '', parent=None):
-        super().__init__(parent)
-        self.deck_name = name
-        self.setFixedHeight(row_h())
-        hl = QHBoxLayout(self)
-        hl.setContentsMargins(0, 2, 0, 2)
-        hl.setSpacing(theme.S_XS)
-        self.thumb = ClickableThumb(img or '', THUMB)
-        self.thumb.setToolTip(tr('点一下给这个卡组设置卡图')
-                              + '\n' + tr('这个卡组不在覆盖表里（只有卡图能改）'))
-        self.thumb.clicked.connect(lambda _c=False: self.image_clicked.emit(self))
-        hl.addWidget(self.thumb)
-        lab = _lab(name, 'body', size=theme.PAGE_F_SMALL)
-        lab.setFixedWidth(NAME_W)
-        lab.setToolTip(name)
-        hl.addWidget(lab)
-        tip = _lab(tr('我加的自定义卡组（不在覆盖表里；名字来自标注）'),
-                   'muted', size=theme.PAGE_F_SMALL)
-        tip.setStyleSheet('color: %s; background: transparent;'
-                          % theme.INK_SUBTLE)
-        hl.addWidget(tip, 1)
-        hl.addWidget(_spacer(DEL_W))          # 与「删」那一列对齐（只读行没有按钮）
-
-    def matches(self, query: str) -> bool:
-        q = (query or '').strip().lower()
-        return (not q) or q in (self.deck_name or '').lower()
+# 「我加的自定义卡组」不再有独立行类（2026-10-12 用户：格式要和上方一致）
+# —— 直接用 `OppDeckRow`（可编辑、有删除钮），区别只在：还没进覆盖表，
+# 点「保存」才并进去。见 `OppDeckManager._append_custom_row`。
 
 
 class OppDeckManager(QWidget):
@@ -818,13 +793,17 @@ class OppDeckManager(QWidget):
     saved = Signal()
 
     def __init__(self, csv_path=None, parent=None, runner_factory=None,
-                 image_resolver=None, storage=None, custom_names=None) -> None:
+                 image_resolver=None, storage=None, custom_names=None,
+                 site_names=None) -> None:
         super().__init__(parent)
         self.csv_path = csv_path or DEFAULT_CSV
         self._resolver = image_resolver
         #: 我加过、但不在覆盖表里的自定义卡组名（`opp_decks` 里那些）——
         #: 列成只读行，让它们的卡图也能在这里设。传 None = 从 storage 现算。
         self._custom_names_arg = custom_names
+        #: 站内 deck-types 名单（分组判据，见 _SITE_NAMES_PATH）——
+        #: 传 None = 从 data/site_deck_names.json 现读；文件也没有 = 全当站内
+        self._site_names_arg = site_names
         #: 换图要写库（`set_meta_deck_override`）—— 不传 = 纯 CSV 模式
         #: （单测走这条，不碰真库 / 真图）
         self._storage = storage
@@ -876,7 +855,25 @@ class OppDeckManager(QWidget):
         area.setWidget(host)
         outer.addWidget(area, 1)
 
-        self.rows_ui = []
+        #: 分组判据 = **站内有没有这个 deck-type**（名单来自
+        #: `data/site_deck_names.json`，fetch_meta_decks 每次抓取顺手刷新）——
+        #: ⚠️ 不是 meta 的 source 字段：手动收录的站内卡组（Ancient Gear 这批）
+        #: source 也是 custom，按它分组会把自定义组撑到 80 行（实测事故）。
+        #: 无名单文件 / 无参数时 = 全当站内（不出分隔行）。
+        self._site_names = set()
+        try:
+            if self._site_names_arg is not None:
+                raw_names = list(self._site_names_arg)
+            else:
+                import json
+                with open(_SITE_NAMES_PATH, encoding='utf-8') as f:
+                    raw_names = json.load(f).get('names') or []
+            self._site_names = {str(n).strip().lower()
+                                for n in (raw_names or [])}
+        except Exception:                                    # noqa: BLE001
+            self._site_names = set()
+
+        site_items, custom_csv_ui = [], []
         for row in self.rows:
             name = deck_csv.get(row, self.idx, '站内英文名')
             img = ''
@@ -888,8 +885,36 @@ class OppDeckManager(QWidget):
             item = OppDeckRow(row, self.idx, img=img)
             item.deleted.connect(self.remove_row)
             item.image_clicked.connect(self.set_deck_image)
-            self.rows_ui.append(item)
+            #: 站内判定（2026-10-12 用户：这 3 条要归爬取组）——
+            #: ① 全名直接查（D/D/D 这种**名字自带斜杠**的，不能当多值拆掉）；
+            #: ② 多值拆分（SkyStriker/Sky Striker）；③ 别名命中也算
+            #: （Yummy Engine 的别名就是站内名 Mitsurugi Yummy）
+            name_low = (name or '').strip().lower()
+            parts = [p.strip().lower()
+                     for p in (name or '').replace('/', chr(10)).split(chr(10))
+                     if p.strip()]
+            alias_low = [p.strip().lower() for p in
+                         (deck_csv.get(row, self.idx, '别名') or '')
+                         .replace('/', chr(10)).replace('、', chr(10))
+                         .split(chr(10)) if p.strip()]
+            in_site = (name_low in self._site_names
+                       or any(p in self._site_names for p in parts)
+                       or any(a in self._site_names for a in alias_low))
+            if (bool(parts) and bool(self._site_names) and not in_site):
+                custom_csv_ui.append(item)
+            else:
+                site_items.append(item)
+        #: ★ rows_ui 跟随**显示顺序**（站内在前），不是 CSV 顺序（用户 2026-10-12：
+        #:   自定义卡组和爬取的卡组之间要分隔行 —— 见下面 custom_divider）
+        self.rows_ui = site_items + custom_csv_ui
+        for item in site_items:
             self.col.addWidget(item)
+        #: ★ 分隔行：爬取的卡组 / 自定义卡组 别再混在一起
+        self.custom_divider = self._make_divider()
+        self.col.addWidget(self.custom_divider)
+        for item in custom_csv_ui:
+            self.col.addWidget(item)
+        self.custom_csv_ui = custom_csv_ui
         self.col.addStretch(1)
 
         #: 「自定义卡组名」那一行（**放在最上面**，与悬浮窗选择器同款：
@@ -902,7 +927,8 @@ class OppDeckManager(QWidget):
         #: 我加过、但不在覆盖表里的自定义卡组（只读行；卡图可点）
         self.custom_rows_ui = []
         self.custom_label = widgets.label(
-            tr('我加的自定义卡组（不在覆盖表里；只有卡图能改）'), 'muted')
+            tr('我加的自定义卡组（还没进覆盖表 —— 可直接编辑，点「保存」并进去）'),
+            'muted')
         self.custom_label.setContentsMargins(0, theme.S_SM, 0, 0)
         for nm in self._load_custom_names():
             self._append_custom_row(nm)
@@ -931,6 +957,14 @@ class OppDeckManager(QWidget):
         #: 初始状态行 —— 只读行（我加的自定义卡组）也要算进去；
         #: 没有只读行时保持老样子（`N 条`），别让常见情形看起来变了。
         self._refresh_status(len(self.rows_ui), len(self.rows_ui))
+        #: 没有自定义行时分隔行不露（_apply_filter 只在打字时管它）
+        self.custom_divider.setVisible(bool(self.custom_csv_ui))
+
+    def _make_divider(self):
+        """分组分隔行：「↓ 自定义卡组」—— 上面是爬取的、下面是自己建的。"""
+        lab = widgets.label(tr('—— 自定义卡组 ——'), 'muted')
+        lab.setContentsMargins(0, theme.S_SM, 0, theme.S_XS)
+        return lab
 
     # ------------------------------------------------------------ 自定义卡组名
     def add_custom(self, name: str) -> bool:
@@ -1205,14 +1239,26 @@ class OppDeckManager(QWidget):
         return out
 
     def _append_custom_row(self, name: str):
-        """追加一条只读行（列表末尾、stretch 之前）。"""
+        """追加一条**自定义行**（列表末尾、stretch 之前）。
+
+        ⚠️ 2026-10-12 用户口径：「自定义卡组格式应该和上方卡组一致」——
+        所以不再用只读行，直接给 `OppDeckRow`（可编辑中文名/别名、可删），
+        数据是一行**合成 CSV 行**（站内英文名 = 中文名 = 名字，还没进表）；
+        点「保存」时由 `save()` 并进覆盖表（转正）。`deck_name` 属性保留 ——
+        单测和 `set_deck_image` 都靠它取名字。
+        """
         img = ''
         if callable(self._resolver):
             try:
                 img = self._resolver(name) or ''
             except Exception:                            # noqa: BLE001
                 img = ''
-        item = CustomOnlyRow(name, img)
+        row = [''] * len(self.header)
+        deck_csv.set_cell(row, self.idx, '站内英文名', name)
+        deck_csv.set_cell(row, self.idx, '中文名', name)
+        item = OppDeckRow(row, self.idx, img=img or self._default_img_for(name))
+        item.deck_name = name
+        item.deleted.connect(self._remove_custom_row)
         item.image_clicked.connect(self.set_deck_image)
         self.custom_rows_ui.append(item)
         if self.custom_label.parent() is None:
@@ -1220,12 +1266,26 @@ class OppDeckManager(QWidget):
         self.col.insertWidget(self.col.count() - 1, item)
         return item
 
+    def _remove_custom_row(self, item) -> bool:
+        """把一条**自定义行**从界面拿掉（还没进覆盖表 —— 不涉及 CSV）。"""
+        if item is None or item not in self.custom_rows_ui:
+            return False
+        self.custom_rows_ui.remove(item)
+        self.col.removeWidget(item)
+        item.hide()
+        item.setParent(None)
+        item.deleteLater()
+        self._apply_filter(self.edit_search.text())
+        self.status.setText(tr('已移除「%s」（还没进覆盖表，不用保存）')
+                            % (getattr(item, 'deck_name', '') or ''))
+        return True
+
     # ------------------------------------------------------------ 过滤
     def _refresh_status(self, shown: int, total: int) -> None:
         """状态行 —— 有只读行时单独交代一句（它们不在覆盖表里）。"""
         if self.custom_rows_ui:
             self.status.setText(
-                tr('%d / %d 条（其中 %d 条不在覆盖表）')
+                tr('%d / %d 条（其中 %d 条待保存进覆盖表）')
                 % (shown, total, len(self.custom_rows_ui)))
         elif shown == total:
             self.status.setText(tr('%d 条') % total)
@@ -1244,6 +1304,10 @@ class OppDeckManager(QWidget):
             item.setVisible(ok)
             c_shown += 1 if ok else 0
         self.custom_label.setVisible(bool(self.custom_rows_ui) and c_shown > 0)
+        csv_c_shown = sum(1 for item in self.custom_csv_ui
+                          if item.isVisibleTo(self))
+        self.custom_divider.setVisible(bool(self.custom_csv_ui)
+                                       and csv_c_shown > 0)
         self._refresh_status(shown + c_shown,
                              len(self.rows_ui) + len(self.custom_rows_ui))
 
@@ -1252,6 +1316,11 @@ class OppDeckManager(QWidget):
         """写回 CSV（+ 起 `--cn-only` 把表贴进库）。失败**不抛**，状态行说明。"""
         for item in self.rows_ui:
             item.apply_to(item.csv_row, self.idx)
+        #: 自定义行（我加的、还没进表的）一并并入 —— 与上方行同格式之后，
+        #: 「保存」就是它们的转正入口（用户 2026-10-12）
+        for item in self.custom_rows_ui:
+            item.apply_to(item.csv_row, self.idx)
+            self.rows.append(item.csv_row)
         try:
             deck_csv.write(self.csv_path, self.header, self.rows)
         except Exception as exc:                             # noqa: BLE001

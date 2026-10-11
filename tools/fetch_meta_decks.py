@@ -11,6 +11,10 @@
   * 卡组图托管在 `imgserv.duellinksmeta.com/v2/mdm/{deck-type|engines}/<名>`，
     按名字寻址、可用 `?portrait=true&width=N` 取指定尺寸
 
+  * **top-decks 近 N 天牌表**（2026-10-12 加，用户拍板）：一条请求拿回窗口内
+    全部牌表，前端聚合出「大师一 ∪ 新卡」口径的卡组，**只加库里没有的** ——
+    这两张口径是纯前端过滤（browser 实测点击不发请求），脚本直接打 API 等价复现
+
 `kind` 的语义（用户口径）：
   * `deck_type` = 单一主题卡组，如 Dracotail
   * `engine`    = **混合卡组**，如 Kewl Tune + Elfnote 混编，哪边卡多归哪边的 engine
@@ -49,6 +53,15 @@ TIER_URL = 'https://www.masterduelmeta.com/tier-list'
 API_URL = 'https://www.masterduelmeta.com/api/v1/deck-types'
 #: 只取这三个字段，一条 200 字节左右
 API_FIELDS = 'name,tournamentPower,popRank,masterPopRank'
+#: top-decks 全量端点（top-decks 页面自己用的；一条请求拿回窗口内全部牌表）
+TOPDECKS_URL = 'https://www.masterduelmeta.com/api/v1/top-decks'
+#: 近 N 天新卡清单（NEW CARDS 口径的匹配集；站上页面同款参数）
+NEWCARDS_URL = 'https://www.masterduelmeta.com/api/v1/cards'
+#: 大师一 ∪ 新卡 口径的默认窗口天数（用户 2026-10-12 拍板 30；--days 可调）
+TOPDECK_DAYS = 30
+#: 站内**全量** deck-types 名单的落盘位置 —— 管理页分组判据
+#: （站内**有**这个名字 = 爬取的卡组；没有 = 自定义。随抓取顺手刷新）
+SITE_NAMES_PATH = os.path.join(PROJ, 'data', 'site_deck_names.json')
 #: tournamentPower -> tier。区间就是榜单页上写的那四档
 #: （Tier1 ≥12 / Tier2 7~12 / Tier3 3~7 / Trending 1~3）
 TIER_CUTS = ((12.0, 'Tier1'), (7.0, 'Tier2'), (3.0, 'Tier3'))
@@ -151,6 +164,129 @@ def fetch_from_api():
                                popularity=r.get('popRank'),
                                slug=urllib.parse.quote(name), img_url=None))
     return rows, orphan
+
+
+def fetch_site_deck_names():
+    """站内**全量** deck-types 名字（一条请求，592 个 / 2026-10-12 实测）。
+
+    管理页「爬取 / 自定义」分组判据用：站内**有** = 爬取的卡组。
+    与 top-decks 口径无关 —— 每次抓取都顺手刷新这份名单。
+    """
+    rows = fetch_api({'limit': '3000', 'fields': 'name'})
+    return sorted({(r.get('name') or '').strip() for r in rows} - {''})
+
+
+def write_site_names(names, path=SITE_NAMES_PATH):
+    """落盘站内名单（幂等整文件覆盖）。"""
+    import datetime
+    payload = {'version': 1,
+               'fetched_at': datetime.datetime.now().isoformat(timespec='seconds'),
+               'source': 'masterduelmeta /api/v1/deck-types?limit=3000',
+               'names': sorted(set(names))}
+    with io.open(path, 'w', encoding='utf-8', newline='') as f:
+        json.dump(payload, f, ensure_ascii=False, indent=1)
+        f.write(chr(10))
+    return path
+
+
+def fetch_topdecks(days=TOPDECK_DAYS):
+    """top-decks 窗口内**全部牌表**（一条请求，实测 30 天约 1100 副 / 350KB）。
+
+    页面上的 MASTER I / NEW CARDS 是纯前端过滤 —— 口径聚合在本地做，
+    另带 ``rankedType``（打到的大师段位）与完整 main/extra/side 卡表。
+    """
+    return fetch_api({'created[$gte]': '(days-%d)' % days,
+                      'fields': '-_id,-__v,-notes', 'limit': '0'},
+                     base=TOPDECKS_URL)
+
+
+def fetch_new_card_ids(days=TOPDECK_DAYS):
+    """近 N 天的新卡 id 集合（站内 ``_id``，top-decks 卡表项引用的就是它）。"""
+    rows = fetch_api({'release[$gte]': '(days-%d)' % days,
+                      'alternateArt[$ne]': 'true', 'fields': 'name',
+                      'limit': '0'}, base=NEWCARDS_URL)
+    return {r.get('_id') for r in rows if r.get('_id')}
+
+
+def _topdeck_cards_have_new(deck, new_ids):
+    """一副牌的 main/extra/side 里有没有新卡（卡引用是对象，兜底裸 id）。"""
+    for part in ('main', 'extra', 'side'):
+        for e in (deck.get(part) or []):
+            ref = (e or {}).get('card')
+            cid = ref.get('_id') if isinstance(ref, dict) else ref
+            if cid in new_ids:
+                return True
+    return False
+
+
+def topdeck_union_rows(decks, new_card_ids):
+    """**大师一 ∪ 新卡**口径聚合（纯函数，可单测）。
+
+    * MASTER I：``rankedType.name == 'Master I'``（打到大师一的牌表）
+    * NEW CARDS：main/extra/side 含任一窗口内新卡
+    * 返回 ``(rows, stats)``：rows 与榜单行同形（tier 恒 None —— **只是候选**，
+      进不进库由调用方按「库里有没有」过滤），另带 ``master1`` / ``new_cards``
+      命中数；stats = (牌表总数, 大师一副数, 新卡副数)
+    """
+    from collections import Counter
+    mi, nc = Counter(), Counter()
+    for d in decks:
+        name = ((d.get('deckType') or {}).get('name') or '').strip()
+        if not name:
+            continue
+        if ((d.get('rankedType') or {}).get('name') == 'Master I'):
+            mi[name] += 1
+        if new_card_ids and _topdeck_cards_have_new(d, new_card_ids):
+            nc[name] += 1
+    stats = (len(decks), sum(mi.values()), sum(nc.values()))
+    rows = []
+    for name in sorted(set(mi) | set(nc)):
+        rows.append(dict(name=name, kind='deck_type', tier=None, power=None,
+                         popularity=None, slug=urllib.parse.quote(name),
+                         img_url=None, master1=mi.get(name, 0),
+                         new_cards=nc.get(name, 0)))
+    return rows, stats
+
+
+def topdeck_known_lower(tier_names, db_rows, ovr):
+    """口径行去重的「跳过名」集合（小写）—— 只有**会撞名冲突的**才算已知。
+
+    * 榜单行名（all_rows 里已有同名，再加就重复）；
+    * 库里 **custom 条目**与**混轴（engine）行**的全部叫法 —— 口径行不该
+      顶掉用户自建/隐藏条目（``Banquet FTK``=结界像、``Mitsurugi Yummy``
+      是 engine 行显示名，这类）；
+    * 覆盖表的**别名/显示英文名**（``Stun`` 挂结界像这类并行口径 ——
+      别名多半还没进库，不查 CSV 会被误当新卡组建出来）。
+
+    ⚠️ 库里**普通站内条目不算已知** —— 上一窗口的口径行必须继续进
+    all_rows，否则 `replace_meta_decks(prune)` 会把它们当「掉出榜单」删掉
+    （2026-10-12 实测事故：16 条被 prune 掉又被 custom_rows 重建成 custom）。
+    ⚠️ 覆盖表的**站内英文名键不算** —— 那是「这副牌要建条目」的意思。
+    """
+    known = {n.lower() for n in tier_names}
+    for r in db_rows or []:
+        if ((r.get('source') or '') == 'custom'
+                or (r.get('kind') or '') == 'engine'):
+            known.add((r.get('name') or '').lower())
+            known.add((r.get('name_display') or '').lower())
+            known |= {a.lower() for a in (r.get('aliases') or [])}
+    for o in (ovr or {}).values():
+        known |= {a.lower() for a in (o.get('aliases') or [])}
+        if o.get('display'):
+            known.add(o['display'].lower())
+    return known
+
+
+def split_topdeck_new(rows, known_lower):
+    """把口径行分成「库里没有的」和「已有的」（纯函数）。
+
+    ``known_lower`` = **小写化的全部叫法**集合 —— 调用方要把 meta_decks 的
+    name / name_display / aliases 都丢进来（``Mitsurugi Yummy`` 是隐藏 engine 行
+    ``Yummy Engine`` 的显示名，不能当新条目重复建）。
+    """
+    fresh = [r for r in rows if r['name'].lower() not in known_lower]
+    seen = [r['name'] for r in rows if r['name'].lower() in known_lower]
+    return fresh, seen
 
 
 def diff_with_db(st, rows):
@@ -364,7 +500,8 @@ def load_overrides(path=CN_CSV):
 
     列的读法统一交给 :mod:`core.deck_csv`（**表头认列**，容错见那边）：
 
-    ``站内英文名 / 显示英文名 / 中文名 / 日文名 / 别名 / 分组 / 隐藏 / 备注``
+    ``站内英文名 / 中文名 / 日文名 / 别名 / 分组 / 隐藏 / 备注``
+    （显示英文名列已删 —— 2026-10-12，见 core/deck_csv.py 模块头）
 
     * 站内没有的名字 = **自定义卡组**（我们自己建的）
     * 分组：站内**有**分组的以站内为准；站内没有的、以及自定义条目才用这一列
@@ -511,11 +648,11 @@ def download_images(rows, dest=IMG_DIR, width=IMG_WIDTH, verbose=True):
 
 
 def show_cn_table(rows, ovr, todo_note=()):
-    """打印核对表：站内名 / 显示名 / 中文名 / 日文名 / 状态。"""
+    """打印核对表：站内名 / 中文名 / 日文名 / 状态。"""
     todo = set(todo_note)
-    print('%-26s %-16s %-12s %-18s %s'
-          % ('站内英文名', '显示英文名', '中文名', '日文名', '状态'))
-    print('-' * 96)
+    print('%-26s %-12s %-18s %s'
+          % ('站内英文名', '中文名', '日文名', '状态'))
+    print('-' * 80)
     for r in sorted(rows, key=lambda x: (x.get('tier') or 'z', x['name'])):
         o = ovr.get(r['name']) or {}
         notes = []
@@ -527,12 +664,10 @@ def show_cn_table(rows, ovr, todo_note=()):
             notes.append('待核')
         if not o.get('jp'):
             notes.append('★缺日文')
-        if o.get('display'):
-            notes.append('已改名')
         if r.get('kind') == 'engine':
             notes.append('engine')
-        print('%-26s %-16s %-12s %-18s %s' % (
-            r['name'][:25], o.get('display') or '', o.get('cn') or '——',
+        print('%-26s %-12s %-18s %s' % (
+            r['name'][:25], o.get('cn') or '——',
             o.get('jp') or '——', ' '.join(notes)))
 
 
@@ -662,6 +797,10 @@ def main():
                     help='只把 data/deck_name_cn.csv 应用到库里（不联网、不违规）')
     ap.add_argument('--missing-images', action='store_true',
                     help='只补库里缺的卡组图（联网；不抓榜单、不动覆盖表）')
+    ap.add_argument('--days', type=int, default=TOPDECK_DAYS,
+                    help='大师一∪新卡 口径的窗口天数（默认 30）')
+    ap.add_argument('--no-topdecks', action='store_true',
+                    help='不抓 top-decks 口径（只走两张榜单，老行为）')
     args = ap.parse_args()
 
     # ---- 0.5 只补缺图（Q17 贴完覆盖表后接着跑；2026-10-08）----
@@ -764,6 +903,48 @@ def main():
           % (len(rows), len(orphan),
              ('：' + '、'.join(r['name'] for r in orphan)) if orphan else ''))
 
+    # ---- 1.5 大师一 ∪ 新卡 口径（2026-10-12 用户拍板：重点录入这两类）----
+    # 只加**库里没有的**（已知卡组走榜单/覆盖表链路，别拿 tier=None 的口径行
+    # 冲掉现有 tier）。掉出窗口的口径行由 replace_meta_decks 的 prune 清掉 ——
+    # 滚动窗口语义；想留底用 --keep-stale。
+    if args.source == 'api' and not args.html and not args.no_topdecks:
+        try:
+            tdecks = fetch_topdecks(args.days)
+            tids = fetch_new_card_ids(args.days)
+            trows, tstats = topdeck_union_rows(tdecks, tids)
+            st_probe = Storage()
+            ovr_td, _td_note = load_overrides()
+            known = topdeck_known_lower([r['name'] for r in rows],
+                                        st_probe.list_meta_decks(include_hidden=True),
+                                        ovr_td)
+            fresh, seen = split_topdeck_new(trows, known)
+            orph = {r['name']: r for r in orphan}
+            for r in fresh:                      # 使用率榜上的口径卡组带上 pop
+                o = orph.get(r['name'])
+                if o:
+                    r['popularity'] = o.get('popularity')
+                    r['power'] = o.get('power')
+            all_rows.extend(fresh)
+            print('  [大师一∪新卡] %d 天窗口：牌表 %d 副（大师一 %d / 新卡 %d）'
+                  '→ 口径 %d 卡组，库外新增 %d%s'
+                  % (args.days, tstats[0], tstats[1], tstats[2], len(trows),
+                     len(fresh), ('：' + '、'.join(r['name'] for r in fresh))
+                     if fresh else ''))
+        except Exception as e:                               # noqa: BLE001
+            print('  [大师一∪新卡] 抓取失败，跳过（%s）' % e)
+
+    # ---- 1.6 站内全量名单（管理页「爬取 / 自定义」分组判据）----
+    if args.source == 'api' and not args.html:
+        try:
+            snames = fetch_site_deck_names()
+            if not args.dry_run:
+                write_site_names(snames)
+            print('  [站内名单] 全量 %d 个 deck-types%s'
+                  % (len(snames), '' if args.dry_run
+                     else '（已存 %s）' % os.path.relpath(SITE_NAMES_PATH, PROJ)))
+        except Exception as e:                               # noqa: BLE001
+            print('  [站内名单] 抓取失败，跳过（%s）' % e)
+
     tiers = {}
     for r in all_rows:
         tiers.setdefault(r['tier'] or '(无)', []).append(r)
@@ -815,7 +996,8 @@ def main():
     # ---- 2.6 engine 行保留（2026-09-20 用户拍板，**推翻** 09-11 的「丢弃」口径）----
     # Tier 表要列出全部混轴：engine 行**保留但 hidden=1**（选择器 / 标注仍只见
     # deck_type），中文名 = 基准卡组中文名 + 「混轴」（Elfnote Engine -> 耀圣混轴）。
-    # 覆盖表给了「显示英文名」的仍按覆盖表走（旧例：Yummy Engine -> Mitsurugi Yummy）。
+    # 覆盖表给了「显示英文名」的仍按覆盖表走 —— ⚠️ 该列已删（2026-10-12），
+    # 此规则只剩老文件兼容意义；Yummy Engine 的 Mitsurugi Yummy 已进别名。
     # API 模式的 rows 里没有 engine（站内 API 不返回）—— 单独抓 tier-list 页补。
     deck_rows = [r for r in all_rows if r.get('kind') != 'engine']
     eng_rows = [r for r in all_rows if r.get('kind') == 'engine']

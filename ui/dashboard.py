@@ -1840,9 +1840,10 @@ class DashboardWindow(QWidget):
         self._resizing = False
         self._cursor_shape = None
         self._current = ''
-        #: 「卡组」页当前页签（`names` / `composition`）—— 记在 QSettings
-        #: （`dash/decks_tab`；**新键**，与下面那个卡组名记忆不是一回事）
-        self._decks_tab = str(settings().value('dash/decks_tab') or '')
+        #: 「卡组」页当前页签（`names` / `tier` / `composition`）—— **不再记忆**：
+        #: 每次打开都落第一页「卡组名管理」（用户 2026-10-12；QSettings 里的
+        #: `dash/decks_tab` 旧值作废）
+        self._decks_tab = ''
         #: 「卡组构成」页签当前看的是哪个卡组（站内英文名）—— 记在 QSettings
         #: （`dash/deckview`），Tier 芯片 / 卡组页都会改它
         #: ⚠️ 这个键**不是**页签键（它存的是卡组名）—— 两者都别互相覆盖
@@ -1850,8 +1851,6 @@ class DashboardWindow(QWidget):
 
         self._build()
         self._restore_geometry()
-        if self._decks_tab in ('names', 'tier', 'composition'):
-            self.set_decks_tab(self._decks_tab)   # 恢复上次的页签
         page = str(settings().value('dash/page') or NAV_PAGES[0][1])
         if page == 'deckview':
             # 旧版把「卡组构成」当独立隐藏页存过 `dash/page` —— 现在它是
@@ -2134,7 +2133,6 @@ class DashboardWindow(QWidget):
             key = 'names'
         page.set_tab(key)
         self._decks_tab = key
-        settings().setValue('dash/decks_tab', key)
 
     def current_decks_tab(self) -> str:
         """「卡组」页当前页签（`names` / `composition`）。"""

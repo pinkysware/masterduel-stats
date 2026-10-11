@@ -1553,7 +1553,11 @@ class MasterDuelUiApp(object):
         names = [d.get('name') for d in (self.storage.list_meta_decks() or [])]
         fresh = new_deck_names(names, CN_CSV)
         if not fresh:
-            dlg.fetch_status.setText(tr('没有新卡组 —— 覆盖表已是最新'))
+            #: ★ 2026-10-12：没有新名字也要走补图 —— Q17 主抓取是 `--no-images`，
+            #: 新进库的站内卡组（大师一∪新卡口径那批）靠这一步拿卡图。
+            #: 原来直接 return：预填覆盖表后这条路必走 → 卡图永远缺（实测踩过）
+            dlg.fetch_status.setText(tr('没有新卡组 —— 顺手补缺失的卡图…'))
+            self._push_cover_table(dlg)
             return
         picker = NewDecksDialog(fresh, DeckImages(self.storage), parent=dlg)
         if picker.exec() != QDialog.Accepted:

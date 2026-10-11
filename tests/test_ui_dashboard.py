@@ -1876,8 +1876,8 @@ class DecksPageTest(unittest.TestCase):
         self.fetched = []
         self.csv = os.path.join(tempfile.mkdtemp(prefix='d3-tabs-'), 'cn.csv')
         deck_csv.write(self.csv, list(deck_csv.COLUMNS), [
-            ['Branded', '', '烙印', '烙印融合', '', '', ''],
-            ['Sky Striker', '', '闪刀姬', '闪刀', '', '', ''],
+            ['Branded', '烙印', '烙印融合', '', '', '', ''],
+            ['Sky Striker', '闪刀姬', '闪刀', '', '', '', ''],
         ])
         self.win = dashboard.DashboardWindow(
             loader=demo_stats_page,
@@ -1919,11 +1919,14 @@ class DecksPageTest(unittest.TestCase):
         self.win.set_decks_tab('nonsense')
         self.assertEqual(self.page.current_tab(), 'names')
 
-    def test_tab_remembered_in_settings(self):
-        """★ 页签记进 **`dash/decks_tab`**（新键）。"""
+    def test_tab_not_remembered_anymore(self):
+        """★ 2026-10-12 用户：卡组页打开**固定第一页**「卡组名管理」——
+        页签不再记忆（切页签也不写 QSettings；旧键的残留值作废）。"""
+        dashboard.settings().remove('dash/decks_tab')
         self.win.set_decks_tab('composition')
-        self.assertEqual(dashboard.settings().value('dash/decks_tab'),
-                         'composition')
+        self.assertEqual(self.win.current_decks_tab(), 'composition')
+        self.assertFalse(dashboard.settings().contains('dash/decks_tab'),
+                         '切页签不该再写 QSettings')
 
     def test_deck_name_memory_kept_separate(self):
         """★ 页签键**不能**顶掉「上次看哪副牌」那个键（计划 §2.3 的坑）。
@@ -2033,8 +2036,8 @@ class DeckManagerUnitTest(unittest.TestCase):
         self.mod = OppDeckManager
         self.csv = os.path.join(tempfile.mkdtemp(prefix='d3-mgr-'), 'cn.csv')
         deck_csv.write(self.csv, list(deck_csv.COLUMNS), [
-            ['Branded', '', '烙印', '烙印融合', '', '', ''],
-            ['Sky Striker', '', '闪刀姬', '闪刀', '', '', ''],
+            ['Branded', '烙印', '烙印融合', '', '', '', ''],
+            ['Sky Striker', '闪刀姬', '闪刀', '', '', '', ''],
         ])
 
     def _make(self, **kw):
@@ -2090,8 +2093,8 @@ class DeckManagerFeedbackTest(unittest.TestCase):
         self.mod = OppDeckManager
         self.csv = os.path.join(tempfile.mkdtemp(prefix='d3-fb-'), 'cn.csv')
         deck_csv.write(self.csv, list(deck_csv.COLUMNS), [
-            ['Branded', '', '烙印', 'ブランド', '烙印融合', 'Tier2', '', ''],
-            ['Sky Striker', '', '闪刀姬', '閃刀姫', '闪刀', 'Tier3', '', ''],
+            ['Branded', '烙印', 'ブランド', '烙印融合', 'Tier2', '', ''],
+            ['Sky Striker', '闪刀姬', '閃刀姫', '闪刀', 'Tier3', '', ''],
         ])
         self.mgr = OppDeckManager(
             csv_path=self.csv, runner_factory=lambda s, a: FakeRunner(s, a))
@@ -2105,7 +2108,7 @@ class DeckManagerFeedbackTest(unittest.TestCase):
         self.assertTrue(hasattr(self.mgr, 'header_row'))
         texts = [l.text() for l in self.mgr.header_row.findChildren(QLabel)]
         joined = ' '.join(texts)
-        for want in ('站内英文名', '中文名', '别名', '显示英文名'):
+        for want in ('站内英文名', '中文名', '别名', '日文名'):
             self.assertIn(want, joined, '表头缺「%s」' % want)
         # 长说明在 tooltip 里（表头字要短，否则会把列撑宽）
         tips = ' '.join(l.toolTip() for l in
@@ -2134,7 +2137,7 @@ class DeckManagerFeedbackTest(unittest.TestCase):
         #: 表头是**短标签**（长说明放 tooltip —— 长标签的 minimumSizeHint 会把
         #: 列撑宽几个像素，表头就与输入框错开了）
         pairs = [('中文名', row.cn), ('别名', row.alias),
-                 ('显示英文名', row.en)]
+                 ('日文名', row.jp)]
         for text, edit in pairs:
             lab = by_text.get(text)
             self.assertIsNotNone(lab, '表头缺 %r' % text)
@@ -2149,7 +2152,7 @@ class DeckManagerFeedbackTest(unittest.TestCase):
         from PySide6.QtGui import QFontMetrics
         from ui import opp_deck_manager as _mgr_mod
         row = self.mgr.rows_ui[0]
-        for edit in (row.cn, row.alias, row.en):
+        for edit in (row.cn, row.alias, row.jp):
             fm = QFontMetrics(edit.font())
             need = fm.height() + 2 * _mgr_mod.EDIT_PAD_V
             self.assertGreaterEqual(
@@ -2162,7 +2165,7 @@ class DeckManagerFeedbackTest(unittest.TestCase):
     def test_edit_style_does_not_set_font(self):
         """样式表里**不许写 font-**（`ui/widgets.py` 模块头硬规矩①）。"""
         row = self.mgr.rows_ui[0]
-        for edit in (row.cn, row.alias, row.en):
+        for edit in (row.cn, row.alias, row.jp):
             self.assertNotIn('font-', edit.styleSheet())
 
     def test_edit_style_is_tighter_than_global(self):
@@ -2678,7 +2681,7 @@ class DeckImageSetTest(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix='d3-img-')
         self.csv = os.path.join(self.tmp, 'cn.csv')
         deck_csv.write(self.csv, list(deck_csv.COLUMNS), [
-            ['Branded', '', '烙印', '', '', '', '', ''],
+            ['Branded', '烙印', '', '', '', '', ''],
         ])
         #: 存图指向**临时目录** —— 不许往真的 data/deck_images_custom/ 写
         self.imgdir = os.path.join(self.tmp, 'imgs')
@@ -2779,21 +2782,70 @@ class DeckImageSetTest(unittest.TestCase):
         names = [r.deck_name for r in mgr.custom_rows_ui]
         self.assertIn('狱神耀圣', names)
 
-    def test_custom_only_row_is_read_only(self):
-        """只读行**没有删除按钮**（删它要动 opp_decks / 已有标注），名字也不可改。"""
+    def test_custom_rows_are_full_editable_rows(self):
+        """自定义行与普通行**同格式**（2026-10-12 用户）—— 可编辑、有删除钮。
+
+        （2026-10-12 前是只读行：`assertFalse(hasattr(row, 'btn_del'))` ——
+        那个口径已被推翻。）
+        """
         mgr = self._make()
         row = mgr.custom_rows_ui[0]
-        self.assertFalse(hasattr(row, 'btn_del'))
-        self.assertFalse(hasattr(row, 'cn'))
+        self.assertIsInstance(row, self.odm_mod.OppDeckRow)
+        for attr in ('cn', 'alias', 'jp', 'hidden', 'btn_del'):
+            self.assertTrue(hasattr(row, attr), '缺 %s —— 不是同格式行' % attr)
+        self.assertEqual(row.cn.text(), '狱神耀圣')
 
-    def test_custom_only_rows_are_not_written_to_csv(self):
-        """只读行不参与保存 —— 存盘后 CSV 里**不该**多出这些名字。"""
+    def test_divider_between_site_and_custom(self):
+        """爬取的卡组与自定义卡组之间要有**分隔行**（2026-10-12 用户）。"""
+        deck_csv.write(self.csv, list(deck_csv.COLUMNS), [
+            ['狱神耀圣', '狱神耀圣', '', '', 'Tier3', '', ''],
+            ['Branded', '烙印', '', '', 'Tier2', '', ''],
+        ])
+
+        #: 分组判据 = 站内名单（Branded 站内有 -> 爬取；狱神耀圣没有 -> 自定义）
+        mgr = self.mod(csv_path=self.csv, site_names=['Branded'])
+        order = [deck_csv.get(i.csv_row, mgr.idx, '站内英文名')
+                 for i in mgr.rows_ui]
+        self.assertEqual(order, ['Branded', '狱神耀圣'],
+                         '站内行要排在自定义行前（CSV 里顺序是反的）')
+        lay = mgr.col
+
+        def _at(w):
+            return next(i for i in range(lay.count())
+                        if lay.itemAt(i).widget() is w)
+
+        self.assertTrue(_at(mgr.rows_ui[0]) < _at(mgr.custom_divider)
+                        < _at(mgr.rows_ui[1]), '分隔行要在两组中间')
+        self.assertTrue(mgr.custom_divider.isVisibleTo(mgr))
+
+    def test_site_names_with_slashes_and_aliases(self):
+        """带斜杠真名（D/D/D）与别名命中站内名的行都算**爬取组**（2026-10-12）。"""
+        deck_csv.write(self.csv, list(deck_csv.COLUMNS), [
+            ['D/D/D', 'DDD', '', '', '', '', ''],
+            ['Yummy Engine', '巳剑黯蜜', '', 'Mitsurugi Yummy', '', '', ''],
+            ['狱神耀圣', '狱神耀圣', '', '', '', '', ''],
+        ])
+        mgr = self.mod(csv_path=self.csv,
+                       site_names=['D/D/D', 'Mitsurugi Yummy'])
+        order = [deck_csv.get(i.csv_row, mgr.idx, '站内英文名')
+                 for i in mgr.rows_ui]
+        self.assertEqual(order, ['D/D/D', 'Yummy Engine', '狱神耀圣'],
+                         '站内两行（含别名命中的）在上，真自定义在下')
+
+    def test_divider_hidden_without_custom_rows(self):
+        """没有自定义行就不露分隔行。"""
+        mgr = self._make(site_names=['Branded'])   # 夹具只有 Branded（站内）
+        self.assertFalse(mgr.custom_divider.isVisibleTo(mgr))
+
+    def test_custom_rows_promoted_on_save(self):
+        """自定义行点「保存」**并进覆盖表**（转正；2026-10-12 同格式口径）。"""
         mgr = self._make()
         mgr.save()
         _h, rows = deck_csv.read(self.csv)
         idx = deck_csv.index_map(_h)
-        names = [deck_csv.get(r, idx, '站内英文名') for r in rows]
-        self.assertNotIn('狱神耀圣', names)
+        hit = [r for r in rows if deck_csv.get(r, idx, '站内英文名') == '狱神耀圣']
+        self.assertEqual(len(hit), 1)
+        self.assertEqual(deck_csv.get(hit[0], idx, '中文名'), '狱神耀圣')
 
     def test_rows_that_are_meta_aliases_are_not_duplicated(self):
         """`烙印` 这类（已在覆盖表里）不该再当自定义行列一遍。"""
@@ -2804,13 +2856,34 @@ class DeckImageSetTest(unittest.TestCase):
 
     def test_status_counts_readonly_rows(self):
         mgr = self._make()
-        self.assertIn('1 条不在覆盖表', mgr.status.text())
+        self.assertIn('1 条待保存进覆盖表', mgr.status.text())
 
     def test_search_filters_readonly_rows(self):
         mgr = self._make(custom_names=['狱神耀圣', '魔术师'])
         mgr.edit_search.setText('狱神')
         shown = [r.deck_name for r in mgr.custom_rows_ui if r.isVisibleTo(mgr)]
         self.assertEqual(shown, ['狱神耀圣'])
+
+    def test_save_promotes_custom_rows(self):
+        """点「保存」把自定义行并进覆盖表（转正）。"""
+        mgr = self._make(custom_names=['朋克'])
+        mgr.custom_rows_ui[0].alias.setText('punk')
+        mgr.save()
+        header, rows = deck_csv.read(mgr.csv_path)
+        idx = deck_csv.index_map(header)
+        hit = [r for r in rows if deck_csv.get(r, idx, '站内英文名') == '朋克']
+        self.assertEqual(len(hit), 1, '自定义行保存后要进覆盖表')
+        self.assertEqual(deck_csv.get(hit[0], idx, '别名'), 'punk')
+
+    def test_remove_custom_row_keeps_csv_clean(self):
+        """自定义行点删除 = 直接消失（还没进表，保存也不该出现）。"""
+        mgr = self._make(custom_names=['朋克'])
+        self.assertTrue(mgr._remove_custom_row(mgr.custom_rows_ui[0]))
+        mgr.save()
+        header, rows = deck_csv.read(mgr.csv_path)
+        idx = deck_csv.index_map(header)
+        self.assertNotIn('朋克',
+                         [deck_csv.get(r, idx, '站内英文名') for r in rows])
 
 
 

@@ -1445,6 +1445,24 @@ class TestOppDecks(Base):
         ])
 
 
+    def test_cross_stats_follow_opp_deck_rename(self):
+        """★ 对手分组跟随 opp_decks **当前名** —— 管理页改名后矩阵自动跟
+        （2026-10-12 用户：对局分析要跟卡组名管理关联）。旧快照名不再出现。"""
+        self._seed()
+        a = self.st.upsert_opp_deck('魔术师')
+        self.st.mark_opp_deck('m1', opp_deck_id=a, name='魔术师')
+        got0 = [opp for _my, opp, _n, _w, _l, _d in self.st.get_cross_stats()]
+        self.assertIn('魔术师', got0)
+        # 管理页改名 = UPDATE opp_decks.name（对局快照不动）
+        with self.st._open() as conn:
+            conn.execute('UPDATE opp_decks SET name=? WHERE opp_deck_id=?',
+                         ('Invoked', a))
+        got = [(opp, n) for _my, opp, n, _w, _l, _d
+               in self.st.get_cross_stats()]
+        self.assertIn(('Invoked', 1), got)
+        self.assertNotIn(('魔术师', 1), got, '改名后旧名不该再出现')
+
+
 class TestCrossStatsWentFirst(Base):
     """D2：`get_cross_stats` 的 ``went_first`` 三页签（None=综合 / True=先攻 / False=后攻）。
 

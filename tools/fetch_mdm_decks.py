@@ -340,6 +340,11 @@ def write_reference(payload, path=DEFAULT_OUT):
 
 
 def main(argv=None):
+    try:                                              # GBK 管道打 ✔ 会崩（2026-10-12）
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:                                # noqa: BLE001
+        pass
+
     ap = argparse.ArgumentParser(
         prog='fetch_mdm_decks.py',
         description='抓反推卡组的参照库（masterduelmeta 公开 API，手动按月跑）')
