@@ -455,11 +455,9 @@ def _prow(date, time, result, went_first, opp_player, turns,
         'rank_label_after': ranks.rank_label(*(rank_after or (None, None))),
         'rank_icon_before': ranks.icon_path((rank_before or (None,))[0]),
         'rank_icon_after': ranks.icon_path((rank_after or (None,))[0]),
-        'badge_numeral': ranks.numeral_text((rank_before or (None, None))[1],
-                                            (rank_before or (None, 0))[0])
+        'badge_numeral': ranks.numeral_text((rank_before or (None, None))[1])
         if (rank_before or (None,))[0] else '',
-        'badge_numeral_after': ranks.numeral_text((rank_after or (None, None))[1],
-                                                  (rank_after or (None, 0))[0])
+        'badge_numeral_after': ranks.numeral_text((rank_after or (None, None))[1])
         if (rank_after or (None,))[0] else '',
         'opp_deck': opp_deck, 'opp_known': bool(opp_deck),
         'opp_revealed_ids': None, 'opp_deck_id': None,

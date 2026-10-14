@@ -276,9 +276,9 @@ def _recent_row(m, nxt, decks, disp_name=None) -> dict:
                                      r_before[0], r_before[1])
     # 小段位的**罗马数字文字**（'III' 这种）—— 只有天梯才贴；
     # 巅峰/DC/活动没有小段位，给空串（界面就不画）。
-    badge_numeral = (R.numeral_text(r_before[1], r_before[0])
+    badge_numeral = (R.numeral_text(r_before[1])
                      if group == 'ranked' else '')
-    badge_numeral_after = (R.numeral_text(r_after[1], r_after[0])
+    badge_numeral_after = (R.numeral_text(r_after[1])
                            if (group == 'ranked' and r_after) else '')
     # ★ 巅峰积分（2026-09-28）：只作为 `peak_rate` 字段随行携带（悬浮窗**不消费**
     #    —— 用户二口径「悬浮窗只显示图标」）；看板战绩页的段位列用它画
@@ -841,8 +841,8 @@ def _page_row(m) -> dict:
         #: 段位格画的是这局**局后**的图标（没有局后就退回局前，见界面的取法）
         'rank_icon_after': ranks.icon_path(ra[0]) if ra[0] else None,
         #: 小段位罗马数字（与悬浮窗 `RankBadge` 同一套：升/掉段画局后那个）
-        'badge_numeral': ranks.numeral_text(rb[1], rb[0]) if rb[0] else '',
-        'badge_numeral_after': ranks.numeral_text(ra[1], ra[0]) if ra[0] else '',
+        'badge_numeral': ranks.numeral_text(rb[1]) if rb[0] else '',
+        'badge_numeral_after': ranks.numeral_text(ra[1]) if ra[0] else '',
         #: 段位「获取中」占位（收局后 120s 内的天梯局，探测还没落盘）
         'rank_pending': rank_pending(m.get('ended_at'), m.get('game_mode')),
         # ★ 巅峰积分（2026-09-28）：战绩页段位列的巅峰行画「巅峰图标 + 积分」

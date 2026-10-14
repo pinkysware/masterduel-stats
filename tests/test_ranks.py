@@ -110,32 +110,25 @@ if __name__ == '__main__':
     unittest.main()
 
 
-class DisplayRateTest(unittest.TestCase):
-    """段位显示换算（2026-10-03 用户：「以游戏内为准」）。
+class MasterDisplayTest(unittest.TestCase):
+    """大师段**显示 = 存储值**（2026-10-15 用户更正）。
 
-    实测样本（09-28）：大师段 rate 1 游戏显示 Ⅱ、rate 2 显示 Ⅲ ——
-    大师段显示 = 内部值 + 1；白金按内部值直显（5-2 = 游戏内白金 II）。
+    用户给的三局真值（库内 rate ↔ 游戏内）：遊城二十代 2→1 = Master 2→1、
+    Van Anh 3→2 = Master 3→2、AsuNa 4→3 = Master 4→3。
+    2026-10-03 那个「显示 = 内部值 + 1」的偏移基于看错的徽章读数，已删。
     """
 
-    def test_master_offset_plus_one(self):
+    def test_master_display_is_storage_value(self):
         from core import ranks
-        self.assertEqual(ranks.rank_label(7, 1), 'Master 2')
-        self.assertEqual(ranks.rank_label(7, 2), 'Master 3')
-        self.assertEqual(ranks.numeral_text(1, 7), 'II')
-        self.assertEqual(ranks.numeral_text(2, 7), 'III')
+        self.assertEqual(ranks.rank_label(7, 1), 'Master 1')
+        self.assertEqual(ranks.rank_label(7, 2), 'Master 2')
+        self.assertEqual(ranks.rank_label(7, 3), 'Master 3')
+        self.assertEqual(ranks.numeral_text(1), 'I')
+        self.assertEqual(ranks.numeral_text(2), 'II')
+        self.assertEqual(ranks.numeral_text(3), 'III')
 
     def test_other_ranks_unchanged(self):
         from core import ranks
         self.assertEqual(ranks.rank_label(5, 2), 'Platinum 2')   # 白金实证
         self.assertEqual(ranks.rank_label(6, 4), 'Diamond 4')
-        self.assertEqual(ranks.numeral_text(2, 5), 'II')
-
-    def test_master_top_capped_at_v(self):
-        from core import ranks
-        self.assertEqual(ranks.display_rate(7, 5), 5)
-        self.assertEqual(ranks.display_rate(7, 4), 5)
-
-    def test_garbage_passthrough(self):
-        from core import ranks
-        self.assertIsNone(ranks.display_rate(7, None))
-        self.assertEqual(ranks.display_rate(7, 'x'), 'x')
+        self.assertEqual(ranks.numeral_text(2), 'II')
