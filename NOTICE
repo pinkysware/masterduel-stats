@@ -8,8 +8,9 @@ NOTICE / 第三方素材与许可说明
   —— 《游戏王 Master Duel》卡绘，版权归 KONAMI；
   仅限个人学习用途，非商业；收到权利方通知即撤。
 * data/rank_icons/、data/mode_icons/、data/coin_icons/
-  —— 段位/模式图标取自 Untapped（untapped.gg）公开静态资源，版权归其权利方；
-  仅限个人学习用途，非商业；收到权利方通知即撤。
+  —— 段位/模式图标与先后攻硬币素材，取自《游戏王 Master Duel》游戏本体
+  （2026-09-15 起改用游戏内原版素材，此前一版曾取自第三方站点，已全部替换），
+  版权归 KONAMI；仅限个人学习用途，非商业；收到权利方通知即撤。
 * data/fonts/ —— Inter 字体，SIL Open Font License 1.1
   （许可全文见 data/fonts/OFL-Inter.txt）。
 * data/card_names.json、data/card_data.json —— 由 ygocdb（ygocdb.com）

@@ -20,6 +20,18 @@
 这条是**从真实升段样本反推的**，不是从第三方代码抄的；样本只有 3 条，记在心里。
 
 > 显示口径：跟参考图一致用**英文名** `Platinum 2`（untapped 的中文站也是显示英文名）。
+
+## 段内小段的**显示** = 存储值（2026-10-15 更正）
+
+库里 `my_rate_before=2` 那局，游戏里就是 `Master 2` —— **没有偏移**，
+`numeral_text` 直接按 1..5 给 I..V。
+
+⚠️ **曾经有过一个「大师段显示 = 内部值 + 1」的偏移，已删**（2026-10-03 加、
+2026-10-15 用户更正）。用户给的三局真值（库内 rate ↔ 游戏内）逐局吻合：
+`遊城二十代` 2→1 = Master 2→1、`Van Anh` 3→2 = Master 3→2、
+`AsuNa` 4→3 = Master 4→3。当初那条「样本」是 09-28 徽章读数**看错了一档**
+（同一条 09-28 的记录里，`core/rank_state.py` 一直把 rate 1 叫「大师 I（段内顶）」，
+本身就说明 rate 1 = 游戏内 Master I）。
 """
 from __future__ import annotations
 
@@ -28,14 +40,14 @@ from typing import Optional, Tuple
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-#: 段位图标目录（7 张 300×300 webp，带透明通道，共约 138 KB）
+#: 段位图标目录（7 张 300×300 webp，带透明通道）。
 #:
-#: ⚠️ **只到大段位，不做小段位**（用户 2026-09-14 口径）。
-#: 实测两家的图确实不一样：
-#:   * **untapped 的 `Master.webp`**（我们用的）—— 徽章上**没有序号**，就是大段位
-#:   * masterduelmeta 的 `master-1.webp` —— 徽章底部**画着罗马数字 `I`**，那是小段位
-#: 而 masterduelmeta 那边也没有完整的一套（`platinum-1..6` 全 403，`logos/` 目录里
-#: 只探到 `ratingfinalicon` / `rateIcon` / `master-1` 三个），所以**不换源**。
+#: ⚠️ **来源 = 游戏本体解包原版**（2026-09-15 起，见 `docs/素材解包说明.md`）：
+#:   `assets/.../prefabs/profile/rankicons/large/img_rankicon_01..07_l`（转 webp q95）。
+#:   此前一版取自 untapped 静态资源，**已全部替换** —— 别再照旧注释改回去。
+#:
+#: ⚠️ **只到大段位，不做小段位**（用户 2026-09-14 口径）—— 小段位罗马数字用**文字**画
+#: （`numeral_text()`），不引位图（`img_rankicon_tier1..5` 解出来了但缩放会糊，没用）。
 #:
 #: 但**文字标签里的小段位照常显示**（`Platinum 2` / 升段时 `Platinum 3 → Platinum 2`）——
 #: 用户说的是"小段位**图标**没必要"，不是不要小段位数字；参考图里也是带数字的。
@@ -67,24 +79,6 @@ def rank_name(rank: Optional[int]) -> Optional[str]:
         return None
 
 
-def display_rate(rank, rate):
-    """显示层的小段位换算（2026-10-03 用户：「**以游戏内为准**」）。
-
-    * **大师段（7）游戏内显示 = 内部值 + 1** —— 实测两样本（09-28）：
-      rate 1 游戏显示 Ⅱ、rate 2 显示 Ⅲ；白金按内部值直显（5-2 = 游戏内
-      白金 II，无差），所以这是**大师段专属偏移**。
-    * 上限封在 RATE_MAX（大师保护档 rate 5 → V；与 rate 4 同显是已知代价，
-      档位没样本前先这样）。
-    """
-    try:
-        r = int(rate)
-    except (TypeError, ValueError):
-        return rate
-    if int(rank or 0) == 7 and RATE_MIN <= r <= RATE_MAX:
-        return min(r + 1, RATE_MAX)
-    return r
-
-
 def rank_label(rank: Optional[int], rate: Optional[int] = None) -> str:
     """`(5, 2)` -> `'Platinum 2'`；`(5, None)` -> `'Platinum'`；认不出 -> `''`。
 
@@ -99,18 +93,15 @@ def rank_label(rank: Optional[int], rate: Optional[int] = None) -> str:
         return name
     if not (RATE_MIN <= r <= RATE_MAX):
         return name
-    return '%s %d' % (name, display_rate(rank, r))
+    return '%s %d' % (name, r)
 
 
 #: 小段位的**罗马数字**（`my_rate_before` 1..5 -> I..V）
 ROMAN = {1: 'I', 2: 'II', 3: 'III', 4: 'IV', 5: 'V'}
 
 
-def numeral_text(rate: Optional[int], rank: Optional[int] = None) -> str:
+def numeral_text(rate: Optional[int]) -> str:
     """小段位 -> 罗马数字**文字**（`3` -> `'III'`）；认不出返回 `''`。
-
-    ⚠️ 大师段走 :func:`display_rate` 的 +1 偏移（2026-10-03 以游戏内为准）——
-    徽章上的小档字也要跟游戏一致。
 
     ⚠️ **用文字，不要用图**（用户 2026-09-15 定）。
     游戏里是拿 `img_rankicon_tier1..5` 那几张 48×32 的蒙版叠在徽章上的，
@@ -122,7 +113,7 @@ def numeral_text(rate: Optional[int], rank: Optional[int] = None) -> str:
         n = int(rate)
     except (TypeError, ValueError):
         return ''
-    return ROMAN.get(display_rate(rank, n), '')
+    return ROMAN.get(n, '')
 
 
 def icon_path(rank: Optional[int]) -> Optional[str]:

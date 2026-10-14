@@ -1,5 +1,20 @@
 # -*- coding: utf-8 -*-
-"""下载 7 个段位图标到 `data/rank_icons/`（**手动跑，不做定时任务**）。
+"""⛔ **已弃用（2026-10-15）** —— 段位/模式图标已改用**游戏本体解包原版**，
+不再从任何第三方站点抓取。**别再跑本脚本的下载动作**：它会把
+`data/rank_icons/*.webp` 覆盖回旧来源（untapped 静态资源）。
+
+现状（真源说明见 `docs/素材解包说明.md` 与 `core/ranks.py` / `core/modes.py` 模块头）：
+
+    data/rank_icons/*.webp   7 个大段位  <- 游戏本体 img_rankicon_01..07_l
+    data/mode_icons/peak.webp           <- 游戏本体 img_rateicon_01_l
+    data/coin_icons/*.png               <- 游戏本体 duelcointoss
+
+保留本文件只为 `--list`（看现状）；下载路径已**主动拒绝**。
+如需重新导出游戏素材，走解包流程（AssetStudioMod），不要走这里。
+
+---
+
+以下为**旧说明（历史存档）**：下载 7 个段位图标到 `data/rank_icons/`。
 
 用法::
 
@@ -114,6 +129,12 @@ def main(argv=None) -> int:
             sz = os.path.getsize(p) if os.path.exists(p) else 0
             print('  %d  %-9s %s' % (r, n, ('%d bytes' % sz) if sz else '缺'))
         return 0
+
+    #: ⛔ 2026-10-15 弃用：图标已改用游戏本体解包原版，禁止再用本脚本覆盖。
+    print('⛔ 本脚本已弃用 —— 段位/模式图标改用**游戏本体解包原版**，')
+    print('   跑下载会把 data/rank_icons/ 覆盖回旧来源（untapped）。')
+    print('   现状请看 `--list`；要重导素材走解包流程（见 docs/素材解包说明.md）。')
+    return 2
 
     icons, blob = discover()
     print('chunk 里解析到段位图标: %s' % ', '.join(sorted(icons)))

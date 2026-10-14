@@ -7,21 +7,16 @@
 
 ## 图标从哪来
 
-来自 masterduelmeta 用的那个 CDN：
+**游戏本体解包原版**（2026-09-15 起，见 `docs/素材解包说明.md`）：
 
-    https://s3.duellinksmeta.com/mdm_img/content/logos/<名>.webp
+    assets/.../prefabs/profile/rankicons/large/img_rateicon_01_l  ->  peak.webp
 
-用户 2026-09-14 从浏览器网络面板里给出了真源（页面上是经 `wsrv.nl` 代理的，
-真源就是上面这个）。已落地的是**巅峰决斗**：
-
-    peak.webp   <- ratingfinalicon.webp（300×300，33 KB）
+⚠️ 文件名是 **`rate`icon**（不是 `rank`icon）—— 按 `img_rankicon` 过滤会漏掉它。
+此前一版取自第三方 CDN（masterduelmeta 的 s3），**已替换** —— 别再照旧注释改回去。
 
 ⚠️ **不要再找「天梯模式图标」了**（用户 2026-09-14 澄清）：天梯那一行的标识
 就是**该局的段位图标**（`core.ranks.icon_path`），不用单独一个模式图标。
 **一个「等级标识位」，天梯给段位图标、巅峰给巅峰图标** —— 见 :func:`badge`。
-
-（CDN 文件名是手工传的、没规律：累计试了 75+ 个词根×后缀组合全 403，
-所以本来也猜不出来。现在不需要了。）
 """
 from __future__ import annotations
 
