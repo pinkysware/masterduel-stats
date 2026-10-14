@@ -1147,20 +1147,62 @@ class MyDeckCellTest(unittest.TestCase):
 
 
 class ColumnWidthTest(unittest.TestCase):
-    """列宽只有一个来源（`column_widths`）；拖宽时**所有列按比例一起拉伸**。
+    """列宽只有一个来源（`column_widths`）。
 
-    ⚠️ 口径改过一次（2026-09-15）：第一版「只有对手卡组名吃弹性」被用户否掉，
-    原话「左右拉伸不能只拉伸卡组名，所有列一起拉伸」。
+    ⚠️ 口径改过三次，别再翻旧账：
+    2026-09-15「所有列一起拉伸」（用户否掉「只有卡组名吃弹性」）→
+    2026-10-04「窄列钉死、弹性给段位+对手卡组」→ 2026-10-05「五列全钉死」→
+    ★ **2026-10-14 定稿：前四列钉死，多余宽度全给「对手卡组」列**（用户原话
+    「悬浮窗拉长列宽没有显示长卡名卡组全名」）—— 只在传了 `opp_name_w` 时生效，
+    不传仍是各列基准宽（CLI / 无行数据那条路）。
     """
 
     def test_all_columns_fixed(self):
-        """★ 口径（2026-10-05 用户定稿）：五列全部钉死基准宽 —— 不追求长名
-        全显示，最小列宽贴着对手卡组字的右边；拉宽窗口不再分配给列。"""
+        """不传 `opp_name_w` 时五列全部基准宽（CLI / 无行数据那条路）。
+
+        ⚠️ 2026-10-14 起**悬浮窗不再走这条路** —— 它传 `opp_name_w`，最后一列
+        吃弹性（见 `test_widening_shows_the_full_deck_name`）。"""
         base = floating.min_columns_width() + 200
         a = floating.column_widths(base)
         b = floating.column_widths(base + 120)
         self.assertEqual(a, b, '列宽不该随窗口宽变')
         self.assertEqual(b, floating.column_widths(0), '任意宽度都是同一份基准')
+
+    def test_widening_shows_the_full_deck_name(self):
+        """★ 2026-10-14 用户口径：拉宽窗口 → **对手卡组列跟着变宽**，
+        把长卡组名显示全；前四列不动、也不超过名字实际需要的宽。"""
+        need = floating.opp_name_width([{'opp_deck': 'A Very Long Deck Name'}])
+        self.assertGreater(need, floating.COL_OPP_NAME,
+                           '长名不再被 64px 封顶（封顶了拖宽也没用）')
+        base = floating.available_for_cols(floating.window_width())
+        narrow = floating.column_widths(base, opp_name_w=need)
+        wide = floating.column_widths(base + 400, opp_name_w=need)
+        self.assertGreater(wide[4], narrow[4], '拉宽后最后一列必须变宽')
+        self.assertEqual(wide[:4], narrow[:4], '前四列不许跟着变')
+        # ⚠️ 2026-10-14 二次修正：**不再以「名字需要的宽」为上限**。
+        #    上一版设了 `min(left, need)` 的上限，实测后果是横拉窗口列宽
+        #    纹丝不动（262 -> 662 都是 103px），用户报「横拉还是没显示全」。
+        #    现在多出来的宽度**全给这一列**，名字长过窗口才省略。
+        self.assertAlmostEqual(wide[4], narrow[4] + 400, delta=2,
+                               msg='多出来的宽度全给对手卡组列')
+
+    def test_opp_column_never_overflows_available(self):
+        """放不下就省略 —— 列之和（含列间距）不许溢出可用宽。"""
+        need = floating.opp_name_width([{'opp_deck': 'X' * 60}])
+        avail = floating.available_for_cols(floating.window_width())
+        widths = floating.column_widths(avail, opp_name_w=need)
+        self.assertLessEqual(sum(widths) + (theme.S_SM - 2) * 4, avail)
+
+    def test_max_window_width_covers_the_longest_name(self):
+        """窗口上限必须够把最长名字显示全（否则拉到头也看不全）。"""
+        names = ['短名', 'A Very Long Deck Name Indeed']
+        cap = floating.max_window_width(names)
+        need = floating.opp_name_width([{'opp_deck': names[1]}])
+        widths = floating.column_widths(
+            floating.available_for_cols(cap, theme.SCROLL_W), opp_name_w=need)
+        self.assertGreaterEqual(
+            widths[4], floating.COL_OPP_THUMB + floating.OPP_GAP + need,
+            '窗口拉到上限时名字列必须放得下全名')
 
     def test_every_header_caption_fits_its_column(self):
         """★ 表头文字必须放得下 —— 「结果」曾经要 22px 只给 20px，被裁掉边（实测）。"""
@@ -1773,8 +1815,10 @@ class SizeLimitTest(unittest.TestCase):
         win.hide()
 
     def test_name_column_is_fixed_regardless_of_names(self):
-        """★ 口径（2026-10-05 用户）：**不追求长名全显示** —— 卡组名列恒为
-        `COL_OPP_NAME` 定宽省略（悬停看全名），名字池再长也不撑宽列。"""
+        """**不传 `opp_name_w`** 时卡组名列恒为基准宽（名字池再长也不撑宽列）。
+
+        ⚠️ 2026-10-05 的「不追求长名全显示」已被 2026-10-14 推翻：悬浮窗现在
+        传 `opp_name_w`，拉宽窗口就把长名显示全。"""
         names = ['短名', 'A Much Longer Deck Name Here']
         cap = floating.max_window_width(names)
         widths = floating.column_widths(

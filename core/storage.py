@@ -167,6 +167,16 @@ MODE_GROUP_BY_GAME_MODE = {
 
 #: 「全部模式」伪分类 —— 只给 CLI / 查询用，**不是** `mode_group()` 的返回值
 MODE_GROUP_ALL = 'all'
+
+#: 「全部模式」（UI 口径）的**四组并集** —— `mode_group_clause([])` 展开成它，
+#: 结果 == `duel_clause()`（天梯 + 巅峰 + DC + 各活动）。2026-10-14 加。
+MODE_SELECT_ALL = (MODE_GROUP_RANKED, MODE_GROUP_PEAK,
+                   MODE_GROUP_DC, MODE_GROUP_EVENT)
+
+#: 「一个模式都没选」哨兵（用户 2026-10-15：「全部高亮再点全部应该全部取消」）——
+#: 多选菜单里把「全部」也取消后就是这个态：**显示 0 场**。
+#: 与「空列表 = 全部模式」区分开 —— 空列表是「不筛模式」，哨兵是「筛掉全部」。
+MODE_SELECT_NONE = '__none__'
 MODE_SCOPE_COUNTED = 'counted'      # 主口径：只天梯 + 巅峰
 MODE_SCOPE_DUEL = 'duel'            # 界面口径：天梯 + 巅峰 + 各活动/杯赛
 
@@ -196,9 +206,30 @@ def mode_group_clause(group):
     * `'event'` -> ``game_mode NOT IN (<已分类的>) AND game_mode IS NOT NULL``
       （=「其余一切」，含每月新活动；**判不出模式的 NULL 不算** —— 与
       `mode_group(None) -> None` 的语义一致）
-    * `'all'` -> ``None``（不加模式条件 = 全部模式）
+    * `'all'` -> ``None``（**字面**「不加模式条件」= 不过滤，含判不出模式的残留行）
+    * ★ **列表 / 元组 / 集合**（2026-10-14 用户要求「像 Excel 那样打勾多选」）
+      -> 各项的**并集**（``OR``）。任一单项是 `'all'` -> ``None``（不过滤）。
+      **空列表 = 「全部模式」= :data:`MODE_SELECT_ALL` 四组并集**（= 界面口径
+      `duel_clause()`：天梯 + 巅峰 + DC + 各活动）—— 这不是「不过滤」，判不出模式的
+      残留行仍不算。⚠️ 2026-10-14 用户报「全部模式显示没有可统计的对局」的根因就是
+      空列表以前走 `None`（= 主口径只 3/19），他打的 DC 杯一条都看不到。
     * 其它值 -> 抛 `ValueError`：**绝不静默返回全量**（那会让人看到错数字还不知道）
     """
+    if isinstance(group, (list, tuple, set, frozenset)):
+        if MODE_SELECT_NONE in group:
+            return '0'                   # 「一个模式都没选」= 恒假（筛掉全部）
+        parts = []
+        for g in group:
+            clause = mode_group_clause(g)
+            if clause is None:
+                return None              # 含 'all' -> 不加条件
+            parts.append(clause)
+        if not parts:
+            #: 空列表 = 「全部模式」= 四组并集（= 界面口径）—— 见上面 docstring。
+            parts = [mode_group_clause(g) for g in MODE_SELECT_ALL]
+        return '(%s)' % ' OR '.join(parts)
+    if group == MODE_SELECT_NONE:
+        return '0'                       # 单值哨兵也认（恒假）
     if group == MODE_GROUP_ALL:
         return None
     known = sorted(MODE_GROUP_BY_GAME_MODE)

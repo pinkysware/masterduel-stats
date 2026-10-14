@@ -6,9 +6,11 @@
 收局链 final + EM + import 失败降级、--emit-state 默认关。
 """
 
+import ctypes
 import json
 import os
 import shutil
+import struct
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -19,9 +21,13 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJ)
 sys.path.insert(0, os.path.join(PROJ, 'tools'))
 
+from core.memread.il2cpp import TYPEINFO_STATIC_FIELDS_OFFSET   # noqa: E402
+from core.memread.process import SafeProcess                    # noqa: E402
 from tools.duel_collector import (                                   # noqa: E402
-    DuelCollector, Hooks, TypeinfoCache, dir_name_for, import_just_closed,
-    self_heal)
+    LOST_RECONNECT_AFTER, DuelCollector, Hooks, LostWatcher, TypeinfoCache,
+    dir_name_for, import_just_closed, sample_engine, self_heal,
+    write_heartbeat)
+from tools import duel_collector as dc                            # noqa: E402
 
 TS0 = '2026-09-13 12:00:00'
 TS1 = '2026-09-13 12:05:00'
@@ -274,6 +280,34 @@ class TestLifecycle(Base):
         self.assertEqual(self.manifest_of(dir_name_for(TS0))['logbase']['size'],
                          4)
         self.assertEqual(self.st.scan_calls, 1)             # 全程零扫描
+
+    def test_controller_new_instance_closes_old_match(self):
+        """★ 2026-10-14 两局合并事故：控制器换**新实例** -> 旧局收口、新局另起。
+
+        事故现场（20:09:08 那局 + 20:22:05 那局并成一局）：第一局结束时控制器
+        消失，但 `duel_end` **没触发**（两局之间 `in_duel` 一直是 True，
+        Engine 单例没消失）；第二局的控制器是**新实例** —— 旧代码三条件复用
+        没命中就继续写旧目录，于是对手名取第一局、回合数取第二局、露出卡混在
+        一起。现在换实例即收口。
+        """
+        # 第一局：找到控制器 -> 建目录
+        self.st.size = 3
+        self.st.state = mk_state(3)
+        self.c.observe(TS0, True, 3, now=1000.0)
+        self.assertIsNotNone(self.c.open_rec)
+        self.assertIsNotNone(self.c.open_rec.dir_path)
+
+        # 控制器消失（缓存作废）-> 下一拍返回**新实例**，三条件复用没命中
+        self.c.cache.invalidate()
+        self.st.scan_seq = [(OBJ, FL)]
+        self.st.reuse = None
+        self.st.size = 3
+        self.c.observe(TS1, True, 3, now=1200.0)
+
+        # 旧局已收口：open_rec 是**新局**的，目录还没建（留给下一拍）
+        self.assertIsNotNone(self.c.open_rec)
+        self.assertIsNone(self.c.open_rec.dir_path)
+        self.assertEqual(self.c.open_rec.first_seen_at, TS1)
 
     def test_reuses_open_dir_three_conditions(self):
         """§1.3：instance 相同 + open + size 单调 -> 复用目录不劈局。"""
@@ -706,6 +740,106 @@ class TestTypeinfoCache(unittest.TestCase):
         self.assertEqual(cache.get('YgomSystem.Utility', 'ClientWork'), 0x7B)
         self.assertEqual(calls, [('YgomSystem.Utility', 'ClientWork')])
         self.assertEqual(cache.misses, 1)
+
+
+class TestLostWatcher(unittest.TestCase):
+    """★ 2026-10-14 事故：内存定位失效必须能**自己发现**。
+
+    旧行为：`sample_engine` 把「读不到」当成「不在对局」，采集器静默漏局
+    （19:15 起漏了 1 局以上，日志毫无痕迹）。现在连续读不到 -> 重新 attach。
+    """
+
+    def test_false_never_counts(self):
+        """`False`（实例不在）**不算**读不到 —— 大厅里 Engine 本来就不存在，
+        拿它触发重连会让采集器每次回大厅都重扫一遍（10~27s）。"""
+        w = LostWatcher(threshold=3)
+        for _ in range(10):
+            self.assertEqual(w.feed(False), (False, 0))
+        self.assertEqual(w.streak, 0)
+
+    def test_true_resets_streak(self):
+        w = LostWatcher(threshold=3)
+        w.feed(None)
+        w.feed(None)
+        self.assertEqual(w.feed(True), (False, 0), '读到东西立刻清零')
+        self.assertEqual(w.streak, 0)
+
+    def test_triggers_at_threshold_then_restarts(self):
+        w = LostWatcher(threshold=3)
+        self.assertEqual(w.feed(None), (False, 1))
+        self.assertEqual(w.feed(None), (False, 2))
+        self.assertEqual(w.feed(None), (True, 0), '到阈值 -> 要求重连')
+        self.assertEqual(w.feed(None), (False, 1), '重连后从头计数')
+
+    def test_default_threshold_is_not_trigger_happy(self):
+        self.assertGreaterEqual(LOST_RECONNECT_AFTER, 10,
+                                '阈值太小会在正常瞬时读失败时乱重连')
+
+
+class TestSampleEngineStates(unittest.TestCase):
+    """★ 2026-10-14：「读不到」与「实例不在」必须分开。
+
+    用自进程造假 TypeInfo（与 `test_memread_il2cpp.TestStaticFields` 同法）。
+    """
+
+    class _RT(object):
+        pass
+
+    def _rt(self, sp, ti):
+        r = self._RT()
+        r.sp, r.engine_ti, r.mode_off, r.finished_off = sp, ti, 0, None
+        return r
+
+    def test_no_process_is_none(self):
+        self.assertEqual(sample_engine(self._rt(None, 0)), (None, None, None))
+
+    def test_instance_absent_is_false(self):
+        """槽位 0 -> ``(False, ...)``：读到了、只是不在对局（正常大厅状态）。"""
+        ti = ctypes.create_string_buffer(0x100)
+        static = ctypes.create_string_buffer(0x40)
+        struct.pack_into('<Q', ti, TYPEINFO_STATIC_FIELDS_OFFSET,
+                         ctypes.addressof(static))
+        struct.pack_into('<Q', static, 0x08, 0)
+        with SafeProcess(os.getpid()) as p:
+            self.assertEqual(sample_engine(self._rt(p, ctypes.addressof(ti))),
+                             (False, None, None))
+
+    def test_read_failure_is_none(self):
+        """★ 静态区读不到 -> ``(None, ...)`` —— 旧代码在这里误报 ``False``。"""
+        ti = ctypes.create_string_buffer(0x100)      # +0xB8 = 0，没有静态区
+        with SafeProcess(os.getpid()) as p:
+            self.assertEqual(sample_engine(self._rt(p, ctypes.addressof(ti))),
+                             (None, None, None))
+
+
+class TestHeartbeatState(unittest.TestCase):
+    """★ 2026-10-14：心跳三态 —— 旧版把 ``None``（读不到）和 ``False``
+    （实例不在）都写成 ``in_duel: false``，定位失效时看板显示「一切正常」，
+    是那次事故唯一的诊断盲点。"""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self._old = dc.HEARTBEAT_PATH
+        dc.HEARTBEAT_PATH = os.path.join(self.dir, 'hb.json')
+
+    def tearDown(self):
+        dc.HEARTBEAT_PATH = self._old
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_three_states(self):
+        for st in ('duel', 'idle', 'lost'):
+            write_heartbeat(state=st, game_pid=123)
+            with open(dc.HEARTBEAT_PATH, encoding='utf-8') as f:
+                d = json.load(f)
+            self.assertEqual(d['state'], st)
+            self.assertEqual(d['in_duel'], st == 'duel',
+                             'in_duel 保留给老消费方（= state == duel）')
+            self.assertEqual(d['game_pid'], 123)
+
+    def test_default_state_is_idle(self):
+        write_heartbeat()
+        with open(dc.HEARTBEAT_PATH, encoding='utf-8') as f:
+            self.assertEqual(json.load(f)['state'], 'idle')
 
 
 class TestDirName(unittest.TestCase):
@@ -1983,7 +2117,7 @@ class TestSingleInstanceGuard(unittest.TestCase):
 
 
 class TestToolsOnSysPath(unittest.TestCase):
-    """🔴 回归锁：`tools/` 必须在采集器的 `sys.path` 里（2026-10-10 实机事故）。
+    r"""🔴 回归锁：`tools/` 必须在采集器的 `sys.path` 里（2026-10-10 实机事故）。
 
     采集器里有三处 `import import_duel_records` / `import backfill_my_rank`
     （收局入库、段位补写、启动自愈），那些模块**与本脚本同目录**。

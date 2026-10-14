@@ -11,6 +11,7 @@
 打分口径（研究 §4.1 钉死，别改）::
 
     主排序 = 命中数（露出的卡里有几张在这个卡组的卡表内）
+    次排序 = **tier 表**（Tier1 > Tier2 > Tier3 > Trending > 榜外）—— 2026-10-14 用户拍板
     层内   = naive Bayes 总分  Σ log((per + ALPHA) / (100 + ALPHA))，卡表里没有 = 重罚
     置信度 = top1 卡表能解释的露出卡数 / 露出卡总数（按**名字组**去重后计数）
 
@@ -235,6 +236,15 @@ def known_deck_names():
         return set()
     names = set()
     for r in rows:
+        # ★ 2026-10-14 用户口径：**engine 条目不进反推候选** ——
+        #   站内把混轴叫 `Xxx Engine`，用户不用这个分类（见 AGENTS「engine 行
+        #   保留为隐藏条目：选择器 / 标注仍只见 deck_type」）。反推候选就是
+        #   选择器的内容，所以这里按 kind 剔掉。
+        #   实机起因：DC 杯露出 5 张（3 泛用 + 2 耀圣）时耀圣系 6 分支全部 5/5，
+        #   加了 tier 排序后 `Elfnote Engine`（Tier1）压住了用户要的「狱神耀圣」。
+        #   ⚠️ 只影响**反推候选**；Tier 表仍列出全部混轴（那是另一条路径）。
+        if str(r.get('kind') or '').strip() == 'engine':
+            continue
         for k in (r.get('name'), r.get('name_display'), r.get('name_cn')):
             k = str(k or '').strip()
             if k:
@@ -378,11 +388,60 @@ def guess_deck(revealed_ids, index, groups, prefill_tiers=PRE_FILL_TIERS):
     return cands
 
 
+#: tier -> 排序权重（**越大越优先**）。用户 2026-10-14 拍板：命中数相同时
+#: 按 tier 表排，``Tier1 > Tier2 > Tier3 > Trending > 榜外``。
+#:
+#: 为什么非加不可（2026-10-14 DC 杯实机）：露出卡少、且泛用卡占多数时，
+#: **同一体系的多个分支会全部同分** —— 实测露出 5 张（3 张泛用 + 2 张耀圣），
+#: 耀圣系 6 个分支全是 5/5、confidence 全 1.0。此时纯 bayes 会把**榜外的
+#: 混轴条目**顶到第一（`Elfnote White Forest` 卡表只有 69 张，命中卡的
+#: 使用率更集中 → bayes 更高），而用户口径是「优先榜上的主流卡组」。
+#:
+#: ⚠️ 试过但**没做**的口径（别再试）：「混轴条目缺轴证据就扣分」。数据不支持 ——
+#: 站内基础条目的卡表是**变体并集**（`Elfnote` 150 张已包含白森轴的卡），
+#: 混轴条目（`Elfnote White Forest` 69 张）反而是它的**真子集**，既没有
+#: 「全库唯一卡」（实测 0 张），也没有「相对基础条目的差集」可算。
+#: 命中数**容差**（2026-10-14 用户拍板）：差这么几张以内的命中数视为**同档**，
+#: 档内由 tier / bayes 决胜。
+#:
+#: 为什么需要：卡表大的条目会因为**多收泛用卡**而白捡命中 —— 实测幻影骑士团
+#: 那局 `Phantom Knights Orcust`（卡表 126 张）靠「多多迷宝・噗噜海月」
+#: 「绚岚之达象」两张 **per 仅 20%** 的泛用卡拿到 19 命中，压过
+#: `Phantom Knights`（卡表 47 张）的 18 命中 —— 而后者命中的是**本家卡**
+#: 「方解黑骑士」（per=88）。bayes 本来就把低 per 的命中罚得很重
+#: （-25.9 vs -10.2），是「命中数优先」把它盖住了。
+#: ⚠️ 但命中数**不能整个降权**（试过，错的）：实测会选出「只命中 3 张的
+#: Tier1 卡组」（Dracotail / Branded）压过命中 5/5 的正确答案 ——
+#: 所以只**吸收 1 张以内的噪声**，大差距仍然按命中数说话。
+HITS_TOLERANCE = 1
+
+#: **tier 说话的置信度门槛**（2026-10-14 用户实机第三条）：
+#: 只有置信度 >= 这个值时，tier 才排在 bayes 前面。
+#:
+#: 为什么：tier 是「主流度」，不是「匹配度」—— 它只在**候选之间分不出高下**时
+#: 才该当裁判（露出卡全被解释掉、hits 与 bayes 都咬得很紧）。一旦置信度低，
+#: 说明证据本身有区分度，此时按 bayes 才对。
+#: 实测反例（2026-10-14 22:12，用户报「对方不可能是烙印星辰」）：
+#:   `Dracotail` 3/5 bayes **-17.2** Tier1  vs  `Invoked` 3/5 bayes **-8.2** 榜外
+#:   —— 置信度 0.6，tier 优先把 Dracotail 顶到第一，而正确解是 Invoked。
+#: 反向案例（同日 17:57 耀圣局）：狱神耀圣与 Elfnote White Forest 都是 5/5、
+#:   置信度 1.0（都全解释）—— 此时必须靠 tier 选主流，否则榜外的混轴会赢。
+TIER_TRUST_CONF = 0.8
+
+TIER_RANK = {'Tier1': 4, 'Tier2': 3, 'Tier3': 2, 'Trending': 1}
+
+
+def tier_rank(tier):
+    """tier 字符串 -> 排序权重；榜外 / None / 未知一律 ``0``（沉到最后）。"""
+    return TIER_RANK.get(str(tier or '').strip(), 0)
+
+
 def sort_candidates(cands, mode='hits'):
     """排序（原地 + 返回同一列表）。
 
-    ``mode='hits'``（默认，用户口径）= 命中数优先、层内 bayes；
-    ``mode='bayes_per_hit'`` = 研究里的对照打分器（回测拿来对比用）。
+    ``mode='hits'``（默认，用户口径）= 命中数**分档**（差 1 张同档）→
+    **置信度 >= `TIER_TRUST_CONF` 时 tier 优先、否则 bayes 优先** → 精确命中数；
+    ``mode='bayes_per_hit'`` = 研究里的对照打分器（**回测对照组，保持原样别动**）。
     """
     # tiebreak 里的 `not c.get('shared')`：同分时**共用参照数据的独立条目
     # 排在站内原条目前面**（狱神耀圣 > 耀圣，2026-10-11 用户拍板）。
@@ -390,8 +449,17 @@ def sort_candidates(cands, mode='hits'):
         key = lambda c: (-(c['bayes'] / c['hits']) if c['hits'] else 1e9,  # noqa: E731
                          -c['hits'], not c.get('shared'), c['name'])
     else:
-        key = lambda c: (-c['hits'], -c['bayes'],                        # noqa: E731
-                         not c.get('shared'), c['name'])
+        # ★ 2026-10-14 用户拍板：命中数**分档**（差 HITS_TOLERANCE 张算同档）。
+        #   档内**看置信度**：高（都全解释）-> tier 选主流；低（证据有区分度）
+        #   -> bayes。见 TIER_TRUST_CONF / HITS_TOLERANCE 的注释。
+        bucket = HITS_TOLERANCE + 1
+
+        def key(c):
+            head = (-(c['hits'] // bucket),)
+            mid = ((-tier_rank(c.get('tier')), -c['bayes'])
+                   if (c.get('confidence') or 0.0) >= TIER_TRUST_CONF
+                   else (-c['bayes'], -tier_rank(c.get('tier'))))
+            return head + mid + (-c['hits'], not c.get('shared'), c['name'])
     cands.sort(key=key)
     return cands
 

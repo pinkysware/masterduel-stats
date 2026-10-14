@@ -254,11 +254,13 @@ def order_col_width() -> int:
 
 
 def opp_name_width(rows) -> int:
-    """对手卡组名列宽 = **当前可见名字里最宽的那个**（贴着字右边）。
+    """对手卡组名列**想要**的宽 = 当前可见名字里最宽的那个（贴着字右边）。
 
-    2026-10-05 用户：cn/ja 名字比英文短，定宽 64 右侧太空 —— 改按内容实测：
-    下限 40、上限 `COL_OPP_NAME`（长名到顶省略 + tooltip 全名）。
-    空表 = 上限（与旧行为一致）。
+    2026-10-05 用户：cn/ja 名字比英文短，定宽 64 右侧太空 —— 改按内容实测。
+    ★ 2026-10-14 用户改口径（**推翻** 10-05 的「上限 `COL_OPP_NAME`」）：
+      **不再封顶 64px** —— 拉宽窗口时这一列要跟着变宽、把长卡组名显示全。
+      放不下的兜底由 `column_widths()` 按**窗口可用宽**做（真放不下才省略 +
+      tooltip 全名）。空表 = 基准 `COL_OPP_NAME`（与旧行为一致）。
     """
     fm = body_fm()
     need = 0
@@ -268,7 +270,7 @@ def opp_name_width(rows) -> int:
             need = max(need, fm.horizontalAdvance(str(deck)))
     if not need:
         return COL_OPP_NAME
-    return max(40, min(need + 8, COL_OPP_NAME))
+    return max(40, need + 8)
 
 
 def opp_col_width() -> int:
@@ -286,14 +288,26 @@ def column_widths(avail_w: int, opp_name_w: Optional[int] = None) -> tuple:
     """`(卡组, 结果, 先/后, 段位, 对手卡组)` —— **表头与行都调这一个**。
 
     ⚠️ **口径演变**：2026-09-15「所有列一起拉伸」→ 2026-10-04「窄列钉死、
-    弹性给段位+对手卡组」→ **2026-10-05 定稿：五列全部钉死基准宽**（用户：
-    不追求长名全显示，最小列宽贴着对手卡组字的右边）—— 窗口最小宽 =
-    各列基准和；拉宽窗口多出的部分留在整行铺色的行背景上，不再分配给列。
+    弹性给段位+对手卡组」→ 2026-10-05「五列全部钉死基准宽」→
+    ★ **2026-10-14 定稿（用户改回来）**：**前四列钉死，多余宽度全给「对手卡组」
+    列** —— 拉宽窗口这一列就跟着变宽（**吃满可用宽**，不以名字宽度为上限），
+    名字长过窗口的部分才省略 + tooltip。
+
+    传 `opp_name_w`（= `opp_name_width(rows)`，见 `_relayout_columns`）时按新口径；
+    **不传**（CLI / 无行数据）→ 返回各列基准宽，与旧版逐字一致（单测锁着）。
     """
-    opp = max(COL_OPP, COL_OPP_THUMB + OPP_GAP
-              + (opp_name_w if opp_name_w else COL_OPP_NAME))
-    return (deck_col_width(), result_col_width(), order_col_width(),
-            badge_slot(), opp)
+    fixed = (deck_col_width(), result_col_width(), order_col_width(),
+             badge_slot())
+    if not opp_name_w:
+        return fixed + (opp_col_width(),)
+    gaps = (theme.S_SM - 2) * 4          # 4 个列间距（chrome_width 不含，见它）
+    left = int(avail_w) - sum(fixed) - gaps      # 剩给最后一列的
+    # ★ 2026-10-14 二次修正：**吃满可用宽**，不再以「名字需要的宽」为上限。
+    #   上一版设了 `min(left, need)` 的上限，实测后果是**横拉窗口列宽纹丝不动**
+    #   （名字宽 73px -> 上限 103px，窗口从 262 拉到 662 都是 103），用户报
+    #   「横拉悬浮窗卡组名还是没显示全」。现在窗口拉多宽、这一列就多宽 ——
+    #   名字长过窗口的部分才省略（`OppDeckCell.apply_width` 的 elide 兜底）。
+    return fixed + (max(COL_OPP, left),)
 
 
 def max_window_width(names) -> int:
@@ -302,18 +316,17 @@ def max_window_width(names) -> int:
     2026-09-15 用户定：左右最多拉到这里（三语卡组名都要算进去），再宽就是纯留白。
     名字池由 `core.ui_state.deck_name_pool()` 提供；空表就退回默认下限。
 
-    ⚠️ 不能简单地「下限 + 名字差值」—— 列宽是**等比放大**的（见 `column_widths`），
-    卡组名列只拿到自己那一份。这里按比例反解需要的可用宽。
+    ★ 2026-10-14：口径改成「多余宽度全给对手卡组列」（见 `column_widths`）后，
+      上限 = **前四列基准 + 列间距 + 该列名字实际需要的宽** —— 拉到这里名字就
+      全显示，再宽是留白。（旧的「等比放大反解」随 10-05 口径一起作废。）
     """
-    import math
-
     fm = body_fm()
     need = max([fm.horizontalAdvance(str(n)) for n in names if n]
                or [COL_OPP_NAME])
-    total_base = min_columns_width()
-    need_col = need + COL_OPP_THUMB + OPP_GAP        # 卡组名列整格要这么宽
-    room = int(math.ceil(need_col * total_base / opp_col_width()))
-    avail = room + (theme.S_SM - 2) * 4
+    fixed = (deck_col_width() + result_col_width() + order_col_width()
+             + badge_slot())
+    gaps = (theme.S_SM - 2) * 4
+    avail = fixed + gaps + max(COL_OPP_THUMB + OPP_GAP + need + 8, COL_OPP)
     return max(window_width(), chrome_width() + theme.SCROLL_W + avail)
 
 

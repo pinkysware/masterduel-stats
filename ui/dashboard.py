@@ -39,7 +39,9 @@ from ui.export_page import ExportPage      # 导出页（D4c：左栏独立一�
 from ui.i18n import tr                     # 界面骨架三语（2026-10-03 本地化）
 from ui.script_page import SCRIPT_COMMANDS, exit_note    # 工具命令表 + 退出码翻译
 from ui.script_runner import ScriptRunner               # 概览页兜底 factory
-from core.storage import MODE_GROUP_NAMES   # 模式筛选的四个名字（唯一来源）
+from core.storage import MODE_GROUP_NAMES
+from ui.mode_filter import (ModeFilterButton, as_keys,       # noqa: E402
+                            dump_setting, label_for, parse_setting)   # 模式筛选的四个名字（唯一来源）
 from ui import theme, widgets
 from ui.floating import (COIN_BACK, COIN_FRONT, COIN_SIZE,
                          RESIZE_MARGIN, WindowButton, cursor_for)
@@ -1404,6 +1406,7 @@ class StatsPage(QWidget):
         d = self._data
         for month, card in self._heat_cards.items():
             card.set_selected(month == d.get('month'))
+        self._detach_mode_btn()
         while self.col.count() > 1:            # 第 0 个 = 热力图块，保留
             item = self.col.takeAt(1)
             w = item.widget()
@@ -1421,7 +1424,17 @@ class StatsPage(QWidget):
         for w in self.host.findChildren(QWidget):
             w.setMouseTracking(True)
 
+    def _detach_mode_btn(self) -> None:
+        """把模式筛选按钮**挪出待删子树**再清空 —— 实时刷新时菜单正开着，
+        按钮若被 `deleteLater` 会连带销毁菜单（勾一半就断）。挪到 page 上当
+        临时子控件（不删），重建时再由 `_block_overview` 收回去。
+        """
+        btn = getattr(self, '_mode_btn', None)
+        if btn is not None:
+            btn.setParent(self)
+
     def _clear(self):
+        self._detach_mode_btn()
         while self.col.count():
             item = self.col.takeAt(0)
             w = item.widget()
@@ -1433,8 +1446,7 @@ class StatsPage(QWidget):
     def _rebuild(self) -> None:
         self._clear()
         d = self._data
-        if getattr(self, '_mode_btn', None) is not None:
-            self._mode_btn.setText('%s ▾' % self._mode_label(d.get('mode_group')))
+        #: 模式按钮的文字**它自己管**（勾选态是唯一来源）—— 这里别再 `setText` 覆盖。
         self._heat_cards = {}
         self.blocks = {
             'heat': self._block_heat(d.get('daily') or {}, list(d.get('months') or []),
@@ -1450,37 +1462,24 @@ class StatsPage(QWidget):
             w.setMouseTracking(True)
 
     # ------------------------------------------------- 模式筛选（七轮）
-    def _mode_label(self, key) -> str:
-        """模式 key → 显示名（``None`` = 全部模式）。"""
-        for k, name in self.MODE_FILTERS:
-            if k == key:
-                return tr(name)
-        return tr('全部模式')
+    def _mode_label(self, keys) -> str:
+        """勾选列表 → 显示名（空 = 全部模式）。★ 2026-10-14 起是**列表**。"""
+        return label_for(keys)
 
     def _mode_filter_button(self) -> QPushButton:
-        """「全部模式 ▾」按钮 —— Untapped 同款：文字 + 下拉箭头，点开单选菜单。"""
-        btn = QPushButton('%s ▾' % self._mode_label(self._data.get('mode_group')))
-        btn.setObjectName('modeFilter')
-        btn.setFont(widgets.font(theme.PAGE_F_SMALL))
-        btn.setFixedHeight(btn.fontMetrics().height() + 10)
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.clicked.connect(lambda: self._show_mode_menu(btn))
-        self._mode_btn = btn
-        return btn
+        """「全部模式 ▾」—— **可打勾的多选**（Excel 式，2026-10-14 用户要求）。
 
-    def _show_mode_menu(self, btn) -> None:
-        """单选菜单（`QActionGroup` 互斥 + checkable，Untapped 的圆点单选同语义）。"""
-        menu = QMenu(btn)
-        group = QActionGroup(menu)
-        group.setExclusive(True)
-        current = self._data.get('mode_group')
-        for key, name in self.MODE_FILTERS:
-            act = menu.addAction(tr(name))
-            act.setCheckable(True)
-            act.setChecked(key == current)
-            group.addAction(act)
-            act.triggered.connect(lambda _c=False, k=key: self.mode_selected.emit(k))
-        menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
+        ⚠️ 口径：勾选项**只影响本页（战绩）** —— 对局分析有它自己的一份
+        （用户 2026-10-14：「对局分析和战绩页各自独立筛选」）。
+        """
+        btn = getattr(self, '_mode_btn', None)
+        if btn is None:
+            btn = ModeFilterButton()
+            #: ★ 实时刷新：勾一下就发（用户 2026-10-15：「选完立刻刷新」）
+            btn.changed.connect(self.mode_selected.emit)
+            self._mode_btn = btn
+        btn.set_selected(self._data.get('mode_group'))
+        return btn
 
     # ------------------------------------------------------------ ① 热力图
     def _heat_legend(self) -> QWidget:
@@ -1820,8 +1819,12 @@ class DashboardWindow(QWidget):
         from ui.floating import md_app_icon
         self.setWindowIcon(md_app_icon())
         self.setMinimumSize(MIN_W, MIN_H)
-        #: 模式筛选（None = 全部）—— 记在 QSettings（`dash/mode_filter`）
-        self._mode_group = settings().value('dash/mode_filter') or None
+        #: 模式筛选 —— **勾选的分类列表**（**空列表 = 全部模式**）。2026-10-14
+        #: 从单值改成列表。⚠️ **别把它归一化成 None** —— 数据层里 `None` 是各页的
+        #: 历史默认（分析页 = 主口径只 3/19），而 `[]` 才是「全部模式」= 四组并集。
+        #: 一度加过 `if not ...: = None`，等于把「全部」偷换回主口径，用户打的
+        #: DC 杯一条都看不到（2026-10-14 实报）。
+        self._mode_group = parse_setting(settings().value('dash/mode_filter'))
         #: 战绩页看的月（``None`` = 本月）—— **不落 QSettings**：用户 2026-10-01
         #: 拍板「重开看板回本月」，只有热力图点月卡才临时切
         self._stats_month = None
@@ -1835,7 +1838,11 @@ class DashboardWindow(QWidget):
         self._went_first = ((True if _raw == '1' else False) if _raw else None)
         #: 分析页筛选器（v5）：日期按月 / 模式四类（不做段位筛选，用户拍板）
         self._analysis_month = settings().value('dash/analysis_month') or None
-        self._analysis_mode = settings().value('dash/analysis_mode') or None
+        #: 对局分析页**自己**的模式筛选（同样列表；两页独立，用户 2026-10-14）。
+        #: ⚠️ 同上去掉 None 归一 —— 空列表 = 全部模式（用户报「对局分析没有勾」
+        #: 时看到的就该是全部对局，不是主口径那 0 场）。
+        self._analysis_mode = parse_setting(
+            settings().value('dash/analysis_mode'))
         self._drag_from = None
         self._resizing = False
         self._cursor_shape = None
@@ -2378,23 +2385,29 @@ class DashboardWindow(QWidget):
         settings().setValue('dash/analysis_month', ym or '')
         self._reload_analysis()
 
-    def set_analysis_mode(self, key) -> None:
-        """分析页模式筛选变了（MODE_GROUPS key / None=全部，v5）→ 记住 + 重取。"""
-        key = key or None
-        if key == self._analysis_mode:
+    def set_analysis_mode(self, keys) -> None:
+        """分析页模式筛选变了（**勾选列表**，空 = 全部）→ 记住 + 重取分析页。"""
+        keys = as_keys(keys)          # ⚠️ 别用 list(str) —— 会把 'ranked' 拆成字符
+        if sorted(keys) == sorted(self._analysis_mode):
             return
-        self._analysis_mode = key
-        settings().setValue('dash/analysis_mode', key or '')
+        self._analysis_mode = keys
+        settings().setValue('dash/analysis_mode', dump_setting(keys))
         self._reload_analysis()
 
-    def set_mode_group(self, key) -> None:
-        """模式筛选变了（StatsPage 的下拉）→ 记住 + 重取数据。"""
-        key = key or None
-        if key == self._mode_group:
+    def set_mode_group(self, keys) -> None:
+        """战绩页模式筛选变了（**勾选列表**，空 = 全部）→ 记住 + 重取。
+
+        ⚠️ 只重取战绩页（`_reload_stats()`）—— 分析页有自己的筛选，不跟着动
+        （用户 2026-10-14 明确「各自独立筛选」）。
+        """
+        keys = as_keys(keys)          # ⚠️ 同上
+        if sorted(keys) == sorted(self._mode_group):
             return
-        self._mode_group = key
-        settings().setValue('dash/mode_filter', key or '')
-        self.reload()
+        self._mode_group = keys
+        settings().setValue('dash/mode_filter', dump_setting(keys))
+        #: ★ 实时刷新（用户 2026-10-15）：勾一下立刻重取 —— 用**单页**快路径
+        #: （同 `set_stats_month`）；全量 `reload()` 每勾一下要跑 7 个 loader，卡。
+        self._reload_stats()
 
     def set_stats_month(self, ym) -> None:
         """热力图月卡被点（``'YYYY-MM'``）→ 战绩页切到那个月 + 重取。

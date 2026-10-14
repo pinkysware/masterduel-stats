@@ -467,6 +467,37 @@ def read_static_value(proc: 'SafeProcess', typeinfo: int, offset: int,
         return None
 
 
+def read_singleton_slot(proc: 'SafeProcess', typeinfo: int,
+                        slot: int = 0x08):
+    """读单例槽位 -> ``(对象地址, 读成功没)``。**区分「读不到」与「没有实例」**。
+
+    ★ 2026-10-14 实机事故催生：`find_singleton` 把「内存读取失败」（静态区
+    基址失效 / ReadProcessMemory 报错）和「槽位就是 0」（实例真的还没建）
+    **都返回 0**。采集器据此判「不在对局」，于是**定位失效时静默漏局**
+    （2026-10-14 19:15 起漏了 1 局以上，日志里毫无痕迹）。
+
+    返回三态：
+
+    * ``(0, False)`` —— **读不到**（读取失败）→ 调用方该考虑重新 attach；
+    * ``(0, True)`` —— 读到了，槽位就是 0（如大厅里 `Duel.Engine` 还没建）；
+    * ``(addr, True)`` —— 对象地址（已过对象头校验）。
+    """
+    try:
+        raw = read_static_value(proc, typeinfo, slot, 8)
+    except Exception:                                        # noqa: BLE001
+        return 0, False
+    if not raw or len(raw) < 8:
+        return 0, False
+    obj = struct.unpack_from('<Q', raw, 0)[0]
+    if not obj:
+        return 0, True                       # 读到了，就是没有实例
+    try:
+        head = proc.read_ptr(obj)
+    except Exception:                                        # noqa: BLE001
+        return 0, False                      # 指针读不动 = 读不到
+    return (obj, True) if head == typeinfo else (0, True)
+
+
 def find_singleton(proc: 'SafeProcess', typeinfo: int,
                    slot: int = 0x08) -> int:
     """拿一个类的单例对象（读静态区里那个指向本类对象的槽位）。
@@ -479,17 +510,10 @@ def find_singleton(proc: 'SafeProcess', typeinfo: int,
     读出来会**校验对象头**：``*(obj + 0)`` 必须等于 ``typeinfo``，
     防止读到一个野指针就当宝贝用。
 
+    ⚠️ **返回 0 有两种含义**（「读不到」与「没有实例」）—— 需要区分时用
+    :func:`read_singleton_slot`（2026-10-14 起）。
+
     :param slot: 单例字段在静态区里的字节偏移（默认 0x08，实测最常见）
-    :return: 对象地址；还没建实例 / 校验不过时是 0
+    :return: 对象地址；还没建实例 / 读不到 / 校验不过时是 0
     """
-    raw = read_static_value(proc, typeinfo, slot, 8)
-    if not raw or len(raw) < 8:
-        return 0
-    obj = struct.unpack_from('<Q', raw, 0)[0]
-    if not obj:
-        return 0
-    try:
-        head = proc.read_ptr(obj)
-    except Exception:
-        return 0
-    return obj if head == typeinfo else 0
+    return read_singleton_slot(proc, typeinfo, slot)[0]

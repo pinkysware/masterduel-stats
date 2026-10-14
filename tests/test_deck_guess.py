@@ -110,12 +110,64 @@ class TestScoring(unittest.TestCase):
         }), GROUPS)
 
     def test_hits_primary_and_bayes_layer(self):
-        # 露出 5 张：3 张落在大卡表、2 张落在小卡表
+        """命中数**分档**（差 HITS_TOLERANCE 张算同档）→ tier → bayes → 命中数。
+
+        ⚠️ 2026-10-14 口径变更：原来是「命中数优先」（3 > 2 就赢），但那让
+        **卡表大的条目靠多收泛用卡白捡 1 张**就压过命中本家卡的条目
+        （实测幻影骑士团那局：Orcust 19 > PK 18，多的是 per=20 的泛用卡）。
+        现在差 1 张算同档，由 tier/bayes 决胜。
+        """
+        # 露出 5 张：3 张落在大卡表、2 张落在小卡表（差 1 张 = 同档）
         cands = dg.guess_deck([10, 11, 12, 20, 21], self.idx(), GROUPS)
-        self.assertEqual([c['name'] for c in cands], ['大卡表', '小卡表'],
-                         '命中数优先（3 > 2）')
-        self.assertEqual(cands[0]['hits'], 3)
-        self.assertEqual(cands[1]['hits'], 2)
+        self.assertEqual([c['name'] for c in cands], ['小卡表', '大卡表'],
+                         '差 1 张同档 -> tier 决定（小卡表 Tier1 > 大卡表 Tier3）')
+        self.assertEqual(cands[0]['hits'], 2)
+        self.assertEqual(cands[1]['hits'], 3)
+
+    def test_hit_gap_of_two_still_wins(self):
+        """差 >= 2 张 -> 命中多的赢（tier 再高也不许反超）。"""
+        idx = dg.build_index(ref({
+            'Tier1少命中': deck('Tier1', 5, {**GENERIC, 30: 90}),
+            'Tier3多命中': deck('Tier3', 5, {**GENERIC, 10: 90, 11: 90,
+                                             12: 90, 13: 90}),
+        }), GROUPS)
+        cands = dg.guess_deck([1, 2, 10, 11, 12, 13], idx, GROUPS)
+        self.assertEqual(cands[0]['name'], 'Tier3多命中',
+                         '命中 6 > 2，跨档了')
+
+    def test_tier_needs_high_confidence(self):
+        """★ 2026-10-14 实机反例：**低置信度时 bayes 压过 tier**。
+
+        现场（22:12，用户报「对方不可能是烙印星辰」）：
+        `Dracotail` 3/5 bayes -17.2 Tier1  vs  `Invoked` 3/5 bayes -8.2 榜外 ——
+        tier 优先把 Dracotail 顶到第一，而正确解是 Invoked（阿莱斯特）。
+        """
+        idx = dg.build_index(ref({
+            'Tier1弱证据': deck('Tier1', 5, {**GENERIC, 10: 20}),
+            '榜外强证据': deck(None, 5, {**GENERIC, 20: 90}),
+        }), GROUPS)
+        cands = dg.guess_deck([1, 2, 10, 20, 999999], idx, GROUPS)
+        self.assertEqual(cands[0]['hits'], cands[1]['hits'], '先保证命中数同档')
+        self.assertLess(cands[0]['confidence'], dg.TIER_TRUST_CONF)
+        self.assertEqual(cands[0]['name'], '榜外强证据',
+                         '低置信度 -> bayes 说话，tier 不许反超')
+
+    def test_tier_wins_when_all_candidates_fully_explain(self):
+        """★ 高置信度（都全解释、分不出高下）时 tier 选主流 —— 耀圣局的口径。"""
+        idx = dg.build_index(ref({
+            '榜外混轴': deck(None, 5, GENERIC),
+            'Tier2主流': deck('Tier2', 5, GENERIC),
+        }), GROUPS)
+        cands = dg.guess_deck([1, 2, 3, 4, 5], idx, GROUPS)
+        self.assertEqual(cands[0]['confidence'], 1.0)
+        self.assertEqual(cands[0]['name'], 'Tier2主流', 'conf 1.0 -> tier 说话')
+
+    def test_tier_trust_conf_value(self):
+        self.assertEqual(dg.TIER_TRUST_CONF, 0.8)
+
+    def test_hits_tolerance_is_one(self):
+        self.assertEqual(dg.HITS_TOLERANCE, 1,
+                         '容差大于 1 会让 3 张的差距也算同档（太宽）')
 
     def test_bayes_is_plain_sum_without_div_n(self):
         """打分必须是纯 bayes 总分 —— 除以命中数的话数值会变，这里钉死公式。"""
@@ -146,6 +198,54 @@ class TestScoring(unittest.TestCase):
         cands = dg.guess_deck([10, 20, 999999], self.idx(), GROUPS)
         dg.sort_candidates(cands, mode='bayes_per_hit')
         self.assertEqual(len(cands), 2)
+
+
+class TestTierPriority(unittest.TestCase):
+    """命中数相同时按 tier 表排（2026-10-14 用户拍板）。
+
+    实机背景（2026-10-14 DC 杯 17:57 TOPCLEARMIND）：露出 5 张里 3 张是泛用卡，
+    耀圣系 6 个分支**全部 5/5、confidence 全 1.0**，纯 bayes 会把**榜外的**
+    混轴条目（`Elfnote White Forest`）顶到第一 —— 用户口径是优先榜上的主流卡组。
+    """
+
+    def test_higher_tier_wins_on_equal_hits(self):
+        idx = dg.build_index(ref({
+            '榜外混轴': deck(None, 5, GENERIC),
+            'Tier3混轴': deck('Tier3', 5, GENERIC),
+            'Tier1纯轴': deck('Tier1', 5, GENERIC),
+        }), GROUPS)
+        cands = dg.guess_deck([1, 2, 3, 4, 5], idx, GROUPS)
+        self.assertEqual([c['name'] for c in cands],
+                         ['Tier1纯轴', 'Tier3混轴', '榜外混轴'],
+                         '命中数相同时 tier 高的排前，榜外沉底')
+
+    def test_hits_still_outrank_tier(self):
+        """tier 只在**命中数相同**时起作用 —— 不许盖过命中数。"""
+        idx = dg.build_index(ref({
+            'Tier1少命中': deck('Tier1', 5, {**GENERIC, 30: 90}),
+            'Tier3多命中': deck('Tier3', 5, {**GENERIC, 10: 90, 11: 90}),
+        }), GROUPS)
+        cands = dg.guess_deck([1, 2, 10, 11], idx, GROUPS)
+        self.assertEqual(cands[0]['name'], 'Tier3多命中',
+                         '命中 4 > 2，tier 再高也不许反超')
+
+    def test_tier_rank_helper(self):
+        self.assertGreater(dg.tier_rank('Tier1'), dg.tier_rank('Tier2'))
+        self.assertGreater(dg.tier_rank('Tier2'), dg.tier_rank('Tier3'))
+        self.assertGreater(dg.tier_rank('Tier3'), dg.tier_rank('Trending'))
+        self.assertEqual(dg.tier_rank('Trending'), 1)
+        for off in (None, '', 'Unknown', 'unlisted'):
+            self.assertEqual(dg.tier_rank(off), 0, '榜外 / 未知一律沉底')
+
+    def test_bayes_per_hit_mode_unchanged(self):
+        """研究对照组不许跟着变（回测要能对比）。"""
+        idx = dg.build_index(ref({'A': deck('Tier3', 5, {**GENERIC, 10: 90}),
+                                  'B': deck('Tier1', 5, {**GENERIC, 10: 40})}),
+                             GROUPS)
+        cands = dg.guess_deck([1, 2, 10], idx, GROUPS)
+        dg.sort_candidates(cands, mode='bayes_per_hit')
+        self.assertEqual([c['name'] for c in cands], ['A', 'B'],
+                         'bayes_per_hit 仍是纯 bayes，不看 tier')
 
 
 class TestGate(unittest.TestCase):

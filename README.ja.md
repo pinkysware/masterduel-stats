@@ -40,6 +40,9 @@
   自作デッキ（Tier リストに無いもの）にも画像と検索が効きます。
 - **参照データの更新を UI から**：ダッシュボード「設定 → データツール →
   参照ライブラリ更新」で OK。コマンドは不要です。
+- **モードの複数選択フィルター**：対戦ページと分析ページの両方で、モード
+  （ランク / レーティング / DC カップ / イベント）を Excel のように
+  チェックで選べます。2 ページは独立しており、チェックすると即座に反映されます。
 
 ## インストールと起動
 
@@ -47,8 +50,8 @@
 
 | アセット | サイズ | 必要なもの |
 |---|---|---|
-| `masterduel-stats-v1.0.1-win64-full.zip` | 約194 MB | **不要** —— Python と全依存を同梱。解凍して `MDStats.exe` を実行するだけ |
-| `masterduel-stats-v1.0.1-win64-lite.zip` | 約5 MB | Python 3.13 のインストールが必要。初回の `MDStats.exe` が依存関係を自動インストール |
+| `masterduel-stats-v1.0.6-win64-full.zip` | 約194 MB | **不要** —— Python と全依存を同梱。解凍して `MDStats.exe` を実行するだけ |
+| `masterduel-stats-v1.0.6-win64-lite.zip` | 約5 MB | Python 3.13 のインストールが必要。初回の `MDStats.exe` が依存関係を自動インストール |
 | Source code (zip / tar.gz) | 自動 | 開発者向け。各 tag に GitHub が自動添付 |
 
 **一番手軽な方法**：[Python 3.13](https://www.python.org/downloads/) を

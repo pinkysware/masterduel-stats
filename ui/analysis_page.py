@@ -168,14 +168,17 @@ class MatrixCell(QWidget):
 
 
 class CornerHeader(QWidget):
-    """矩阵**左上角的对角线标注格**（v4，用户 2026-09-19 拍板）：
+    """矩阵**左上角的对角线标注格**（v4，2026-09-19；2026-10-15 用户调换两标签）。
 
-    右上「我方卡组」沿列头方向、左下「对手卡组」沿行头方向，对角线分两轴 ——
-    Untapped 对阵表同款。
+    右上「我方卡组」沿列头方向；**左下 = 当前页签名**（综合胜率 / 先攻胜率 /
+    后攻胜率）—— 用户 2026-10-15：「把对手卡组和综合胜率（先攻/后攻胜率）交换」，
+    于是「对手卡组」搬到下面那行的行首（贴着对手行更清楚），页签名落到角格里。
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, scope_label=None, parent=None):
         super().__init__(parent)
+        #: 左下文字 = 当前页签名（`综合胜率` / `先攻胜率` / `后攻胜率`）
+        self._scope = scope_label or tr('综合胜率')
         self.setMinimumSize(HEAD_W, HEAD_H)
 
     def paintEvent(self, ev):                                   # noqa: N802
@@ -189,7 +192,7 @@ class CornerHeader(QWidget):
         p.drawText(QRectF(0, 0, w - 6, h * 0.55),
                    Qt.AlignRight | Qt.AlignVCenter, tr('我方卡组'))
         p.drawText(QRectF(6, h * 0.45, w - 6, h * 0.55),
-                   Qt.AlignLeft | Qt.AlignVCenter, tr('对手卡组'))
+                   Qt.AlignLeft | Qt.AlignVCenter, self._scope)
 
 
 class _GridHost(QWidget):
@@ -247,6 +250,7 @@ class AnalysisPage(QWidget):
         self._scope = None
         self._month_btn = None
         self._mode_btn = None
+        self._mode_filter = None          # 多选控件实例（`_filter_button('mode')` 里建）
         outer = QVBoxLayout(self)
         outer.setContentsMargins(theme.S_LG, theme.S_MD, theme.S_LG, theme.S_LG)
         outer.setSpacing(theme.S_MD)
@@ -309,6 +313,17 @@ class AnalysisPage(QWidget):
 
     def _filter_button(self, key: str) -> QPushButton:
         from ui.i18n import lang
+        #: ★ 2026-10-14 用户：「这几个模式做成 excel 那种可以打勾筛选的形式」
+        #:   —— 模式用**多选**控件（日期仍是单选下拉）。
+        #:   ⚠️ 本页的筛选**与战绩页各自独立**（用户原话），两边各存各的 QSettings。
+        if key == 'mode':
+            from ui.mode_filter import ModeFilterButton
+            sep = '：' if lang() == 'cn' else ': '
+            btn = ModeFilterButton(prefix='%s%s' % (tr('模式'), sep))
+            btn.set_selected(self._data.get('mode_group') or [])
+            btn.changed.connect(self.mode_selected.emit)
+            self._mode_filter = btn
+            return btn
         btn = QPushButton('%s%s%s ▾' % (tr(self._KEY_LABEL[key]),
                                         '：' if lang() == 'cn' else ': ',
                                         tr('全部')))
@@ -334,7 +349,9 @@ class AnalysisPage(QWidget):
     def _filter_text(self, key: str, value) -> str:
         if key == 'date':
             return value or tr('全部')
-        return tr(MODE_GROUP_NAMES.get(value, '全部'))
+        #: 模式是**多选**（列表）—— 用公共的 label_for（空 = 全部模式）
+        from ui.mode_filter import label_for
+        return label_for(value)
 
     def _show_menu(self, btn, key: str) -> None:
         menu = QMenu(btn)
@@ -359,10 +376,12 @@ class AnalysisPage(QWidget):
                                 % (tr(self._KEY_LABEL['date']), sep,
                                    self._filter_text('date',
                                                      self._data.get('month'))))
-        self._mode_btn.setText('%s%s%s ▾'
-                               % (tr(self._KEY_LABEL['mode']), sep,
-                                  self._filter_text('mode',
-                                                    self._data.get('mode_group'))))
+        #: 模式是多选控件（`ModeFilterButton`）—— **它自己的文字自己管**
+        #: （含「模式：」前缀与勾选摘要）。这里只把数据层的勾选**同步进去**
+        #: （切页/换语言/切 demo 后按钮不该停在旧选择上）。
+        mt = getattr(self, '_mode_filter', None)
+        if mt is not None:
+            mt.set_selected(self._data.get('mode_group') or [])
 
     # ------------------------------------------------------------ 数据
     def set_data(self, data: dict) -> None:
@@ -442,16 +461,20 @@ class AnalysisPage(QWidget):
             self.grid.addWidget(empty, 0, 0)
             return
         avgs = {a.get('deck'): a for a in (self._data.get('col_avgs') or [])}
-        #: 列头行：左上角**对角线标注格** + 各我方卡组列头（[卡图] 名字）
-        self.grid.addWidget(CornerHeader(), 0, 0)
+        #: 当前页签名（综合胜率 / 先攻胜率 / 后攻胜率）—— 2026-10-15 起它进**角格**
+        #: （用户：「把对手卡组和综合胜率交换」）。
+        scope_name = tr(dict(TABS).get(self._scope, '综合胜率'))
+        #: 列头行：左上角**对角线标注格**（右上「我方卡组」/ 左下 = 页签名）
+        #: + 各我方卡组列头（[卡图] 名字）
+        self.grid.addWidget(CornerHeader(scope_name), 0, 0)
         for j, my in enumerate(cols):
             self.grid.addWidget(self._col_head(my, (avgs.get(my) or {})
                                                .get('img')), 0, j + 1)
-        #: 列头下第一行 = 我方卡组的综合胜率（行头文字随页签变，值随页签重算）
-        scope_lab = _lab(tr(dict(TABS).get(self._scope, '综合胜率')),
-                         'body', size=theme.PAGE_F_SMALL)
-        scope_lab.setMinimumWidth(HEAD_W)
-        self.grid.addWidget(scope_lab, 1, 0)
+        #: 列头下第一行 = 各列我方卡组的**该页签汇总**；行首标签 = 「对手卡组」
+        #: （用户 2026-10-15 与角格里的页签名对调 —— 这一行往下全是按对手排的行）。
+        opp_lab = _lab(tr('对手卡组'), 'body', size=theme.PAGE_F_SMALL)
+        opp_lab.setMinimumWidth(HEAD_W)
+        self.grid.addWidget(opp_lab, 1, 0)
         for j, my in enumerate(cols):
             self.grid.addWidget(MatrixCell(avgs.get(my) or {}, kind='avg'),
                                 1, j + 1)

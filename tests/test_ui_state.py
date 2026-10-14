@@ -1307,6 +1307,33 @@ class CrossMatrixTest(unittest.TestCase):
         self.assertEqual(st.last_cross_until, '2026-09-30 23:59:59')
         self.assertEqual(st.last_mode_group, 'ranked')
 
+    def test_rows_sorted_desc_and_same_display_name_merged(self):
+        """★ 2026-10-15 用户报「行排列看不懂」的两条根因，一起锁住：
+
+        ① **行序必须按对手总场降序**；
+        ② 两个不同分组（`Branded` / `烙印`）**显示成同一中文名时该合并相加**，
+           不是各算各的 —— 老代码 cell_map 用显示名做键、后条盖前条，
+           于是「烙印」显示 5 实际 9，与行序对不上（看着像乱排）。
+        """
+        #: 同一对手显示名撞车：Branded 3 场 + 烙印 2 场 = 5 场（该合并成一行）
+        CROSS = [('闪刀姬', 'Branded', 3, 2, 1, 0),
+                 ('闪刀姬', '烙印', 2, 1, 1, 0),
+                 ('K9vs', '珠泪', 4, 1, 3, 0)]
+        #: `_name_resolver` 走 `list_meta_decks` -> 让 Branded / 烙印 都显示「烙印」
+        meta = [{'name': 'Branded', 'name_cn': '烙印'},
+                {'name': '烙印', 'name_cn': '烙印'},
+                {'name': '珠泪', 'name_cn': '珠泪'}]
+        st = FakeStorage(cross=CROSS, meta=meta)
+        d = ui_state.cross_matrix(st)
+        decks = [r['deck'] for r in d['rows']]
+        ns = [r['n'] for r in d['rows']]
+        self.assertEqual(decks.count('烙印'), 1, '同名该合成一行：%r' % decks)
+        self.assertEqual(ns, sorted(ns, reverse=True), '行序该降序：%r' % ns)
+        brand = [r for r in d['rows'] if r['deck'] == '烙印'][0]
+        self.assertEqual(brand['n'], 5, 'Branded 3 + 烙印 2 该相加')
+        self.assertEqual(brand['cells'][0]['n'], 5)
+        self.assertEqual(brand['cells'][0]['w'], 3)
+
     def test_fail_returns_zero_shape(self):
         """库炸了不抛：零值形态、note 只剩口径文案。"""
         d = ui_state.cross_matrix(FakeStorage(fail=True))

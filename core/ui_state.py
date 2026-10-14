@@ -25,7 +25,7 @@ import os
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 # ⚠️ 唯一来源：口径常量与伪条目名单都**不在这里重写**（S6 审查 P2-2 的同源要求）。
-from core.storage import MODE_SCOPE_DUEL, mode_group
+from core.storage import MODE_SCOPE_DUEL, MODE_SELECT_NONE, mode_group
 from core.ui_actions import NON_DECK_LABELS
 
 #: 项目根 —— 读 `data/card_names.json` 这种**真源文件**时要拼绝对路径
@@ -561,9 +561,49 @@ def month_matrix(daily: Optional[Dict[str, dict]], month: str
 #: 四组的**固定顺序** —— 与 `Storage.get_group_stats()` 的返回顺序一致，别再写第二份。
 MODE_GROUPS: Tuple[str, ...] = ('ranked', 'peak', 'dc', 'event')
 
-#: 交叉战绩那句注脚：`get_cross_stats()` **不收 `mode_group`**
-#: （既有裁定 `docs/分模式统计计划.md:19-20`：不给它加分组）→ 它恒为**主口径**。
-#: 界面必须把它标出来，否则用户会拿它跟「总览」（界面口径）对不上账。
+
+def _mode_sel(mode_group):
+    """模式筛选（单值 / 列表 / None）-> **集合**；``None`` / 空 = 不按模式过滤。
+
+    ★ 与 SQL 端 `storage.mode_group_clause` 的语义对齐（2026-10-14 多选）：
+    **空列表 = 「全部模式」**，Python 端等价于「不过滤」——因为
+    :func:`_in_duel_calibre` 已经把单人/观战排除掉了，剩下的正是四组并集。
+    非空列表/单值 -> 集合，Python 端按 ``g in sel`` 筛。
+
+    ⚠️ 为什么要它：老代码写的是 ``g != mode_group``（单值比较）——多选后
+    `mode_group` 是**列表**，"ranked" != ['ranked'] 恒真 → 一勾模式，对局记录
+    与最高段位**全空**（2026-10-14 实测踩过）。
+    """
+    if not mode_group:
+        return None
+    if isinstance(mode_group, str):
+        return {mode_group}
+    keys = set(mode_group)
+    #: 「一个模式都没选」哨兵 -> 用哨兵本身当集合，`g in sel` 恒假（= 全筛掉）。
+    if MODE_SELECT_NONE in keys:
+        return {MODE_SELECT_NONE}
+    return keys or None
+
+
+def _mode_scope_note(mode_group) -> str:
+    """模式筛选 -> 注脚用的口径串。``None`` = 主口径（天梯 + 巅峰）；
+    空列表 = 「全部模式」（四组并集）；给了组 = 逐组名拼「 + 」。
+    """
+    from core.storage import MODE_GROUP_NAMES
+    if mode_group is None:
+        return CROSS_SCOPE_NOTE
+    keys = [mode_group] if isinstance(mode_group, str) else list(mode_group)
+    if MODE_SELECT_NONE in keys:
+        return '未选择模式'               # 一个都没选（用户 2026-10-15 的「全部取消」态）
+    keys = [k for k in keys if k in MODE_GROUP_NAMES]
+    if not keys or set(keys) >= set(MODE_GROUPS):
+        return '全部模式'                 # 空/全勾 = 四组并集 = 界面口径
+    return ' + '.join(MODE_GROUP_NAMES[k] for k in MODE_GROUPS if k in keys)
+
+#: **默认**（`mode_group=None`）交叉战绩的口径串 = 主口径。⚠️ 2026-09-19 起
+#: `get_cross_stats()` **已收 `mode_group`**（旧裁定作废）——给了筛选就按筛选，
+#: 注脚改由 :func:`_mode_scope_note` 现算。界面必须标出口径，否则用户会拿它
+#: 跟「总览」（界面口径）对不上账。
 CROSS_SCOPE_NOTE = '天梯 + 巅峰'
 
 
@@ -840,18 +880,19 @@ def match_groups(storage, limit: int = 500, since=None, until=None,
                                                account=account) or [])
     except Exception:
         return []
+    sel = _mode_sel(mode_group)          # None = 不筛；集合 = 只留勾选的模式
     keep = []
     for m in rows:
         if m.get('result') not in _DONE_RESULTS or not _in_duel_calibre(m):
             continue
-        if mode_group:
+        if sel:
             g = M.group(m.get('game_mode'))
             #: ⚠️ `ranked` 的 SQL 口径**含掉线兜底局**（`game_mode IS NULL` + pvp 未结束，
             #: `mode_group_clause` 里拼了 `disconnect_clause()`）—— Python 端
             #: `modes.group(None)` 是 None，不补这条就"总览 33、记录 32"对不上。
-            fallback = (mode_group == 'ranked' and g is None
+            fallback = ('ranked' in sel and g is None
                         and m.get('mode') == 'pvp' and not m.get('ended_at'))
-            if g != mode_group and not fallback:
+            if g not in sel and not fallback:
                 continue                  # 模式筛选（用户 2026-09-18 七轮）
         at = m.get('started_at') or ''
         if since and at < since:
@@ -1029,11 +1070,11 @@ def stats_page_data(storage, limit: int = 500, mode_group=None,
         #: ★ 七轮修正：只算**天梯局**的段位 —— 活动局那些别处补回来的
         #: `my_rank_after` 是假段位，不该参与"最高"；筛选到非天梯模式时自然为 None
         #: （界面那格显示 `-`，不是错误）。
+        sel = _mode_sel(mode_group)
         mine = [m for m in rows
                 if (m.get('started_at') or '') >= m_since
                 and M.group(m.get('game_mode')) == 'ranked'
-                and (mode_group is None
-                     or M.group(m.get('game_mode')) == mode_group)]
+                and (sel is None or M.group(m.get('game_mode')) in sel)]
         pairs = [((m.get('my_rank_after'), m.get('my_rate_after'))) for m in mine]
         before = [((m.get('my_rank_before'), m.get('my_rate_before'))) for m in mine]
         data['best_rank'] = ranks.best(list(pairs) + list(before))
@@ -1120,7 +1161,7 @@ def cross_matrix(storage, went_first=None, hide_pseudo: bool = True,
     * 任何失败不抛 —— 零值形态里 note 只剩口径文案（与 D1 同款）。
     """
     data: Dict[str, object] = {
-        'note': '统计口径：%s' % CROSS_SCOPE_NOTE,
+        'note': '统计口径：%s' % _mode_scope_note(mode_group),
         'went_first': went_first, 'month': month, 'mode_group': mode_group,
         'cols': [], 'rows': [], 'col_avgs': [], 'months': [],
         'total_calibre': 0, 'total_in_matrix': 0,
@@ -1151,30 +1192,7 @@ def cross_matrix(storage, went_first=None, hide_pseudo: bool = True,
         except Exception:
             cell_rows = []
 
-    # ---- 轴（当前筛选的综合口径，固定）：列=我方、行=对手；滤伪条目 + 空行列剪枝 ----
-    col_names, row_names = [], []                  # 列=我方卡组、行=对手卡组
-    col_seen, row_seen = set(), set()
-    col_n: Dict[str, int] = {}
-    row_n: Dict[str, int] = {}
-    for my, opp, n, _w, _l, _d in axis_rows:
-        # ★ 09-28 用户口径：**「未知卡组」要显示**（巅峰局看不了对面 = 真实的一局）；
-        #   仍隐藏的只剩我方「(未识别)」与对手「(未标注)」——那是没有信息的占位。
-        if hide_pseudo and (my == MY_DECK_UNKNOWN or opp == '(未标注)'):
-            continue
-        if my not in col_seen:
-            col_seen.add(my)
-            col_names.append(my)
-            col_n[my] = 0
-        if opp not in row_seen:
-            row_seen.add(opp)
-            row_names.append(opp)
-            row_n[opp] = 0
-        col_n[my] += int(n or 0)
-        row_n[opp] += int(n or 0)
-    col_names.sort(key=lambda x: (-col_n[x], x))   # 列序 = 列（我方）总场次降序
-    row_names.sort(key=lambda x: (-row_n[x], x))   # 行序 = 行（对手）总场次降序
-    #: 出口翻译（轴/格/列汇总用同一个映射，键内部保持原值 —— 2026-10-04 用户：
-    #: 分析页卡组名要跟语言走）。cn 恒等。
+    # ---- 出口翻译（轴/格/列汇总共用一份 —— 2026-10-04 用户：名字跟着语言走）----
     _resolve = _name_resolver(storage, _ui_lang())
     _disp: Dict[str, str] = {}
 
@@ -1185,47 +1203,87 @@ def cross_matrix(storage, went_first=None, hide_pseudo: bool = True,
             _disp[name] = _resolve(name) or name
         return _disp[name]
 
-    data['cols'] = [_d(x) for x in col_names]
+    # ---- 轴（当前筛选的综合口径，固定）：列=我方、行=对手；滤伪条目 + 空行列剪枝 ----
+    #: ★🔴 2026-10-15 修复：分组键要用**显示名**，不是原始名。
+    #:   两个不同 opp_deck_id 可能显示成同一个中文名（`Branded` 与 `烙印` 都显示
+    #:   「烙印」）—— 老代码按**原始名**分桶、再按显示名出图，于是同一显示名在
+    #:   `cell_map` 里**互相覆盖**（后一条盖前一条）→ 显示场数比真值少（「烙印」实测
+    #:   显示 5 场、实际 9 场），而行序按真值排 → 看着不降序（用户 2026-10-15 报
+    #:   「行排列让我看不懂」）。改为一律按 `_d(名)` 归并：同名的合一行。
+    col_names, row_names = [], []                  # 列=我方卡组、行=对手卡组
+    col_seen, row_seen = set(), set()
+    col_n: Dict[str, int] = {}
+    row_n: Dict[str, int] = {}
+    for my, opp, n, _w, _l, _d_ in axis_rows:
+        # ★ 09-28 用户口径：**「未知卡组」要显示**（巅峰局看不了对面 = 真实的一局）；
+        #   仍隐藏的只剩我方「(未识别)」与对手「(未标注)」——那是没有信息的占位。
+        if hide_pseudo and (my == MY_DECK_UNKNOWN or opp == '(未标注)'):
+            continue
+        myk, oppk = _d(my), _d(opp)                #: 归并键 = 显示名（同名合并）
+        if myk not in col_seen:
+            col_seen.add(myk)
+            col_names.append(myk)
+            col_n[myk] = 0
+        if oppk not in row_seen:
+            row_seen.add(oppk)
+            row_names.append(oppk)
+            row_n[oppk] = 0
+        col_n[myk] += int(n or 0)
+        row_n[oppk] += int(n or 0)
+    col_names.sort(key=lambda x: (-col_n[x], x))   # 列序 = 列（我方）总场次降序
+    row_names.sort(key=lambda x: (-row_n[x], x))   # 行序 = 行（对手）总场次降序
+    data['cols'] = list(col_names)                 # 已是显示名，不用再翻
     data['total_in_matrix'] = sum(col_n.values())
 
-    # ---- 格（当前页签口径）：只保留轴内的格 ----
-    cell_map: Dict[Tuple[str, str], Tuple[int, int, int, int]] = {}
+    # ---- 格（当前页签口径）：按**归并键**累加（同名多行是相加，不是覆盖）----
+    cell_map: Dict[Tuple[str, str], List[int]] = {}
     for my, opp, n, w, l, d in cell_rows:
-        if my in col_seen and opp in row_seen:
-            cell_map[(my, opp)] = (int(n or 0), int(w or 0),
-                                   int(l or 0), int(d or 0))
+        myk, oppk = _d(my), _d(opp)
+        if myk in col_seen and oppk in row_seen:
+            acc = cell_map.setdefault((myk, oppk), [0, 0, 0, 0])
+            acc[0] += int(n or 0)
+            acc[1] += int(w or 0)
+            acc[2] += int(l or 0)
+            acc[3] += int(d or 0)
     rows: List[Dict[str, object]] = []
-    for opp in row_names:
+    for oppk in row_names:
         cells = []
         n_sum = 0
-        for my in col_names:
-            got = cell_map.get((my, opp))
+        for myk in col_names:
+            got = cell_map.get((myk, oppk))
             if got is None:
                 continue
             n, w, l, d = got
             n_sum += n
-            cells.append({'deck': _d(my), 'n': n, 'w': w, 'l': l, 'd': d,
+            cells.append({'deck': myk, 'n': n, 'w': w, 'l': l, 'd': d,
                           'rate': (w / n * 100.0) if n else None})
-        #: ``n`` = 这个对手在当前筛选+页签下的总场数（行首「场数」显示用）
-        rows.append({'deck': _d(opp), 'n': n_sum, 'cells': cells})
+        #: ``n`` = 这个对手在当前筛选+页签下的总场数（行首「场数」显示用）；
+        #:   行序键 `row_n` 也是它 —— 两者同源，不再出现「排序与显示不一致」。
+        rows.append({'deck': oppk, 'n': n_sum, 'cells': cells})
     data['rows'] = rows
     #: 列汇总（我方卡组的综合/先攻/后攻胜率）—— UI 放在列头下第一行
     data['col_avgs'] = [
-        {'deck': _d(my),
-         'n': sum(c[0] for (my_, _o), c in cell_map.items() if my_ == my),
-         'w': sum(c[1] for (my_, _o), c in cell_map.items() if my_ == my)}
-        for my in col_names]
+        {'deck': myk,
+         'n': sum(c[0] for (my_, _o), c in cell_map.items() if my_ == myk),
+         'w': sum(c[1] for (my_, _o), c in cell_map.items() if my_ == myk)}
+        for myk in col_names]
     for a in data['col_avgs']:
         a['rate'] = (a['w'] / a['n'] * 100.0) if a['n'] else None
+    scope = _mode_scope_note(mode_group)
+    #: 「主口径」这层标签只在**默认**（`None` = 天梯 + 巅峰那套）下出现 —— 勾了
+    #: 某个模式再说「主口径」就是错的（那串数字是筛选后的）。
+    label = ('主口径 %d 场' if mode_group is None else '%d 场')
+    #: ⚠️ 「与战绩页合计不等」那句**只在默认口径下成立**（战绩页走界面口径）——
+    #: 两页都勾了同一模式时两边本就该一致，别再挂这句话。
+    tail = ('——与「战绩」页（界面口径）合计不等，不是 bug'
+            if mode_group is None else '')
     if hide_pseudo and data['total_in_matrix'] != data['total_calibre']:
-        data['note'] = ('统计口径：%s（主口径 %d 场 · 矩阵内 %d 场，已隐藏未标注）'
-                        '——与「战绩」页（界面口径）合计不等，不是 bug'
-                        % (CROSS_SCOPE_NOTE, data['total_calibre'],
-                           data['total_in_matrix']))
+        data['note'] = ('统计口径：%s（%s · 矩阵内 %d 场，已隐藏未标注）%s'
+                        % (scope, label % data['total_calibre'],
+                           data['total_in_matrix'], tail))
     else:
-        data['note'] = ('统计口径：%s（主口径 %d 场）'
-                        '——与「战绩」页（界面口径）合计不等，不是 bug'
-                        % (CROSS_SCOPE_NOTE, data['total_calibre']))
+        data['note'] = ('统计口径：%s（%s）%s'
+                        % (scope, label % data['total_calibre'], tail))
     return data
 
 

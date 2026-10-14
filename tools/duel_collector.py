@@ -72,7 +72,7 @@ from core.memread.end_message import (EndMessageReader, arbitrate_result,
 from core.memread.il2cpp import (MetadataHeader, default_metadata_path,
                                  find_all_metadata_mirrors, find_singleton,
                                  find_typeinfo, list_fields,
-                                 read_string_table)
+                                 read_singleton_slot, read_string_table)
 from core.memread.process import SafeProcess, find_pids_by_name
 from core.storage import DECK_SNAPSHOT_TRUSTED_MODES
 from core import my_deck                       # 「当前卡组」状态文件（data/my_deck.json）
@@ -707,7 +707,7 @@ class DuelCollector(object):
                 else:
                     lines += self._close_current(ts, reason, now)
         if self.open_rec is not None and in_duel:
-            lines += [x for x in self._track_record(now) if x]
+            lines += [x for x in self._track_record(now, ts) if x]
         return lines
 
     # ---- 各阶段 ------------------------------------------------------
@@ -846,7 +846,13 @@ class DuelCollector(object):
         lines += self._reimport_after_em(dir_path, why)
         return lines
 
-    def _track_record(self, now):
+    def _track_record(self, now, ts=None):
+        """对局中跟踪（收局前的每拍）。
+
+        :param ts: 本拍的时间戳（`observe` 给的）—— 新局的 `first_seen` 要用
+            它，**不能用 `now_str()`**（那是真实墙钟，测试里与 `now` 不同步，
+            生产环境两者一致但语义应该跟着事件走）。
+        """
         lines = []
         rec = self.open_rec
         ti = self.hooks.controller_ti()
@@ -885,6 +891,24 @@ class DuelCollector(object):
                     self.log('控制器 size=%d 判为旧局残影（%s），继续退避'
                              % (size, why))
                     return lines
+                # ★ 新局识别（2026-10-14 两局合并事故）：控制器**换了新实例**
+                #   （三条件复用没命中）且不是残影 -> 旧局的控制器已经消失、
+                #   这是**新一局**。必须先收口旧局，否则新局的事件会被追加进
+                #   旧局的目录 —— 实测 20:09:08 那局与 20:22:05 那局被并成一局
+                #   （对手名取第一局、回合数取第二局、露出卡混在一起）。
+                #   为什么以前没做：旧局收口只靠 `duel_end` 事件，而两局之间
+                #   `in_duel` 可能一直是 True（Engine 单例没消失），事件不触发。
+                if (self.open_rec is not None
+                        and self.open_rec.dir_path is not None
+                        and not self.open_rec.finalized):
+                    lines += self._close_current(now_str(),
+                                                 'controller-replaced', now)
+                    self.open_rec = _OpenRecord(ts or now_str())
+                    self._hunt_started = now
+                    self._last_scan_ts = None
+                    self._hunt_overdue_logged = False
+                    lines.append('控制器换新实例 -> 旧局已收口，新局另起')
+                    return lines          # 下一拍走完整流程建新目录
             self._last_seen_size = None
             self.cache.store(obj, fl)
             self._pending_reuse = reuse
@@ -1938,17 +1962,53 @@ class Runtime(Hooks):
         return find_singleton(self.sp, self.engine_ti, slot=ENGINE_SLOT)
 
 
+#: 连续这么多拍**读不到**（`sample_engine` 返回 None）就重新 attach。
+#: ★ 2026-10-14 事故：内存定位失效后 `find_singleton` 恒返回 0，采集器把它
+#: 当成「不在对局」，于是**静默漏局**（19:15 起漏了 1 局以上，日志毫无痕迹）。
+#: interval=2s → 30 拍 ≈ 60s；重新 attach 要重扫 metadata（实测 10~27s），
+#: 所以阈值不能太小，但也不能让漏局一直持续。
+LOST_RECONNECT_AFTER = 30
+
+
+class LostWatcher(object):
+    """连续「读不到」计数 -> 到阈值就要求重新 attach（2026-10-14 事故）。
+
+    只在 ``in_duel is None``（**读取失败**）时累加；读到 True/False 立刻清零 ——
+    「大厅里 Engine 实例不在」是 ``False``、**不是**读不到，绝不能触发重连。
+    """
+
+    def __init__(self, threshold=LOST_RECONNECT_AFTER):
+        self.threshold = threshold
+        self.streak = 0
+
+    def feed(self, in_duel):
+        """喂一拍 -> ``(要不要重连, 当前连续读不到数)``。"""
+        if in_duel is not None:
+            self.streak = 0
+            return False, 0
+        self.streak += 1
+        if self.streak >= self.threshold:
+            self.streak = 0
+            return True, 0
+        return False, self.streak
+
+
 def sample_engine(rt):
     """快路径采样：Engine 单例 -> (in_duel, game_mode, finished)。
 
-    ``in_duel=None`` = 这拍没读成（不算收局）；False = 实例不在。
+    ``in_duel=None`` = **这拍没读成**（内存读取失败 —— 可能是定位失效）；
+    ``False`` = 读到了，实例不在（大厅里 Engine 还没建，正常）。
+    ⚠️ **两者必须分开**（2026-10-14 事故）：混在一起会让「定位失效」伪装成
+    「不在对局」，静默漏局。判据由 `read_singleton_slot` 给出。
     """
     if rt.sp is None:
         return None, None, None
     try:
-        obj = find_singleton(rt.sp, rt.engine_ti, slot=ENGINE_SLOT)
+        obj, ok = read_singleton_slot(rt.sp, rt.engine_ti, slot=ENGINE_SLOT)
+        if not ok:
+            return None, None, None          # 读不到（≠ 不在对局）
         if not obj:
-            return False, None, None
+            return False, None, None         # 实例不在
         blob = rt.sp.read(obj, ENGINE_BLOB)
         mode = struct.unpack_from('<i', blob, rt.mode_off)[0]
         finished = (struct.unpack_from('<i', blob, rt.finished_off)[0]
@@ -1968,15 +2028,27 @@ def load_pid_file():
         return None
 
 
-def write_heartbeat(in_duel=False, game_pid=None):
+#: 心跳的 `state` 三态（2026-10-14 事故新增）：
+#: ``duel``=对局中 / ``idle``=不在对局 / **``lost``=读不到**（内存定位可能失效）。
+#: 为什么加：旧版只写 ``in_duel=bool(in_duel)`` —— ``None``（读不到）和
+#: ``False``（实例不在）都写成 ``false``，定位失效时看板显示「一切正常」，
+#: 是本次事故唯一的诊断盲点（靠「日志停了」才发现的）。
+HEARTBEAT_STATES = ('duel', 'idle', 'lost')
+
+
+def write_heartbeat(state='idle', game_pid=None):
     """每拍覆盖写心跳（看板据此判「采集器在不在跑」）。**失败不抛** —— 采样器
 
     每秒都在调，写不了就跳过（磁盘满 / 权限），绝不能因此打断采集。
+
+    :param state: ``'duel'`` / ``'idle'`` / ``'lost'``（见 `HEARTBEAT_STATES`）。
+        ``in_duel`` 字段**保留**（= ``state == 'duel'``），老消费方照读。
     """
     try:
         os.makedirs(os.path.dirname(HEARTBEAT_PATH), exist_ok=True)
         with open(HEARTBEAT_PATH, 'w', encoding='utf-8', newline='') as f:
-            json.dump({'at': now_str(), 'in_duel': bool(in_duel),
+            json.dump({'at': now_str(), 'state': state,
+                       'in_duel': state == 'duel',
                        'game_pid': game_pid, 'collector_pid': os.getpid()},
                       f, ensure_ascii=False)
     except OSError:
@@ -2201,7 +2273,7 @@ def main(argv=None):
     game_pids = find_pids_by_name('masterduel.exe')
     self_heal(args.records_dir, game_pids, prev, log)
     write_pid_file(game_pids[0] if game_pids else None)
-    write_heartbeat(in_duel=False, game_pid=game_pids[0] if game_pids else None)
+    write_heartbeat(state='idle', game_pid=game_pids[0] if game_pids else None)
 
     rt = Runtime(default_game_dir(), log)
     rt.records_dir = args.records_dir
@@ -2222,6 +2294,7 @@ def main(argv=None):
     connected_pid = None
     deadline = (time.time() + args.minutes * 60) if args.minutes else None
     tries = 0
+    lost_watcher = LostWatcher()          # 内存定位自愈（2026-10-14 事故）
     exit_code = 0
 
     def _tb(e):
@@ -2241,7 +2314,7 @@ def main(argv=None):
                         log(line)
                 # ⚠️ **待机期间也要写心跳** —— 不写的话游戏没开时心跳会过期，
                 #    看板就会显示「采集器没在跑」（其实在跑，只是待机）。
-                write_heartbeat(in_duel=False, game_pid=None)
+                write_heartbeat(state='idle', game_pid=None)
                 time.sleep(max(args.interval, 5.0))
                 continue
             if rt.sp is None or connected_pid != pids[0]:
@@ -2263,9 +2336,25 @@ def main(argv=None):
             #    坏了，不是代码坏了：记日志、下一拍重试即可。
             try:
                 in_duel, mode, finished = sample_engine(rt)
-                write_heartbeat(in_duel=bool(in_duel), game_pid=connected_pid)
+                write_heartbeat(state=('lost' if in_duel is None else
+                                       ('duel' if in_duel else 'idle')),
+                                game_pid=connected_pid)
             except Exception as e:                          # noqa: BLE001
                 log('采样异常（下一拍重试）：%r' % _tb(e))
+                time.sleep(args.interval)
+                continue
+            # ★ 内存定位自愈（2026-10-14 事故）：连续读不到 -> 重新 attach。
+            #   以前这里什么都不做，定位一失效就**静默漏局到人工发现为止**。
+            want_reconnect, lost = lost_watcher.feed(in_duel)
+            if lost == 1 or (lost and lost % 60 == 0):
+                log('⚠️ 读不到对局状态（连续 %d 拍）—— 内存定位可能失效' % lost)
+            if want_reconnect:
+                log('连续读不到 -> 重新 attach（重扫 metadata / TypeInfo）')
+                if rt.attach():
+                    connected_pid = rt.pid
+                    log('重新 attach 成功（pid=%s）' % rt.pid)
+                else:
+                    log('重新 attach 失败 —— 下一轮再试')
                 time.sleep(args.interval)
                 continue
             try:

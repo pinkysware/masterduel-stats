@@ -573,11 +573,12 @@ class StatsPageV2Test(unittest.TestCase):
 
         self.win.set_loader(loader)
         self.win.reload()
-        self.assertEqual(calls[-1], None)
+        self.assertEqual(calls[-1], [],
+                         '空列表 = 全部模式（= 四组并集，见 mode_group_clause([])）')
         self.page.mode_selected.emit('ranked')
         _app().processEvents()
-        self.assertEqual(calls[-1], 'ranked', 'loader 该收到所选模式')
-        self.assertEqual(self.win._mode_group, 'ranked')
+        self.assertEqual(calls[-1], ['ranked'])
+        self.assertEqual(self.win._mode_group, ['ranked'])
         btns = [b.text() for b in self.page.findChildren(QPushButton)]
         self.assertTrue(any('排名决斗' in t for t in btns), btns)
         texts = self._texts()
@@ -1032,7 +1033,8 @@ class StatsMonthSwitchTest(unittest.TestCase):
         self.assertEqual(len(aug), 1)
         self._press(aug[0])
         self.assertEqual(self.win._stats_month, '2026-08')
-        self.assertEqual(self.calls[-1], (None, '2026-08'))
+        #: 2026-10-14 起模式筛选是**列表**，初始 = [] = 全部模式
+        self.assertEqual(self.calls[-1], ([], '2026-08'))
 
     def test_clicking_same_month_does_not_reload(self):
         card = self._cards()[0]
@@ -1092,7 +1094,8 @@ class StatsMonthFastPathTest(unittest.TestCase):
         """刀①：点月卡只跑战绩 loader —— 分析/导出等七个 loader 不许重跑。"""
         self.analysis_calls.clear()          # 构造时的初始 reload 不算
         self._click([c for c in self._cards() if c._month == '2026-08'][0])
-        self.assertEqual(self.stats_calls[-1], ('stats', None, '2026-08'))
+        self.assertEqual(self.stats_calls[-1], ('stats', [], '2026-08'),
+                         '模式筛选初始是 [] = 全部模式（2026-10-14 多选）')
         self.assertEqual(self.analysis_calls, [], '切月不该重跑别的页')
 
     def test_heat_block_not_rebuilt_on_month_switch(self):
@@ -1174,10 +1177,11 @@ class AccountSwitcherTest(unittest.TestCase):
     def test_set_account_reloads_with_account(self):
         self.calls.clear()
         self.win.set_account('示例玩家')
-        self.assertEqual(self.calls[-1], (None, None, '示例玩家'))
+        #: 1st = mode_group（[] = 全部模式）
+        self.assertEqual(self.calls[-1], ([], None, '示例玩家'))
         self.assertIn('示例玩家', self.win.rail._brand_text())
         self.assertEqual(self.settings().value('dash/account'), '示例玩家')
-        self.assertEqual(self.calls[-1], (None, None, '示例玩家'))
+        self.assertEqual(self.calls[-1], ([], None, '示例玩家'))
 
     def test_single_account_still_shows_name(self):
         """一个账号也照常显示账号名（2026-10-03 用户实拍口径）。"""
@@ -1229,10 +1233,18 @@ class AnalysisPageTest(unittest.TestCase):
         self.assertIsInstance(self.page, analysis_page.AnalysisPage)
 
     def test_avg_row_rendered_and_note_removed(self):
-        """v5d：口径警示行删掉了；列头下第一行的「综合胜率」行头还在。"""
+        """v5d：口径警示行删掉了。
+
+        ★ 2026-10-15 用户：「把对手卡组和综合胜率交换」—— 现在页签名
+        （综合胜率）进**角格**（自绘，不在 QLabel 里），下面那行行首 = 「对手卡组」。
+        """
         texts = [l.text() for l in self.page.findChildren(QLabel)]
-        self.assertIn('综合胜率', texts)
+        self.assertIn('对手卡组', texts)                 # 行首标签（原角格左下那个）
         self.assertNotIn('统计口径：天梯 + 巅峰', texts)
+        #: 角格里画的是页签名（自绘，取 widget 实例验证）
+        corners = self.page.findChildren(analysis_page.CornerHeader)
+        self.assertTrue(corners, '角格还在')
+        self.assertEqual(corners[0]._scope, '综合胜率')
 
     def test_matrix_cells_rendered(self):
         """demo 7 行（6 对手 + 未知卡组）× 3 列 + 首行 3 列汇总 = 24 格。"""
@@ -1270,14 +1282,14 @@ class AnalysisPageTest(unittest.TestCase):
         self.win.set_analysis_loader(loader)
         self.page.month_selected.emit('2026-09')
         self.page.mode_selected.emit('ranked')
-        self.assertEqual(calls[-2:], [(None, '2026-09', None),
-                                      (None, '2026-09', 'ranked')])
+        self.assertEqual(calls[-2:], [(None, '2026-09', []),
+                                      (None, '2026-09', ['ranked'])])
         self.assertEqual(str(dashboard.settings().value('dash/analysis_month')),
                          '2026-09')
         self.assertEqual(str(dashboard.settings().value('dash/analysis_mode')),
                          'ranked')
         self.assertEqual(self.win._analysis_month, '2026-09')
-        self.assertEqual(self.win._analysis_mode, 'ranked')
+        self.assertEqual(self.win._analysis_mode, ['ranked'])
 
     def test_show_menu_emits_signals(self):
         """🔴 2026-10-03 回归：筛选按钮点击后**真的能选** —— 旧代码连接还引用

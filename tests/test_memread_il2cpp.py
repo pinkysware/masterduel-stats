@@ -29,6 +29,7 @@ from core.memread.il2cpp import (
     TYPEINFO_FIELDS_OFFSET,
     TYPEINFO_STATIC_FIELDS_OFFSET,
     find_singleton,
+    read_singleton_slot,
     read_static_value,
     static_fields_addr,
     find_typeinfo,
@@ -407,6 +408,37 @@ class TestStaticFields(unittest.TestCase):
         with SafeProcess(os.getpid()) as p:
             self.assertEqual(find_singleton(p, self.ti_addr, slot=0x00),
                              self.obj_addr)
+
+    # ---- ★ 2026-10-14：三态接口（「读不到」vs「没有实例」）----------------
+    def test_read_singleton_slot_ok(self):
+        """有实例 -> (addr, True)。"""
+        with SafeProcess(os.getpid()) as p:
+            self.assertEqual(read_singleton_slot(p, self.ti_addr),
+                             (self.obj_addr, True))
+
+    def test_read_singleton_slot_empty_slot_is_ok(self):
+        """槽位 0 = **读到了、只是没有实例**（大厅里的 Engine）—— 不是读失败。"""
+        struct.pack_into('<Q', self.static, 0x08, 0)
+        with SafeProcess(os.getpid()) as p:
+            self.assertEqual(read_singleton_slot(p, self.ti_addr), (0, True))
+
+    def test_read_singleton_slot_reports_read_failure(self):
+        """★ 关键：静态区读不到时必须 ok=False。
+
+        旧接口（`find_singleton`）在这里也返回 0，与「没有实例」**不可区分**
+        —— 采集器据此判「不在对局」，内存定位失效时**静默漏局**
+        （2026-10-14 19:15 起漏了 1 局以上，日志毫无痕迹）。
+        """
+        buf = ctypes.create_string_buffer(0x100)     # +0xB8 = 0 -> 没有静态区
+        with SafeProcess(os.getpid()) as p:
+            self.assertEqual(read_singleton_slot(p, ctypes.addressof(buf)),
+                             (0, False))
+
+    def test_find_singleton_still_returns_zero_on_read_failure(self):
+        """老接口行为不变（返回 0）—— 别处还在用它。"""
+        buf = ctypes.create_string_buffer(0x100)
+        with SafeProcess(os.getpid()) as p:
+            self.assertEqual(find_singleton(p, ctypes.addressof(buf)), 0)
 
 
 

@@ -478,6 +478,21 @@ _DEMO_OVERVIEW_BY_MODE = {
 }
 
 
+def _mode_set(mode_group):
+    """模式筛选 **归一化**：单值 / 列表 -> 集合（``None``/空 = 全部）。
+
+    ★ 2026-10-14：模式筛选改成**可打勾多选**后，`mode_group` 可能是列表
+    （如 ``['ranked', 'dc']``）。老代码直接拿它 ``==`` 比较、或当 dict 键
+    （列表不可哈希 -> `TypeError`），异常被 `_reload_stats` 的
+    ``except Exception: data = {}`` 吞掉 → 页面空 → 22 项单测变红。
+    """
+    if not mode_group:
+        return None
+    if isinstance(mode_group, str):
+        return {mode_group}
+    return set(mode_group) or None
+
+
 def demo_stats_page(mode_group=None, month=None, account=None) -> dict:
     """D1「战绩」页 demo：**三块都给**（热力图 / 总览五格 / 对局记录分组）。
 
@@ -548,9 +563,10 @@ def demo_stats_page(mode_group=None, month=None, account=None) -> dict:
                        is_current=_s.get('is_current'),
                        round_start=_s.get('round_start')), _rows)
               for n, _s, _rows in (g1, g2, g3, g4)]
-    if mode_group:
+    sel = _mode_set(mode_group)
+    if sel:
         #: ★ 与真库 `match_groups(mode_group=…)` 同一条路：筛行 → 丢空组 → 重算组头
-        groups = [(n, st, [r for r in rows if r.get('mode_group') == mode_group])
+        groups = [(n, st, [r for r in rows if r.get('mode_group') in sel])
                   for n, st, rows in groups]
         groups = [(n, dict(st, **_ui_state.group_header(rows)), rows)
                   for n, st, rows in groups if rows]
@@ -569,8 +585,11 @@ def demo_stats_page(mode_group=None, month=None, account=None) -> dict:
     return {
         'mode_group': mode_group,
         'wins_to_promote': 3,
-        'overview': _DEMO_OVERVIEW_BY_MODE.get(mode_group, _DEMO_OVERVIEW_BY_MODE[None]),
-        'best_rank': (5, 1) if mode_group in (None, 'ranked') else None,
+        #: ⚠️ 多选用不了单模式的 overview 表（列表不可哈希）-> 多勾时退回「全部」那份
+        'overview': (_DEMO_OVERVIEW_BY_MODE.get(
+            mode_group if isinstance(mode_group, str) else None)
+            or _DEMO_OVERVIEW_BY_MODE[None]),
+        'best_rank': (5, 1) if (not sel or sel == {'ranked'}) else None,
         'daily': daily,
         'months': sorted({d[:7] for d in daily}),
         'groups': groups,

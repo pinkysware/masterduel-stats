@@ -31,6 +31,8 @@
 - **卡图管理**：卡组名管理页可给任意卡组设图 —— 搜卡名挑卡绘、或从站内榜单取图；
   自组卡组（榜单里没有的）也能配图、也能搜到。
 - **参照库一键刷新**：看板「设置 → 数据工具 → 参照库刷新」，不用敲命令行。
+- **模式筛选可多选**：战绩页与对局分析页都能像 Excel 那样打勾选模式
+  （排名决斗 / 巅峰决斗 / DC 杯 / 活动决斗），两页各自独立；勾一下就即时刷新。
 
 ## 安装与运行
 
@@ -38,8 +40,8 @@
 
 | 附件 | 体积 | 需要什么 |
 |---|---|---|
-| `masterduel-stats-v1.0.1-win64-full.zip` | ~194 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `MDStats.exe` |
-| `masterduel-stats-v1.0.1-win64-lite.zip` | ~5 MB | 需先装 Python 3.13；首次运行 `MDStats.exe` 会自动安装依赖 |
+| `masterduel-stats-v1.0.6-win64-full.zip` | ~194 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `MDStats.exe` |
+| `masterduel-stats-v1.0.6-win64-lite.zip` | ~5 MB | 需先装 Python 3.13；首次运行 `MDStats.exe` 会自动安装依赖 |
 | Source code (zip / tar.gz) | 自动 | 源码包，GitHub 对每个 tag 自动附带 |
 
 **最省事的做法**：装好 [Python 3.13](https://www.python.org/downloads/)（勾选
