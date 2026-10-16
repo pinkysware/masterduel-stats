@@ -230,6 +230,38 @@ def card_type(card_id, path=None):
         return None
 
 
+def setcodes(card_id, path=None):
+    """这张卡的**字段（archetype）编号集合**（ygocdb `data.setcode` 拆段）。
+
+    官方 `setcode` 是 4 个 16-bit 段打包成一个整数（每段高 4 位是副标记、
+    低 12 位是字段号）—— 这里只取**低 12 位**，丢掉全 0 的段。
+    实测：`神艺亵渎－袭击－` -> {461}（神艺）、`天羽羽斩之巳剑` -> {451}（巳剑）、
+    `狱神影兽－涅尔绯多` -> {461, 462}（神艺 + 狱神，混轴卡两张表都在）。
+
+    查不到 / 无字段 -> **空集合**（不是 None）—— 调用方按「无字段信息」处理。
+    覆盖率约 55%（其余是泛用卡、代币、未收录卡）。
+    """
+    try:
+        key = str(int(card_id))
+    except (TypeError, ValueError):
+        return frozenset()
+    card = ygocdb(path).get(key)
+    if not isinstance(card, dict):
+        return frozenset()
+    data = card.get('data')
+    raw = data.get('setcode') if isinstance(data, dict) else None
+    try:
+        sc = int(raw)
+    except (TypeError, ValueError):
+        return frozenset()
+    out = set()
+    for i in range(4):
+        seg = (sc >> (16 * i)) & 0xFFFF
+        if seg:
+            out.add(seg & 0xFFF)
+    return frozenset(out)
+
+
 def is_extra(card_id, path=None) -> bool:
     """这张卡进**额外卡组**吗（融合 / 同调 / 超量 / 连接，见 :data:`EXTRA_TYPE_MASK`）。
 

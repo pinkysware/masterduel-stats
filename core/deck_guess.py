@@ -31,7 +31,7 @@ import json
 import math
 import os
 
-from core.card_names import load as load_names
+from core.card_names import load as load_names, setcodes as _card_setcodes
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -61,6 +61,39 @@ MIN_CONFIDENCE = 0.5
 
 #: bayes 平滑系数（研究 §4.1 实测取值）
 ALPHA = 2.0
+
+#: **字段校验**：条目名里的字段词，其 setcode 在露出卡里**一张都没出现**时，
+#: 有效命中数**砍这么多张**（用户 2026-10-16 拍板「字段当罚分项」）。
+#:
+#: 为什么需要（2026-10-16 实机·自奏局）：露出 12 张、**零张巳剑**，却判成
+#: `Mitsurugi Orcust` —— 它卡表 92 张（含自奏/巳剑/契印/绚岚全轴），靠别的轴
+#: + 泛用卡凑到 12 命中，而它名字里的 `Mitsurugi`（巳剑 451）一张没中也不扣分。
+#:
+#: 为什么是「砍命中」而不是「罚 bayes」：排序第一键是**命中数分档**，
+#: 只动 bayes 跨不过档（实测 `Mitsurugi Orcust` 12 命中 vs `Orcust` 9 命中
+#: 不同档，罚 bayes 无效）。
+#:
+#: 为什么砍 2：全量回测（236 局）实测 —— 砍 2 最优（168→174 局），
+#: 砍 3/4 不回归（说明不是过拟合），砍 6 会开始误伤。三个已锁案例全绿。
+#:
+#: ⚠️⚠️ **试过但没做**的口径（2026-10-16，别再试 —— 全量实测都更差）：
+#:
+#:   1. **「缺字段个数」当排序前置键 / 缺字段者沉底**：能修好当天那两局
+#:      （自奏 / 神艺），但全量 **175→151**（73.5%→63.4%），且**破坏两个已锁
+#:      案例**（幻影骑士团、阿莱斯特）。原因：条目名只点名一个字段、实际是
+#:      多字段的卡组很多（`Phantom Knights Orcust` 名字并列两轴，可那局真的
+#:      只该命中幻影轴；`Invoked` 指融合怪字段 244，而主卡 `Aleister the
+#:      Invoker` 是另一个字段 481 —— 机器不知道它俩是一家）。**同一个规则
+#:      在这份数据上必然二选一**，硬做就是过拟合。
+#:   2. **卡表大小归一化**（命中率 = hits/卡表大小、或按卡表大小放大容差）：
+#:      全量 **175→155/158**。原因：自奏局里 `Mitsurugi Orcust` 多出的命中是
+#:      **别的真实轴**的卡（绚岚 465×2 + 气旋），不是泛用噪声 —— 它 bayes 更好
+#:      说明那些卡使用率确实高；按卡表大小罚它会把幻影骑士团那类也一起罚错。
+#:
+#:   → **已知局限**：露出卡以泛用 + 单轴为主、正解与近邻只差 1~3 张命中时，
+#:     纯统计分不开。要真修得做**轴级识别**（每个轴独立卡表 + 判主轴），
+#:     那是另一个量级的工程，且与上面的多字段案例天然冲突（用户「之后再研究」）。
+FIELD_MISS_CUT = 2
 
 _NAME_CACHE = {}
 _DATA_CACHE = {}
@@ -356,6 +389,9 @@ def guess_deck(revealed_ids, index, groups, prefill_tiers=PRE_FILL_TIERS):
     order = expand(revealed_ids, groups)
     n = len(order)
     miss = math.log(ALPHA / (100.0 + ALPHA))
+    #: 露出卡覆盖到的 setcode 集合（**字段校验**用，见 `FIELD_MISS_CUT`）——
+    #: 只算一次，逐候选复用。
+    revealed_sc = _revealed_setcodes(revealed_ids, groups)
     cands = []
     for name, d in index.items():
         cards = d['cards']
@@ -369,6 +405,8 @@ def guess_deck(revealed_ids, index, groups, prefill_tiers=PRE_FILL_TIERS):
                 score += math.log((per + ALPHA) / (100.0 + ALPHA))
         conf = (float(hits) / n) if n else 0.0
         tier = d.get('tier')
+        #: ★ 字段校验：条目名点名的字段，在露出卡里一个都没出现 -> 砍有效命中
+        fm = missing_named_fields(name, revealed_sc)
         cands.append({
             'name': name, 'tier': tier,
             'source_name': d.get('source_name') or name,
@@ -377,6 +415,10 @@ def guess_deck(revealed_ids, index, groups, prefill_tiers=PRE_FILL_TIERS):
             'hits': hits, 'bayes': score, 'confidence': conf,
             'explained': hits, 'revealed': n,
             'sample': d.get('total'),
+            #: 名字里「零露面」的字段列表（空 = 都露面了 / 名字无字段词）
+            'field_miss': fm,
+            #: 有效命中数 = hits − (有缺字段 ? FIELD_MISS_CUT : 0)，排序第一键用它
+            'eff_hits': max(0, hits - (FIELD_MISS_CUT if fm else 0)),
             'prefill': False,
         })
     sort_candidates(cands)
@@ -436,6 +478,105 @@ def tier_rank(tier):
     return TIER_RANK.get(str(tier or '').strip(), 0)
 
 
+#: 英文词 -> 该词的**主要 setcode**（懒建、进程内缓存）。建一次约 0.3s。
+#: 只取出现最多的那个字段号 —— 词义歧义时（`Phantom` 在 219/27 都有）
+#: 取主流那个即可，本判据只用来「发现名字里的字段在露出卡里一张没中」。
+_WORD_SC_CACHE = None
+#: 分词时忽略的词（不是字段名）
+_WORD_STOP = frozenset((
+    'the', 'of', 'and', 'a', 'no', 'control', 'engine', 'deck', 'type',
+    'pure', 'mix', 'variant',
+))
+
+
+def _word_setcode_index():
+    """`{英文词(小写): setcode}` —— 从 ygocdb 卡表反查（懒建 + 缓存）。
+
+    为什么用「英文名里的词」反查：站内条目名是英文（`Mitsurugi Orcust`），
+    而 setcode 只能从卡表拿 —— 卡表里 `Mitsurugi` 系的卡 en_name 都带
+    `Mitsurugi` 这个词，反过来就能把「名字里的词」映到字段号。
+    """
+    global _WORD_SC_CACHE
+    if _WORD_SC_CACHE is not None:
+        return _WORD_SC_CACHE
+    import collections as _c
+    import re as _re
+    from core.card_names import ygocdb as _ygocdb
+    words = _c.defaultdict(_c.Counter)
+    try:
+        db = _ygocdb() or {}
+    except Exception:                                    # noqa: BLE001
+        db = {}
+    for cid, v in db.items():
+        en = (v or {}).get('en_name') or ''
+        if not en:
+            continue
+        scs = _card_setcodes(int(cid)) if str(cid).isdigit() else frozenset()
+        if not scs:
+            continue
+        for w in set(_re.findall(r"[A-Za-z][A-Za-z'\-]+", en)):
+            if w.lower() in _WORD_STOP:
+                continue
+            for sc in scs:
+                words[w.lower()][sc] += 1
+    #: ⚠️ 保留该词的**所有** setcode（不是只取最多的那个）—— 同一个词可能对应
+    #: 多个字段：`Invoked` 的融合怪是 244、而主卡 `Aleister the Invoker` 是 481，
+    #: 只取最多的 244 会把主卡场次误判成「缺字段」（2026-10-16 实测踩过）。
+    #: 但**丢掉占比过低的**（噪声字段，如某个词偶然出现在别的字段卡名里）。
+    _WORD_SC_CACHE = {}
+    for w, cnt in words.items():
+        top = cnt.most_common()
+        hi = top[0][1]
+        _WORD_SC_CACHE[w] = {sc for sc, n in top if n >= max(1, hi * 0.2)}
+    return _WORD_SC_CACHE
+
+
+def clear_word_setcode_cache():
+    """清字段词索引缓存（测试 / 上游卡表刷新后用）。"""
+    global _WORD_SC_CACHE
+    _WORD_SC_CACHE = None
+
+
+def name_setcodes(name):
+    """条目名 -> 它在名字里点名了的 setcode 列表（去重；认不出的词忽略）。
+
+    一个词可能对应多个字段（`Invoked` -> {244, 481}），这里取**并集** ——
+    任一字段露面都算「这个字段出现了」（见 `missing_named_fields`）。
+    """
+    import re as _re
+    idx = _word_setcode_index()
+    out = []
+    for w in _re.split(r"[\s\-_]+", name or ''):
+        if not w or w.lower() in _WORD_STOP:
+            continue
+        scs = idx.get(w.lower())
+        if not scs:
+            continue
+        for sc in sorted(scs):
+            if sc not in out:
+                out.append(sc)
+    return out
+
+
+def missing_named_fields(name, revealed_sc):
+    """条目名点名的字段里，setcode 在**露出卡**里一个都没出现的那些。
+
+    返回 `[]` = 名字里的字段都露面了（或名字里没有可识别的字段词）。
+    """
+    return [sc for sc in name_setcodes(name) if sc not in revealed_sc]
+
+
+def _revealed_setcodes(ids, groups):
+    """露出卡 -> 覆盖到的 setcode 集合（字段校验用）。"""
+    out = set()
+    for cid in ids or []:
+        try:
+            out |= _card_setcodes(int(cid))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
 def sort_candidates(cands, mode='hits'):
     """排序（原地 + 返回同一列表）。
 
@@ -455,7 +596,9 @@ def sort_candidates(cands, mode='hits'):
         bucket = HITS_TOLERANCE + 1
 
         def key(c):
-            head = (-(c['hits'] // bucket),)
+            #: ★ 第一键用**有效命中**（`eff_hits`，缺字段时已砍过）——
+            #: 见 `FIELD_MISS_CUT`。旧候选没有该键时退化成 hits（兼容回测/老调用）。
+            head = (-(int(c.get('eff_hits', c['hits'])) // bucket),)
             mid = ((-tier_rank(c.get('tier')), -c['bayes'])
                    if (c.get('confidence') or 0.0) >= TIER_TRUST_CONF
                    else (-c['bayes'], -tier_rank(c.get('tier'))))

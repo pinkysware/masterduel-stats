@@ -434,5 +434,85 @@ class TestUiEntryPoints(unittest.TestCase):
         self.assertEqual((got[0]['hits'], got[0]['revealed']), (5, 5))
 
 
+class TestFieldCheck(unittest.TestCase):
+    """★ 字段校验（2026-10-16 用户拍板「字段当罚分项」）。
+
+    实机起因：对手露出 12 张**零张巳剑**，却判成 `Mitsurugi Orcust`
+    —— 它卡表 92 张（含自奏/巳剑/契印/绚岚全轴），靠别的轴 + 泛用卡凑命中，
+    而**名字里的「Mitsurugi」一张没中也不扣分**。
+
+    判据：条目名点名的字段（`name_setcodes`），其 setcode 在露出卡里一个都
+    没出现 -> 有效命中（`eff_hits`）砍 `FIELD_MISS_CUT` 张。
+    """
+
+    def test_name_setcodes_maps_words(self):
+        """名字里的字段词 -> setcode（用真卡表反查）。"""
+        #: 这几个词在卡表里是确定的字段（实测）
+        self.assertEqual(dg.name_setcodes('Mitsurugi Orcust'), [451, 283])
+        self.assertEqual(dg.name_setcodes('Artmage'), [461])
+        #: 中文名 / 无字段词 -> 空（判据碰不到 -> 不误伤自定义条目）
+        self.assertEqual(dg.name_setcodes('狱神耀圣'), [])
+        self.assertEqual(dg.name_setcodes(''), [])
+
+    def test_missing_named_field_cut(self):
+        """名字点名的字段零露面 -> 有效命中被砍（且原 hits 不改，便于展示）。"""
+        #: 造一条「名字含巳剑」的候选：卡表 5 张，露出全中
+        idx = dg.build_index(ref({
+            'Mitsurugi Orcust': deck('Trending', 9, GENERIC),
+        }), GROUPS)
+        #: 露出全是通用卡（不含任何巳剑 setcode）-> 名字里的 Mitsurugi 零露面
+        cands = dg.guess_deck([1, 2, 3, 4, 5], idx, GROUPS)
+        top = cands[0]
+        self.assertEqual(top['hits'], 5, '原始命中仍是 5（照常展示）')
+        self.assertEqual(top['eff_hits'], 5 - dg.FIELD_MISS_CUT,
+                         '名字里字段零露面 -> 有效命中砍 %d' % dg.FIELD_MISS_CUT)
+        self.assertTrue(top['field_miss'], '该标出缺失的字段')
+
+    def test_field_present_no_cut(self):
+        """名字里的字段在露出卡里露面了 -> 不砍。"""
+        idx = dg.build_index(ref({
+            'Mitsurugi': deck('Trending', 9, GENERIC),
+        }), GROUPS)
+        #: 真卡 21349 = 天羽羽斩之巳剑（setcode 451）掺进露出
+        cands = dg.guess_deck([1, 2, 3, 21349], idx, GROUPS)
+        top = cands[0]
+        self.assertEqual(top['field_miss'], [], '巳剑露面了，不该算缺字段')
+        self.assertEqual(top['eff_hits'], top['hits'], '不缺字段 -> 不砍')
+
+    def test_field_cut_can_flip_ranking(self):
+        """★ 核心：靠别的轴凑命中、名字字段零露面的条目，被砍后**掉档**。
+
+        场景（照抄实机自奏局的结构）：
+          * `Mitsurugi Orcust`（名字含巳剑 451）卡表大、靠通用卡凑 5 命中；
+          * `Orcust`（名字含自奏 283）命中 4，且**自奏卡 20947 露面了**。
+        露出含 20947（自奏）但不含任何巳剑卡：
+          -> 冒充者缺 [451] 砍 2 = 3；真身不缺 = 4 -> 真身赢。
+        """
+        #: 两边卡表都收通用卡 + 自奏卡 20947（让「自奏露面」这个前提成立）
+        idx = dg.build_index(ref({
+            'Mitsurugi Orcust': deck('Trending', 9, {**GENERIC, 20947: 100}),
+            'Orcust': deck('Trending', 9, {**GENERIC, 20947: 100}),
+        }), GROUPS)
+        cands = dg.guess_deck([1, 2, 3, 4, 5, 20947], idx, GROUPS)
+        by = {c['name']: c for c in cands}
+        #: 两者命中数相同（都 6）—— 靠字段校验分开：冒充者缺巳剑、被砍 2
+        self.assertEqual(by['Mitsurugi Orcust']['hits'],
+                         by['Orcust']['hits'])
+        self.assertEqual(by['Mitsurugi Orcust']['field_miss'], [451], '缺巳剑')
+        self.assertEqual(by['Orcust']['field_miss'], [], '自奏露面了')
+        self.assertEqual(by['Mitsurugi Orcust']['eff_hits'],
+                         by['Orcust']['eff_hits'] - dg.FIELD_MISS_CUT)
+        self.assertEqual([c['name'] for c in cands][0], 'Orcust',
+                         '同命中数下，缺字段的冒充者被砍后该排后面')
+
+    def test_cut_value_is_two(self):
+        self.assertEqual(dg.FIELD_MISS_CUT, 2,
+                         '全量回测实测：砍 2 最优（砍 3/4 不回归、砍 6 开始误伤）')
+
+    def test_clear_cache_helper(self):
+        dg.clear_word_setcode_cache()
+        self.assertEqual(dg.name_setcodes('Artmage'), [461])
+
+
 if __name__ == '__main__':
     unittest.main()
