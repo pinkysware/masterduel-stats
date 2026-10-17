@@ -39,6 +39,7 @@ import urllib.request
 import zipfile
 from datetime import datetime
 
+from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJ)
 
@@ -58,7 +59,7 @@ URL_MD5 = BASE + '/cards.zip.md5'
 UA = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
 #: 归档对局记录（`--check-update` 从这里汇总 unknown 卡 id）
-RECORDS_DIR = os.path.join(PROJ, 'data', 'archive', 'duel_records')
+RECORDS_DIR = paths.data_path('archive', 'duel_records')
 
 
 def read_ygocdb(path=YGOCDB):

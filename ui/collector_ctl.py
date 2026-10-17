@@ -43,12 +43,13 @@ from __future__ import annotations
 import json
 import os
 import sys
+from core import paths
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: 采集器写的 pid 文件（与 `tools/duel_collector.py` 的 `PID_PATH` 同一份）
 #: ⚠️ 文件名是 `duel_collector.pid`（**不是** `collector_pid.json`）
-PID_PATH = os.path.join(PROJ, 'data', 'archive', 'duel_collector.pid')
+PID_PATH = paths.data_path('archive', 'duel_collector.pid')
 
 
 def _load_pid() -> dict:

@@ -14,13 +14,14 @@ import hashlib
 import json
 import os
 import time
+from core import paths
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: 状态文件（本机数据；`MD_MY_DECK_STATE` 可覆盖，单测用临时文件）
 #: 状态文件路径。⚠️ **读的时候**再解析环境变量（别在 import 期定格）——
 #: 测试要把 `MD_MY_DECK_STATE` 指到临时文件，而测试模块 import 顺序不定；
 #: import 期定格的话，先 import 的测试会读到用户真实状态（2026-09-22 实测）。
-DEFAULT_STATE_PATH = os.path.join(PROJ, 'data', 'my_deck.json')
+DEFAULT_STATE_PATH = paths.data_path('my_deck.json')
 
 
 def _state_path() -> str:

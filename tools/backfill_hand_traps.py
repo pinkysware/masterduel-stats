@@ -33,10 +33,11 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
+from core import paths
 from core import duel_record
 from core.storage import Storage
 
-DEFAULT_RECORDS = os.path.join(PROJ, 'data', 'archive', 'duel_records')
+DEFAULT_RECORDS = paths.data_path('archive', 'duel_records')
 
 
 def _dump_duel_json(record_dir, data):

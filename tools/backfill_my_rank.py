@@ -36,6 +36,7 @@ import json
 import os
 import sys
 
+from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
@@ -43,7 +44,7 @@ if PROJ not in sys.path:
 from core.storage import Storage  # noqa: E402
 
 #: 记录目录根（与采集器默认一致）
-DEFAULT_RECORDS = os.path.join(PROJ, 'data', 'archive', 'duel_records')
+DEFAULT_RECORDS = paths.data_path('archive', 'duel_records')
 #: 采集器写在每个记录目录里的段位文件名
 PROBE_NAME = 'my_rank_after.json'
 

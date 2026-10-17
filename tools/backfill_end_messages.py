@@ -34,10 +34,11 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
+from core import paths
 from core import duel_record
 from core.storage import Storage, DONE_RESULTS
 
-DEFAULT_EM = os.path.join(PROJ, 'data', 'archive', 'end_messages.jsonl')
+DEFAULT_EM = paths.data_path('archive', 'end_messages.jsonl')
 
 
 def load_entries(path=DEFAULT_EM):

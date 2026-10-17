@@ -26,9 +26,10 @@ import io
 import json
 import os
 import time
+from core import paths
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STATE_PATH = os.environ.get('MD_RANK_STATE') or os.path.join(PROJ, 'data', 'rank_state.json')
+STATE_PATH = os.environ.get('MD_RANK_STATE') or paths.data_path('rank_state.json')
 
 RANK_MASTER = 7
 RANK_PLATINUM = 5

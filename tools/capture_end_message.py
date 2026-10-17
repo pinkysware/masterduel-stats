@@ -38,6 +38,7 @@ import sys
 from datetime import datetime
 from typing import List
 
+from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
@@ -47,7 +48,7 @@ from core.memread.end_message import (                      # noqa: E402
 
 
 #: 采样记录落盘位置（append-only）
-OUT_PATH = os.path.join(PROJ, 'data', 'archive', 'end_messages.jsonl')
+OUT_PATH = paths.data_path('archive', 'end_messages.jsonl')
 
 #: Untapped 日志目录（`Game ended: result=Win/Lose` 那行在这里）
 LOG_DIR = os.path.join(os.environ.get('APPDATA')

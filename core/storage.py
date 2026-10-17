@@ -42,9 +42,11 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
+from core import paths
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_DB = os.path.join(PROJ, 'data', 'masterduel.db')
+#: 数据库（**可写**）—— 安装版落在 `%LOCALAPPDATA%\MasterDuelStats`（见 core/paths）
+DEFAULT_DB = paths.data_path('masterduel.db')
 
 #: 计入胜率分母的结果（`(未结束)` 不算，与 v1 的 show_stats 一致）
 DONE_RESULTS = ('Win', 'Lose', 'Draw')

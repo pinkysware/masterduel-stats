@@ -373,7 +373,8 @@ class DashboardShellTest(unittest.TestCase):
         # 同日移除「刷新数据」（采集器自动做）；
         # 2026-10-09 用户定：新增「参照库刷新」（s_refdecks，卡组构成的逐卡使用率）→ 9 项
         # 2026-10-17 用户定：新增「显示我方/对方手坑列」两项（战绩页列开关）→ 11 项
-        self.assertEqual(len(dashboard.SETTINGS_PAGES), 11)
+        # 2026-10-18 用户定：新增「游戏对局数据」（数据目录可改）→ 12 项
+        self.assertEqual(len(dashboard.SETTINGS_PAGES), 12)
         self.assertIn('获取新卡组名', dashboard.PAGE_HINTS['decks'][1] + dashboard.PAGE_HINTS['decks'][0])
 
     # ------------------------------------------------------------ 几何持久化

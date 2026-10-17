@@ -535,7 +535,30 @@ _T = {
     '先手': ('Going 1st', '先攻'),
     '后手': ('Going 2nd', '後攻'),
     '先手胜率': ('Going 1st Win Rate', '先攻勝率'),
-    '显示我方手坑列': ('Show My Hand Traps', '自分の手札誘発列を表示'),
+    '游戏对局数据': ('Game Data', '対戦データ'),
+    '更改…': ('Change...', '変更...'),
+    '自动（%s）': ('auto (%s)', '自動（%s）'),
+    '程序目录': ('program folder', 'プログラムフォルダー'),
+    '用户数据目录': ('user data folder', 'ユーザーデータ'),
+    '当前：': ('Current: ', '現在: '),
+    '选择「游戏对局数据」存放目录':
+        ('Choose where to store game data', '対戦データの保存先を選択'),
+    '不能选这个目录': ('Folder not allowed', 'このフォルダーは選べません'),
+    '这是程序自带的素材目录（只读取）。请选一个空目录或其它磁盘。':
+        ('That is the read-only assets folder. Pick an empty folder or another drive.',
+         '読み取り専用のアセットです。空フォルダーか別ドライブを選んでください。'),
+    '已保存': ('Saved', '保存しました'),
+    '游戏对局数据将存放到：\n%s\n\n请重启界面（设置 → 重启界面）后生效。\n现有数据不会自动搬过去 —— 需要的话请手动复制。':
+        ('Game data will be stored in:\n%s\n\n'
+         'Restart the UI (Settings -> Restart) to apply.\n'
+         'Existing data is not moved automatically - copy it yourself if needed.',
+         '対戦データの保存先:\n%s\n\n'
+         'UI を再起動すると有効になります。\n'
+         '既存データは自動移動しません。必要なら手動でコピーしてください。'),
+    '保存失败': ('Save failed', '保存に失敗'),
+    '写不了 %s，请检查目录权限。':
+        ('Cannot write %s - check permissions.', '%s に書き込めません（権限を確認）。'),
+
     '显示对方手坑列': ('Show Opp Hand Traps', '相手の手札誘発列を表示'),
     '最近对局设置': ('Recent Duels Settings', '最近の対戦の設定'),
     '隐藏卡组列': ('Hide Deck Column', 'デッキ列を隠す'),

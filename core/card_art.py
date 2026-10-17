@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import time
 from typing import Dict, Optional
+from core import paths
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -31,12 +32,12 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: 带 `!art` 后缀是纯卡绘 256²，那版被推翻）
 ART_URL = 'https://cdn.233.momobako.com/ygopro/pics/%s.jpg'
 #: 缓存目录（可再生 → gitignore）
-CACHE_DIR = os.path.join(PROJ, 'data', 'card_art')
+CACHE_DIR = paths.data_path('card_art')
 #: **纯卡绘** CDN（去卡框、去效果文）—— 按 **Konami 密码**寻址。
 #: ⚠️ 与 `cards/<konami>.jpg`（整张卡）不同；2026-10-08 肉眼确认过是纯卡绘。
 CROPPED_URL = 'https://images.ygoprodeck.com/images/cards_cropped/%s.jpg'
 #: 纯卡绘缓存目录（可再生 → gitignore；与整张卡分开存，别互相覆盖）
-CROPPED_DIR = os.path.join(PROJ, 'data', 'card_art_cropped')
+CROPPED_DIR = paths.data_path('card_art_cropped')
 #: 存图**高**（完整卡是 59:86 长方形，宽按比例；KeepAspectRatio 不裁切）
 SIDE = 200
 #: 两次下载之间的最小间隔（秒）—— 礼貌限流

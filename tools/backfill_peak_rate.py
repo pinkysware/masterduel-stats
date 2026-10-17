@@ -31,6 +31,7 @@ import json
 import os
 import sys
 
+from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
@@ -39,7 +40,7 @@ from core.memread.peak_rate import decode_peak_value, decode_season  # noqa: E40
 from core.storage import Storage                                    # noqa: E402
 
 #: 记录目录根（与采集器默认一致）
-DEFAULT_RECORDS = os.path.join(PROJ, 'data', 'archive', 'duel_records')
+DEFAULT_RECORDS = paths.data_path('archive', 'duel_records')
 #: 采集器写在每个记录目录里的巅峰积分文件名
 PROBE_NAME = 'peak_rate.json'
 

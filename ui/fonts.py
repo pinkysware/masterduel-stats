@@ -37,10 +37,11 @@ from __future__ import annotations
 import os
 from typing import List
 
+from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: 自带字体目录
-FONT_DIR = os.path.join(PROJ, 'data', 'fonts')
+FONT_DIR = paths.data_path('fonts')
 
 _EXTS = ('.ttf', '.otf')
 

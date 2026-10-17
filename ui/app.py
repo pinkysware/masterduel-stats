@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox,
                                QRadioButton, QScrollArea, QSystemTrayIcon,
                                QVBoxLayout, QWidget)
 
+from core import paths
 from core import ui_actions, ui_state
 from core import deck_guess
 from core.deck_images import DeckImages
@@ -40,12 +41,12 @@ from ui.i18n import tr
 from ui.selector import MAX_SUGGEST, DeckSelectorPanel
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOCK_PATH = os.path.join(PROJ, 'data', '.duel_ui.lock')
+LOCK_PATH = paths.data_path('.duel_ui.lock')
 #: 语言显示名 / 关窗选项的**单一来源在 `ui.theme`**（09-26 设置页优化挪的），
 #: 这里按需 import —— 别再在本文件重建第二份。
 
 #: 卡组覆盖表（`data/deck_name_cn.csv`）—— 与 `tools/fetch_meta_decks.py` 的 `CN_CSV` 同一个文件
-CN_CSV = os.path.join(PROJ, 'data', 'deck_name_cn.csv')
+CN_CSV = paths.resolve('deck_name_cn.csv')
 
 #: 胜负修正菜单（末尾那项 `None` = 清除结论；标签唯一来源 = `ui_actions.RESULT_LABELS`）
 RESULT_ACTIONS = ui_actions.RESULT_CHOICES + ((None, '清除结果'),)

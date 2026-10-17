@@ -33,10 +33,11 @@ import os
 
 from core.card_names import load as load_names, setcodes as _card_setcodes
 
+from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: 参照库（`tools/fetch_mdm_decks.py` 产出，gitignore）
-DEFAULT_REFERENCE = os.path.join(PROJ, 'data', 'mdm_deck_cards.json')
+DEFAULT_REFERENCE = paths.resolve('mdm_deck_cards.json')
 
 #: `data/card_data.json`（卡 id → 中文名），分组时的兜底源
 CARD_DATA = os.path.join(PROJ, 'data', 'card_data.json')

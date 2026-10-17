@@ -51,6 +51,7 @@ import sys
 import time
 from typing import NamedTuple, Optional
 
+from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
@@ -67,7 +68,7 @@ from core.memread.process import SafeProcess, find_pids_by_name  # noqa: E402
 GAME_DIR = r'D:\steam\steamapps\common\Yu-Gi-Oh!  Master Duel'
 
 #: 采样记录落盘位置（append-only）
-OUT_PATH = os.path.join(PROJ, 'data', 'archive', 'duel_modes.jsonl')
+OUT_PATH = paths.data_path('archive', 'duel_modes.jsonl')
 
 #: 实例里的字段名（**都是公开信息**）
 FIELD_MODE = 'gameMode'

@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (QComboBox, QCompleter, QDialog, QFileDialog,
                                QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 from ui.i18n import tr
 
+from core import paths
 from core import deck_csv, deck_images
 from ui import theme, widgets
 from ui.floating import WindowButton
@@ -45,7 +46,7 @@ from ui.script_runner import ScriptRunner
 #: 项目根（卡图路径相对项目根，存图时要拼回来）
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: 站内全量名单（分组判据的数据源）—— fetch_meta_decks.SITE_NAMES_PATH 同一份
-_SITE_NAMES_PATH = os.path.join(PROJ, 'data', 'site_deck_names.json')
+_SITE_NAMES_PATH = paths.resolve('site_deck_names.json')
 #: 覆盖表的默认位置（真源；`core.deck_csv.CN_CSV` 是唯一来源）
 DEFAULT_CSV = deck_csv.CN_CSV
 #: 保存后跑这条命令把表贴进库（**不联网**，只读 CSV 写库）

@@ -44,6 +44,7 @@ import hashlib
 from collections import Counter, defaultdict
 from datetime import datetime, date
 
+from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
@@ -56,9 +57,9 @@ HOME = os.path.join(os.environ.get('APPDATA',
                                    os.path.expanduser('~')),
                     'untapped-companion')
 LOGS = [os.path.join(HOME, 'log.old.log'), os.path.join(HOME, 'log.log')]
-CARDS_JSON = os.path.join(PROJ, 'data', 'card_data.json')
+CARDS_JSON = paths.asset_path('card_data.json')   # 只读素材（随包）
 DECKS_JSON = os.path.join(HOME, 'ygom', 'decks.json')
-ARCHIVE_DIR = os.path.join(PROJ, 'data', 'archive')
+ARCHIVE_DIR = paths.data_path('archive')
 MATCHES = os.path.join(ARCHIVE_DIR, 'matches.jsonl')   # v1 路径，已退役（见模块头）
 STATE = os.path.join(ARCHIVE_DIR, 'state.json')
 OPP_DECKS = os.path.join(ARCHIVE_DIR, 'opp_decks.json')   # 对手卡组字典（手填累积）

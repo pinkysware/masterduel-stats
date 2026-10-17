@@ -84,6 +84,7 @@ SETTINGS_PAGES: Tuple[Tuple[str, str], ...] = (
     ('卡表更新', 's_cardtable'),
     ('参照库刷新', 's_refdecks'),
     ('语言', 's_lang'),
+    ('游戏对局数据', 's_datadir'),
     ('显示我方手坑列', 's_show_my_traps'),
     ('显示对方手坑列', 's_show_opp_traps'),
     ('游戏启动时弹悬浮窗', 's_autoshow'),
@@ -130,7 +131,8 @@ def float_hidden_cols() -> tuple:
 #:    工具本体 tools/import_duel_records.py 保留（--apply 仍可手动跑）。
 SETTING_GROUPS = (
     ('数据工具', ('s_audit', 's_banlist', 's_cardtable', 's_refdecks')),
-    ('界面', ('s_lang', 's_show_my_traps', 's_show_opp_traps')),
+    ('界面', ('s_lang', 's_datadir', 's_show_my_traps',
+              's_show_opp_traps')),
     ('行为', ('s_autoshow', 's_close', 's_autostart', 's_restart')),
 )
 
@@ -141,6 +143,7 @@ SETTING_NOTES = {
     's_cardtable': '上游卡表比对与更新（三语卡名）',
     's_refdecks': '卡组构成的参照库（每张卡的使用率，每月一次）',
     's_lang': '卡名 / 卡组名的显示语言（匹配一律走卡 id）',
+    's_datadir': '数据库 / 对局记录 / 卡图缓存放哪儿（可换到其它磁盘）',
     's_show_my_traps': '战绩页「对局记录」最右「我方手坑」列',
     's_show_opp_traps': '战绩页「对局记录」最右「对方手坑」列',
     's_autoshow': '检测到游戏启动时，自动弹出悬浮窗',
@@ -638,6 +641,8 @@ class SettingsIndexPage(QWidget):
     # ---- 行内控件（09-27：一级直达） --------------------------------
     def _make_control(self, key):
         """行右侧控件。数据工具 = 「运行」按钮（多入口的卡表给两个）。"""
+        if key == 's_datadir':
+            return self._make_datadir_control()
         if key == 's_lang':
             return self._make_combo(
                 [(k, theme.LANG_NAMES[k]) for k in theme.LANGS], 'ui/lang')
@@ -700,6 +705,61 @@ class SettingsIndexPage(QWidget):
         combo.activated.connect(                       # ★ 只在用户操作时发
             lambda idx, q=qkey: self._save(q, combo.itemData(idx)))
         return combo
+
+    def _make_datadir_control(self):
+        """「游戏对局数据」：显示当前目录 + [更改…] 按钮。
+
+        ★ 2026-10-18 用户：「可写数据在安装目录非 Program Files 时装在程序目录，
+        或者在设置里加可以数据位置编辑」—— 两条都做了：
+        * **自动**：`core.paths._default_data_dir()` 先看程序目录能不能写；
+        * **手动**：这里选一个目录，写进 `<程序目录>/paths.ini`（`core.paths.read_pref`）。
+
+        改完**需要重启**（采集器/界面在启动时就把路径定死了，热切换会让
+        新旧两个进程往不同目录写）。所以这里只写偏好 + 明确提示重启。
+        """
+        from core import paths as _paths
+        box = QWidget()
+        h = QHBoxLayout(box)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(theme.S_XS)
+        tip = ('自动（%s）' % tr('程序目录') if _paths.is_portable()
+               else '自动（%s）' % tr('用户数据目录'))
+        lab = _lab(tip, 'label', size=theme.F_BODY_SM)
+        lab.setToolTip(tr('当前：') + _paths.DATA_DIR)
+        h.addWidget(lab)
+        btn = QPushButton(tr('更改…'))
+        btn.setFont(widgets.font(theme.F_BODY))
+        btn.setFixedHeight(btn.fontMetrics().height() + 12)
+        btn.clicked.connect(self._pick_data_dir)
+        h.addWidget(btn)
+        return box
+
+    def _pick_data_dir(self):
+        """选「游戏对局数据」目录（含「恢复自动」）。写完提示重启。"""
+        from core import paths as _paths
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        start = _paths.read_pref() or _paths.DATA_DIR
+        d = QFileDialog.getExistingDirectory(
+            self, tr('选择「游戏对局数据」存放目录'), start)
+        if not d:
+            return
+        d = os.path.normpath(d)
+        #: 别让用户选到「程序目录里的 data」——那会被当素材目录，混乱
+        if os.path.normcase(d) == os.path.normcase(_paths.ASSET_DIR):
+            QMessageBox.warning(
+                self, tr('不能选这个目录'),
+                tr('这是程序自带的素材目录（只读取）。请选一个空目录或其它磁盘。'))
+            return
+        if _paths.write_pref(d):
+            QMessageBox.information(
+                self, tr('已保存'),
+                tr('游戏对局数据将存放到：\n%s\n\n'
+                   '请重启界面（设置 → 重启界面）后生效。\n'
+                   '现有数据不会自动搬过去 —— 需要的话请手动复制。') % d)
+        else:
+            QMessageBox.warning(self, tr('保存失败'),
+                                tr('写不了 %s，请检查目录权限。')
+                                % _paths._config_path())
 
     def _make_flag_checkbox(self, qkey):
         """一个**布尔开关**（QCheckBox），勾上写 '1'、取消写 '0'。

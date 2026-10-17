@@ -43,9 +43,15 @@
 
 | 附件 | 体积 | 需要什么 |
 |---|---|---|
+| `masterduel-stats-Setup-1.0.7.exe` | ~130 MB | **一键安装（可选）** —— 双击装完即可用；数据默认跟程序放在一起，装在 `Program Files` 时自动改存 `%LOCALAPPDATA%\MasterDuelStats` |
 | `masterduel-stats-v1.0.7-win64-full.zip` | ~194 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `MDStats.exe` |
 | `masterduel-stats-v1.0.7-win64-lite.zip` | ~5 MB | 需先装 Python 3.13；首次运行 `MDStats.exe` 会自动安装依赖 |
 | Source code (zip / tar.gz) | 自动 | 源码包，GitHub 对每个 tag 自动附带 |
+
+**关于游戏对局数据的位置**：安装版默认**跟着程序走**（`<安装目录>\data`），
+整个文件夹拷到别的电脑就能接着用。如果装在 `Program Files` 这类没有写权限的地方，
+会自动改存到 `%LOCALAPPDATA%\MasterDuelStats`。两种情况都可以在
+**看板 → 设置 → 界面 → 游戏对局数据**里改成任意目录（改完重启界面生效）。
 
 **最省事的做法**：装好 [Python 3.13](https://www.python.org/downloads/)（勾选
 *Add to PATH*，或确保 `py` 启动器可用），解压下载包，然后**双击 `MDStats.exe`**。

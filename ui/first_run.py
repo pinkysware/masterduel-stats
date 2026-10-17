@@ -35,10 +35,12 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
 from typing import Optional
 
 from PySide6.QtCore import QSettings
+from core import paths
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -46,7 +48,7 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FLAG_KEY = 'firstrun/meta_decks_fetched'
 
 #: 自检日志落盘处（与采集器同一个目录，见 tools/duel_collector.py）
-LOG_PATH = os.path.join(PROJ, 'data', 'archive', 'first_run.log')
+LOG_PATH = paths.data_path('archive', 'first_run.log')
 
 
 def _log(msg: str) -> None:
@@ -72,6 +74,85 @@ def meta_decks_empty(st) -> bool:
         return False
 
 
+#: 旧版便携包把数据放在**程序目录**（`<安装目录>/data`）。安装版换了
+#: `MD_DATA_DIR` 之后，如果用户之前用过便携版，那些数据不应悄悄消失 ——
+#: 首次启动搬到新位置（**只搬可写数据**，不搬随包素材）。
+MIGRATE_FILES = ('masterduel.db', 'masterduel.db-shm', 'masterduel.db-wal',
+                 'my_deck.json', 'rank_state.json', 'rank_state_writes.log',
+                 'present_box_cache.json', 'site_deck_names.json',
+                 'mdm_deck_cards.json', 'untapped_api_raw.json',
+                 'untapped_ids.json')
+MIGRATE_DIRS = ('archive', 'card_art', 'card_art_cropped',
+                'deck_images_custom', 'fonts', 'thumb_cache')
+
+
+def prepare_data_dir() -> list:
+    """首次启动的**数据目录准备**：建目录 + （装成安装版时）迁移旧便携数据。
+
+    返回一行行日志（调用方决定写哪）。**绝不抛** —— 建目录失败也要让界面起来，
+    真正写库失败时用户会在采集器日志里看到更具体的原因。
+    """
+    out = []
+    #: ⚠️ **先迁移、后建目录**（2026-10-18 实测）：`ensure_data_dirs()` 会先建出
+    #: `archive/duel_records`（空），之后「目标目录空不空」的判据就失效 ->
+    #: 对局记录一条都迁不过来。顺序反一下就没这个问题。
+    legacy = paths.asset_path()       # = <安装目录>/data
+    can_migrate = (not paths.is_portable()
+                   and os.path.normcase(legacy) != os.path.normcase(paths.DATA_DIR)
+                   and os.path.isdir(legacy)
+                   #: 已经有库 = 本机已在用新位置，别再迁（否则覆盖现有数据）
+                   and not os.path.exists(paths.data_path('masterduel.db')))
+    if can_migrate:
+        out.extend(_migrate_from(legacy))
+
+    try:
+        made = paths.ensure_data_dirs()
+        for m in made:
+            out.append('[paths] 新建目录 %s' % m)
+    except Exception as e:                               # noqa: BLE001
+        out.append('[paths] 建目录失败: %r' % (e,))
+    return out
+
+
+def _migrate_from(legacy: str) -> list:
+    """把旧便携目录里的**可写数据**搬进 `DATA_DIR`（源保留，幂等）。"""
+    out = []
+
+    moved = []
+    for name in MIGRATE_FILES:
+        src = os.path.join(legacy, name)
+        dst = paths.data_path(name)
+        if os.path.isfile(src) and not os.path.exists(dst):
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+                moved.append(name)
+            except OSError as e:
+                out.append('[migrate] %s 复制失败: %r' % (name, e))
+    for name in MIGRATE_DIRS:
+        src = os.path.join(legacy, name)
+        dst = paths.data_path(name)
+        if not os.path.isdir(src):
+            continue
+        #: ⚠️ **不能用 `not os.path.exists(dst)` 判**：`ensure_data_dirs()` 会先建
+        #: 出 `archive/duel_records`（空目录），于是这条永远为假 -> 对局记录
+        #: 一条都迁不过来（2026-10-18 实测踩过）。
+        #: 正确判据 = **目标里还没有内容**才搬（`dirs_exist_ok` 会合并，不会覆盖）。
+        if os.path.isdir(dst) and os.listdir(dst):
+            continue                      # 目标非空 = 已有更新的数据，别动
+        try:
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+            moved.append(name + '/')
+        except OSError as e:
+            out.append('[migrate] %s 复制失败: %r' % (name, e))
+    if moved:
+        out.append('[migrate] 从旧便携目录迁入 %d 项：%s'
+                   % (len(moved), ', '.join(moved)))
+        out.append('[migrate] 源目录保留未删（%s），确认无误后可手动删除'
+                   % legacy)
+    return out
+
+
 def ensure_meta_decks(app) -> Optional[object]:
     """库空就在后台抓一次清单 + 卡组图；返回 runner（不需要时返回 None）。
 
@@ -81,6 +162,11 @@ def ensure_meta_decks(app) -> Optional[object]:
     """
     if getattr(app, '_demo', False):
         return None
+    #: ★ 2026-10-18：先准备数据目录（建目录 / 从旧便携目录迁数据）——
+    #: 安装版装在 Program Files 时，可写数据在 `%LOCALAPPDATA%`，全新机器上
+    #: 那目录还不存在，必须先建出来（否则第一次写库就失败）。
+    for line in prepare_data_dir():
+        _log(line)
     if getattr(app, '_firstrun_proc', None) is not None:
         return None
 

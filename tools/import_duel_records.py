@@ -46,14 +46,15 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
+from core import paths
 from core import duel_record
 from core.memread.end_message import (arbitrate_result,
                                      result_from_duel_code)
 from core.storage import DECK_SNAPSHOT_TRUSTED_MODES, Storage
 
-DEFAULT_RECORDS = os.path.join(PROJ, 'data', 'archive', 'duel_records')
-DEFAULT_END_MESSAGES = os.path.join(PROJ, 'data', 'archive', 'end_messages.jsonl')
-DEFAULT_DUEL_MODES = os.path.join(PROJ, 'data', 'archive', 'duel_modes.jsonl')
+DEFAULT_RECORDS = paths.data_path('archive', 'duel_records')
+DEFAULT_END_MESSAGES = paths.data_path('archive', 'end_messages.jsonl')
+DEFAULT_DUEL_MODES = paths.data_path('archive', 'duel_modes.jsonl')
 
 
 # ---------------------------------------------------------------- 外部数据源

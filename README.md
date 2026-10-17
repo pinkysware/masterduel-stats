@@ -47,12 +47,15 @@ decks, rank progress and the metagame — with UI in **English / 中文 / 日本
   (up to 5 per cell, `+N` beyond), plus a "Hand Traps" view under Analysis showing
   going-first / going-second splits per deck.
 
+**Where your duel data lives —** the installer keeps it **next to the program** (`<install>\data`) so you can move the whole folder to another PC. If you install somewhere read-only like `Program Files`, it automatically falls back to `%LOCALAPPDATA%\MasterDuelStats`. Either way you can switch to any folder in **dashboard → Settings → Interface → Game Data** (restart the UI to apply).
+
 ## Install & Run
 
 ### Downloads ([Releases](../../releases/latest))
 
 | Asset | Size | Requirements |
 |---|---|---|
+| `masterduel-stats-Setup-1.0.7.exe` | ~130 MB | **One-click installer (optional)** — install and run. Game data lives next to the program by default; under `Program Files` it moves to `%LOCALAPPDATA%\MasterDuelStats` |
 | `masterduel-stats-v1.0.7-win64-full.zip` | ~194 MB | **None** — Python & all deps bundled; unzip anywhere and run `MDStats.exe` |
 | `masterduel-stats-v1.0.7-win64-lite.zip` | ~5 MB | Python 3.13 installed; `MDStats.exe` installs the dependencies on first run |
 | Source code (zip / tar.gz) | auto | for developers — attached automatically by GitHub for each tag |
