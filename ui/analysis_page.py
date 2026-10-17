@@ -26,13 +26,18 @@ from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QActionGroup, QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import (QButtonGroup, QFrame, QGridLayout, QHBoxLayout,
                                QLabel, QMenu, QPushButton, QScrollArea,
-                               QVBoxLayout, QWidget)
+                               QStackedWidget, QVBoxLayout, QWidget)
 
 from core.storage import MODE_GROUP_NAMES
 from ui import theme, widgets
 
 #: 三页签（顺序即显示顺序；值 = `went_first` 语义，与 `cross_matrix` 同签名）
 TABS = ((None, '综合胜率'), (True, '先攻胜率'), (False, '后攻胜率'))
+
+#: 本页的**两个视图**（P2-1 的解法：手坑汇总**不能**塞进 `TABS` —— 那三个页签的
+#: 值就是 `went_first`，塞进去等于传非法值，且两者内容模型完全不同）。
+#: 用与页签**并排的第二个控件**切视图，不动现有三页签。
+VIEWS = (('matrix', '对阵矩阵'), ('traps', '手坑汇总'))
 
 #: 胜率分档（v5 用户口径：颜色只代表胜率区间，柔和不过饱和）
 BUCKETS = ((70.0, 'WIN'), (50.0, 'WARN'), (0.0, 'LOSE'))
@@ -233,6 +238,347 @@ class _GridHost(QWidget):
         p.drawLine(right + 1, top, right + 1, bottom + 1)
 
 
+#: 手坑汇总表：列 = `[卡组] + 12 张手坑`。每列 `(表头, 最小宽)`。
+#: ⚠️ 12 张坑都进表（用户要「12 张手坑」齐全）；卡组列宽些（带图）。
+TRAP_DECK_W = 118
+#: 每张手坑列：表头 = **卡图**（中文名太长，12 列放不下；图 + tooltip 全名），
+#: 格 = `胜率` + 小字 `N场` 两行。58px 够放 `33.3%`@13 与 22px 图。
+TRAP_TRAP_W = 58
+TRAP_ROW_H = 44           # 两行式（胜率 + 场数）-> 行更高
+TRAP_HEAD_H = 34          # 对角标注格要高一点（两行文字 + 斜线）
+TRAP_GAP = 2
+#: 角格宽（照矩阵 `HEAD_W` 的做法：卡组列够画「我方卡组 / 胜率」两行文字）
+TRAP_HEAD_W = 118
+
+
+def _elide(text: str, width: int, size: int) -> str:
+    """超宽就截断加省略号（同 `dashboard._elide`；本文件不引 dashboard）。"""
+    fm = QFontMetrics(widgets.font(size))
+    return fm.elidedText(str(text or ''), Qt.ElideRight, int(width))
+
+
+def _trap_img(key) -> str:
+    """手坑 key -> **纯卡绘**缓存路径（本地，不联网）；没有返回空串（留占位）。"""
+    try:
+        from core import hand_traps as _ht
+        from core import card_art
+        return card_art.cropped_path(_ht.standard_id(key)) or ''
+    except Exception:                                        # noqa: BLE001
+        return ''
+
+
+def _cell_texts(cell) -> tuple:
+    """一个手坑格 -> `(主行, 副行)`：主 = 胜率，副 = `N场`（用户要带场数）。"""
+    if not cell or not int(cell.get('n') or 0):
+        return ('—', '')
+    rate = cell.get('rate')
+    main = _rate_text(rate) if rate is not None else '—'
+    return (main, tr('%d 场') % int(cell.get('n') or 0))
+
+
+class TrapCorner(QWidget):
+    """手坑表左上角的**标注格**（2026-10-18 起不再画对角线，用户说太突兀）：
+
+    * **上 = 「对手手坑」（先手表）/「我方手坑」（后手表）**，**贴最右**；
+    * **下 = 「我方卡组」**，左对齐（与行首卡组格同侧）。
+
+    ⚠️ 与矩阵的摆法**相反**（矩阵上是我方卡组）：用户 2026-10-17 给了图，照图。
+    """
+
+    def __init__(self, trap_side=None, parent=None):
+        super().__init__(parent)
+        #: 右上那句：先手表 = `对手手坑`、后手表 = `我方手坑`
+        self._side = trap_side or tr('对手手坑')
+        self.setMinimumSize(TRAP_HEAD_W, TRAP_HEAD_H)
+
+    def paintEvent(self, ev):                               # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        w, h = float(self.width()), float(self.height())
+        #: ★ 2026-10-18 用户：「去掉分隔线吧太突兀了，把对手手坑/我方手坑
+        #: **向右对齐贴到这个表头框的最右**」—— 不再画对角线。
+        p.setFont(widgets.font(theme.PAGE_F_SMALL))
+        p.setPen(QColor(theme.INK))
+        # 上：这一列是谁的手坑 —— **贴最右**（w - 2，只留 2px 呼吸）
+        p.drawText(QRectF(0, 0, w - 2, h * 0.55),
+                   Qt.AlignRight | Qt.AlignVCenter, self._side)
+        # 下：行头是我方卡组（左对齐，与行首卡组格同侧）
+        p.drawText(QRectF(2, h * 0.45, w - 4, h * 0.55),
+                   Qt.AlignLeft | Qt.AlignVCenter, tr('我方卡组'))
+
+
+
+class HandTrapTable(QWidget):
+    """一张手坑表：行 = 我方卡组，列 = 12 张手坑，格 = 我的胜率（+ 小字场数）。
+
+    * 表头行：`卡组 | <12 张坑名>`；坑名带组色小标（抽/锁/无/解）省地方；
+    * 格：胜率（分档染色）+ 小字 `N场`；**没发生过的格**画淡 `—`；
+    * 列宽按视口自适应（12 列 + 卡组列；太窄就横向滚动，不硬挤）。
+    """
+
+    def __init__(self, traps, side='对手手坑', parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet('HandTrapTable { background: %s;'
+                           ' border: 1px solid %s; border-radius: 6px; }'
+                           % (theme.SURFACE1, theme.HAIRLINE))
+        self._traps = list(traps or [])
+        #: 角格右上那句（`对手手坑` / `我方手坑`）
+        self._side = side
+        self._rows_data = []
+        self._widths = tuple(self._calc_widths(self._avail()))
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(theme.S_MD, theme.S_MD, theme.S_MD, theme.S_MD)
+        lay.setSpacing(theme.S_XS)
+        self._head = QWidget()
+        self._head.setFixedHeight(TRAP_HEAD_H)
+        lay.addWidget(self._head)
+        lay.addWidget(widgets.hairline())
+        self.rows_box = QVBoxLayout()
+        self.rows_box.setContentsMargins(0, 0, 0, 0)
+        self.rows_box.setSpacing(2)
+        lay.addLayout(self.rows_box)
+        self._build_head()
+
+    # ------------------------------------------------------------ 列宽
+    def _avail(self) -> int:
+        """表内可用宽。⚠️ 要减**竖滚动条宽** —— 内容一高 vbar 出现、表宽瞬间少 ~14px，
+        不预留就会冒横向滚动条（与战绩页同一坑，2026-10-16 实测）。"""
+        vp = self.width() or (self.parent().width() if self.parent() else 0)
+        vsb = 0
+        try:
+            par = self.parent()
+            while par is not None and not hasattr(par, 'verticalScrollBar'):
+                par = par.parent()
+            if par is not None:
+                vsb = par.verticalScrollBar().sizeHint().width()
+        except Exception:                                    # noqa: BLE001
+            vsb = 0
+        return int(vp - vsb - theme.S_MD * 2 - theme.S_XS * 2)
+
+    def _calc_widths(self, avail: int) -> tuple:
+        """卡组列固定，12 张坑列**平分**剩余（不够就各自最小宽，横向滚）。
+
+        ⚠️ N 个控件 = **N-1 个间距**（卡组 + 12 坑 = 13 控件 -> 12 个间距）；
+        余数要**补到前几列**，否则合计差几像素（测试锁「宽了必须铺满」）。
+        """
+        n = len(self._traps)
+        if n == 0:
+            return (TRAP_DECK_W,)
+        gaps = n * TRAP_GAP                 # 13 控件 -> 12 间距
+        need = TRAP_DECK_W + n * TRAP_TRAP_W + gaps
+        if avail <= need:
+            return (TRAP_DECK_W,) + (TRAP_TRAP_W,) * n
+        extra = avail - need
+        each, rem = divmod(extra, n)
+        cols = [TRAP_DECK_W] + [TRAP_TRAP_W + each] * n
+        for i in range(rem):               # 余数补到前几列，保证合计 == avail
+            cols[i + 1] += 1
+        return tuple(cols)
+
+    def _apply_widths(self) -> None:
+        w = self._calc_widths(self._avail())
+        if w == self._widths:
+            return
+        self._widths = w
+        self._build_head()
+        self.set_rows(self._rows_data)
+
+    def resizeEvent(self, ev) -> None:                    # noqa: N802
+        super().resizeEvent(ev)
+        self._apply_widths()
+
+    # ------------------------------------------------------------ 表头/行
+    def _build_head(self) -> None:
+        old = self._head.layout()
+        if old is None:
+            old = QHBoxLayout(self._head)
+            old.setContentsMargins(theme.S_XS, 0, theme.S_XS, 0)
+            old.setSpacing(TRAP_GAP)
+        while old.count():
+            it = old.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        #: 左上 = **对角标注格**（照矩阵；右上「我方卡组」、左下本表页签名）
+        old.addWidget(TrapCorner(self._side))
+        for i, t in enumerate(self._traps):
+            #: ★ 表头 = **卡图**（中文手坑名太长，12 列放不下）——
+            #: 图走 `core.card_art.cropped_path`（纯卡绘，与战绩页同一族），
+            #: 没缓存留空占位；**全名进 tooltip**。
+            cell = QWidget()
+            cell.setFixedWidth(int(self._widths[i + 1]))
+            cl = QHBoxLayout(cell)
+            cl.setContentsMargins(0, 0, 0, 0)
+            cl.setSpacing(0)
+            cl.addStretch(1)
+            cl.addWidget(widgets.thumb_label(_trap_img(t.get('key')), 22,
+                                             radius=theme.R_XS))
+            cl.addStretch(1)
+            cell.setToolTip(t.get('name') or '')
+            old.addWidget(cell)
+        old.addStretch(1)
+
+    def set_rows(self, rows) -> None:
+        self._rows_data = list(rows or [])
+        while self.rows_box.count():
+            it = self.rows_box.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+        for r in self._rows_data:
+            self.rows_box.addWidget(self._row(r))
+
+    def _row(self, row: dict) -> QWidget:
+        w = QWidget()
+        w.setFixedHeight(TRAP_ROW_H)
+        hl = QHBoxLayout(w)
+        hl.setContentsMargins(theme.S_XS, 0, theme.S_XS, 0)
+        hl.setSpacing(TRAP_GAP)
+        wids = self._widths
+        # 卡组格（行头，与左上角格同宽）
+        deck_box = QWidget()
+        dl = QHBoxLayout(deck_box)
+        dl.setContentsMargins(theme.S_XS, 0, theme.S_XS, 0)
+        dl.setSpacing(theme.S_XS)
+        dl.addWidget(widgets.thumb_label(row.get('img') or '', 20,
+                                         radius=theme.R_XS))
+        name = str(row.get('deck') or '')
+        lab = _lab(_elide(name, wids[0] - 40, theme.PAGE_F_BODY), 'body',
+                   size=theme.PAGE_F_BODY)
+        lab.setToolTip(name)
+        dl.addWidget(lab)
+        dl.addStretch(1)
+        deck_box.setFixedWidth(int(wids[0]))
+        hl.addWidget(deck_box)
+        cells = row.get('cells') or {}
+        for i, t in enumerate(self._traps):
+            cell = cells.get(t.get('key')) or {}
+            main, sub = _cell_texts(cell)
+            color = (_bucket_color(cell.get('rate'))
+                     if int(cell.get('n') or 0) else theme.NEUTRAL)
+            hl.addWidget(_two_line_cell(main, sub, wids[i + 1], color))
+        hl.addStretch(1)
+        return w
+
+
+def _two_line_cell(main: str, sub: str, width: int, main_color: str,
+                   parent=None) -> QWidget:
+    """两行格：主行（胜率）+ 副行（小字场数），整体居中定宽。"""
+    box = QWidget(parent)
+    box.setFixedWidth(int(width))
+    lay = QVBoxLayout(box)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+    lay.addStretch(1)
+    mlab = _lab(main, 'body', size=theme.PAGE_F_SMALL)
+    mlab.setAlignment(Qt.AlignCenter)
+    mlab.setStyleSheet('color: %s; background: transparent;' % main_color)
+    lay.addWidget(mlab)
+    slab = _lab(sub or '', 'label', size=theme.PAGE_F_SMALL - 2)
+    slab.setAlignment(Qt.AlignCenter)
+    slab.setStyleSheet('color: %s; background: transparent;' % theme.INK_MUTED)
+    lay.addWidget(slab)
+    lay.addStretch(1)
+    return box
+
+
+class _TrapTableBlock(QWidget):
+    """一张表 + 标题行。标题 = 「先手胜率」/「后手胜率」（用户 2026-10-17 定）。
+
+    表头角格照用户给的图：**右上 = 对手手坑（先手表）/ 我方手坑（后手表）**、
+    左下 = 我方卡组。
+    """
+
+    def __init__(self, title: str, traps, side: str, parent=None):
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(theme.S_XS)
+        head = QHBoxLayout()
+        head.setSpacing(theme.S_SM)
+        #: 标题（先手 / 后手）
+        head.addWidget(_lab(title, 'body', size=theme.PAGE_F_BODY,
+                            weight=QFont.Weight.Medium))
+        #: ⚠️ **不加说明小字**（用户 2026-10-17：「不要在表格标题加说明」）——
+        #: 标题只留「先手」/「后手」；角格照矩阵（右上我方卡组 / 左下我的胜率）。
+        head.addStretch(1)
+        wrap = QWidget()
+        wrap.setLayout(head)
+        lay.addWidget(wrap)
+        self.table = HandTrapTable(traps, side=side)
+        lay.addWidget(self.table)
+
+    def set_rows(self, rows) -> None:
+        self.table.set_rows(rows)
+
+
+class TrapSummaryView(QWidget):
+    """「手坑汇总」视图体（可滚动）：**两张表**（我后手·我用 / 我先手·敌用）。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(theme.S_MD)
+        self._note = _lab('', 'muted', size=theme.PAGE_F_SMALL)
+        outer.addWidget(self._note)
+        self.scroll = QScrollArea()
+        self.scroll.setObjectName('rowsScroll')
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.host = QWidget()
+        self.host.setAttribute(Qt.WA_StyledBackground, True)
+        self.host.setStyleSheet('background: %s;' % theme.CANVAS)
+        self.col = QVBoxLayout(self.host)
+        self.col.setContentsMargins(0, 0, 0, 0)
+        self.col.setSpacing(theme.S_XL)
+        self.scroll.setWidget(self.host)
+        outer.addWidget(self.scroll, 1)
+
+    def _clear(self) -> None:
+        """清空整块（含旧表的空态标签 + 每次追加的 stretch —— 见漂移 bug 注释）。"""
+        while self.col.count():
+            it = self.col.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+
+    def set_data(self, data: dict) -> None:
+        data = dict(data or {})
+        self._clear()
+        n_games = int(data.get('n_games') or 0)
+        n_cal = int(data.get('n_calibre') or 0)
+        if n_cal and n_games < n_cal:
+            self._note.setText(
+                tr('共 %d 场入统计 / %d 场有逐卡记录（其余为 API 补录或座位/回合判不出）')
+                % (n_games, n_cal))
+        else:
+            self._note.setText(tr('共 %d 场入统计' % n_games))
+        traps = list(data.get('traps') or [])
+        #: ★ 用户 2026-10-17：先手在**上**、后手在下；标题只写「先手」/「后手」；
+        #: 「谁的手坑」交给表头角格（左下那句）+ 标题右侧的小字说明。
+        specs = ((tr('先手胜率'), '对手手坑', 'first_opp'),
+                 (tr('后手胜率'), '我方手坑', 'second_my'))
+        any_row = False
+        for title, side, key in specs:
+            rows = list(data.get(key) or [])
+            blk = _TrapTableBlock(title, traps, side)
+            blk.set_rows(rows)
+            self.col.addWidget(blk)
+            any_row = any_row or bool(rows)
+        if not any_row:
+            self.col.insertWidget(
+                0, _lab(tr('还没有可统计的对局（需要逐卡记录 + 先/后已知）'),
+                        'muted', size=theme.PAGE_F_BODY))
+        self.col.addStretch(1)
+
+
 class AnalysisPage(QWidget):
     """「对局分析」页：页头（标题 + 三页签 + 筛选器）+ 口径警示 + 可滚动矩阵。"""
 
@@ -258,6 +604,30 @@ class AnalysisPage(QWidget):
         head = QHBoxLayout()
         head.setSpacing(theme.S_MD)
         head.addWidget(_lab(tr('对局分析'), 'body', size=theme.PAGE_F_TITLE))
+        #: ★ 视图切换（2026-10-16）：对阵矩阵 / 手坑汇总 —— **不能**塞进下面三页签
+        #: （页签值 = went_first）。放在标题右边、页签左边。
+        self._view = 'matrix'
+        self._view_buttons = {}
+        self._view_group = QButtonGroup(self)
+        self._view_group.setExclusive(True)
+        for vkey, vname in VIEWS:
+            vb = QPushButton(tr(vname))
+            vb.setCheckable(True)
+            vb.setCursor(Qt.PointingHandCursor)
+            vb.setStyleSheet('QPushButton { background: transparent;'
+                             ' border: 1px solid %s; border-radius: 4px;'
+                             ' padding: 3px 10px; color: %s; }'
+                             'QPushButton:checked { background: %s;'
+                             ' border: 1px solid %s; color: %s; }'
+                             % (theme.HAIRLINE, theme.INK_MUTED,
+                                theme.SURFACE3, theme.ACCENT, theme.INK))
+            vb.setFont(widgets.font(theme.PAGE_F_SMALL))
+            vb.setFixedHeight(vb.fontMetrics().height() + 14)
+            vb.clicked.connect(lambda _c=False, v=vkey: self._pick_view(v))
+            self._view_group.addButton(vb)
+            self._view_buttons[vkey] = vb
+            head.addWidget(vb)
+        self._view_buttons['matrix'].setChecked(True)
         head.addStretch(1)
         self._tabs_group = QButtonGroup(self)
         self._tabs_group.setExclusive(True)
@@ -295,6 +665,9 @@ class AnalysisPage(QWidget):
         filters.addWidget(self._mode_btn)
         filters.addStretch(1)
         outer.addLayout(filters)
+        #: 手坑视图要隐藏「三页签 + 筛选器」那一行？不 —— 筛选器（月/模式）两视图共用，
+        #: 只隐藏三页签（它们只对矩阵有意义）。存页签载体以便切换显隐。
+        self._filters_row = filters
 
         self.scroll = QScrollArea()
         self.scroll.setObjectName('rowsScroll')       # 无边框（复用 theme.qss 规则）
@@ -306,7 +679,12 @@ class AnalysisPage(QWidget):
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setSpacing(GRID_GAP)
         self.scroll.setWidget(self.host)
-        outer.addWidget(self.scroll, 1)
+        #: ★ 两个视图用 QStackedWidget 切（2026-10-16）：0=矩阵（原样）1=手坑汇总
+        self.trap_view = TrapSummaryView()
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.scroll)
+        self.stack.addWidget(self.trap_view)
+        outer.addWidget(self.stack, 1)
 
     # ------------------------------------------------------------ 筛选器
     _KEY_LABEL = {'date': '日期', 'mode': '模式'}
@@ -390,7 +768,23 @@ class AnalysisPage(QWidget):
         for value, btn in self._tab_buttons.items():
             btn.setChecked(value == self._scope)
         self._refresh_filter_texts()
+        self.trap_view.set_data(self._data.get('hand_traps') or {})
         self._rebuild()
+        self._apply_view()
+
+    def _pick_view(self, view: str) -> None:
+        """切视图（矩阵 / 手坑汇总）—— 只换中间那块 + 页签显隐，不重取数据。"""
+        view = view if view in ('matrix', 'traps') else 'matrix'
+        if view == self._view:
+            return
+        self._view = view
+        self._apply_view()
+
+    def _apply_view(self) -> None:
+        """按当前视图切 stack + 显隐三页签（三页签只对矩阵有意义）。"""
+        self.stack.setCurrentIndex(1 if self._view == 'traps' else 0)
+        for btn in self._tab_buttons.values():
+            btn.setVisible(self._view == 'matrix')
 
     def _pick_scope(self, value) -> None:
         if value == self._scope:

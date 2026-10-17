@@ -372,7 +372,8 @@ class DashboardShellTest(unittest.TestCase):
         # 2026-10-05 用户定：新增「游戏启动时弹悬浮窗」（s_autoshow）；
         # 同日移除「刷新数据」（采集器自动做）；
         # 2026-10-09 用户定：新增「参照库刷新」（s_refdecks，卡组构成的逐卡使用率）→ 9 项
-        self.assertEqual(len(dashboard.SETTINGS_PAGES), 9)
+        # 2026-10-17 用户定：新增「显示我方/对方手坑列」两项（战绩页列开关）→ 11 项
+        self.assertEqual(len(dashboard.SETTINGS_PAGES), 11)
         self.assertIn('获取新卡组名', dashboard.PAGE_HINTS['decks'][1] + dashboard.PAGE_HINTS['decks'][0])
 
     # ------------------------------------------------------------ 几何持久化
@@ -435,16 +436,18 @@ class StatsPageV2Test(unittest.TestCase):
         return [lab.text() for lab in self.page.findChildren(QLabel) if lab.text()]
 
     # ③ 表头
-    def test_match_header_exists_with_nine_columns(self):
-        """③ 对局统计**要有表头**，列名与列数一致（**9 列**：2026-09-18 加「模式」、
-        2026-09-20 去「日志」——用户：「不添加这个功能了」）。"""
+    def test_match_header_exists_with_eleven_columns(self):
+        """③ 对局统计**要有表头**，列名与列数一致（**11 列**：2026-09-18 加「模式」、
+        2026-09-20 去「日志」；**2026-10-16 加手坑两列**）。"""
         heads = self.page.findChildren(dashboard.MatchHeader)
         self.assertTrue(heads, '每组都该有表头')
         cols = [l.text() for l in heads[0].findChildren(QLabel)]
         self.assertEqual(cols, [n for n, _w in dashboard.STATS_COLS])
-        self.assertEqual(len(cols), 9)
+        self.assertEqual(len(cols), 11)
         self.assertIn('模式', cols)
         self.assertNotIn('日志', cols)
+        self.assertIn('我方手坑', cols)
+        self.assertIn('对方手坑', cols)
 
     def test_row_cells_match_column_widths(self):
         """★ **每个列元素的宽度 == 列宽、x 与表头逐格相同**（用户 2026-09-18 第二轮：
@@ -3132,3 +3135,358 @@ class CardArtPickerTest(unittest.TestCase):
         btns[0].click()
         self.assertEqual(made, [('tools/fetch_mdm_decks.py', ['--all'])])
 
+
+class HandTrapColumnsTest(StatsPageTest):
+    """手坑两列（2026-10-16）：列宽预算 + 三种值语义。"""
+
+    def test_columns_fit_viewport(self):
+        """★ 列宽合计 + 间距必须 ≤ 1200 窗口的行内可用宽 —— 否则最右列被挤出视口。"""
+        from ui import theme
+        total = sum(w for _n, w in dashboard.STATS_COLS)
+        total += (len(dashboard.STATS_COLS) - 1) * dashboard.MATCH_GAP
+        viewport = (1200 - theme.RAIL_W - 2 - 10)
+        avail = viewport - theme.S_LG * 2 - theme.S_MD * 2 - theme.S_XS * 2
+        self.assertLessEqual(total, avail,
+                             '列宽合计 %d > 行内可用宽 %d' % (total, avail))
+
+    def test_two_trap_columns(self):
+        w = {n: ww for n, ww in dashboard.STATS_COLS}
+        self.assertIn('我方手坑', w)
+        self.assertIn('对方手坑', w)
+        self.assertEqual(w['我方手坑'], w['对方手坑'])
+
+    def test_cell_width_matches_column(self):
+        row = self.page.findChildren(dashboard.MatchRow)[0]
+        cells = row.findChildren(dashboard.HandTrapCell)
+        self.assertEqual(len(cells), 2)
+        self.assertEqual(cells[0].width(), dashboard.STATS_COLS[9][1])
+        self.assertEqual(cells[1].width(), dashboard.STATS_COLS[10][1])
+
+    def test_none_and_empty_render_identically(self):
+        """★ 用户 2026-10-17：没有记录（None）与没用过（[]）**渲染完全一致**。
+
+        「不要一个用 `—` 一个没有」—— 两者都**留空**；区别只在 tooltip：
+        判不出才说明「没有逐卡记录」。
+        """
+        from PySide6.QtWidgets import QLabel
+        none_cell = dashboard.HandTrapCell(None, 90)
+        empty_cell = dashboard.HandTrapCell([], 90)
+        self.assertEqual(none_cell.findChildren(QLabel),
+                         empty_cell.findChildren(QLabel))
+        self.assertEqual(none_cell.findChildren(QLabel), [])
+        self.assertIn('逐卡记录', none_cell.toolTip())     # 判不出有说明
+        self.assertFalse(empty_cell.toolTip())             # 没用过不挂 tooltip
+
+    def test_used_cell_tooltip(self):
+        rows = [{'name': '灰流丽', 'turn': 0, 'img': None},
+                {'name': '增殖的Z', 'turn': 1, 'img': None}]
+        some_cell = dashboard.HandTrapCell(rows, 90)
+        self.assertIn('共 2 张', some_cell.toolTip())
+
+    def test_shows_five_cards(self):
+        """★ 用户 2026-10-17：一格放 **5 张**（目测放得下）。"""
+        self.assertEqual(dashboard.HandTrapCell.MAX_CARDS, 5)
+        from PySide6.QtWidgets import QLabel
+        rows = [{'name': 'c%d' % i, 'turn': 0, 'img': None} for i in range(5)]
+        cell = dashboard.HandTrapCell(rows, 90)
+        self.assertNotIn('+', [l.text() for l in cell.findChildren(QLabel)])
+        #: 5 张必须塞进最小列宽（否则列又要变宽、挤压别的列）
+        self.assertLessEqual(cell.minimumSizeHint().width(),
+                             dashboard.STATS_COLS[9][1])
+
+    def test_overflow_badge_at_least_14px(self):
+        """第 6 张起收 `+N` 角标；字号不许低于 14（页面字号下限锁）。"""
+        from PySide6.QtWidgets import QLabel
+        rows = [{'name': 'c%d' % i, 'turn': 0, 'img': None} for i in range(6)]
+        cell = dashboard.HandTrapCell(rows, 90)
+        badges = [l for l in cell.findChildren(QLabel)
+                  if l.text().startswith('+')]
+        self.assertTrue(badges, '第 6 张起要有 +N 角标')
+        self.assertGreaterEqual(badges[0].font().pixelSize(), 14)
+
+class StatsColWidthsTest(unittest.TestCase):
+    """列宽自适应（2026-10-16 用户：「右侧很多空间，填满让各列更宽松」）。"""
+
+    def test_min_widths_when_tight(self):
+        """可用宽不够 -> 原样返回最小宽（不缩到负数）。"""
+        tiny = dashboard.stats_col_widths(10)
+        self.assertEqual(list(tiny), [w for _n, w in dashboard.STATS_COLS])
+
+    def test_fills_exactly(self):
+        """够宽 -> 合计恰好等于可用宽（填满，不留右边空白）。"""
+        mins = sum(w for _n, w in dashboard.STATS_COLS)
+        gaps = (len(dashboard.STATS_COLS) - 1) * dashboard.MATCH_GAP
+        for avail in (mins + gaps + 1, 974, 1200, 1500):
+            got = dashboard.stats_col_widths(avail)
+            self.assertEqual(sum(got) + gaps, avail, 'avail=%d' % avail)
+
+    def test_never_below_min(self):
+        for avail in (974, 1200, 1500, 2000):
+            got = dashboard.stats_col_widths(avail)
+            for i, (_n, mn) in enumerate(dashboard.STATS_COLS):
+                self.assertGreaterEqual(got[i], mn)
+
+    def test_monotonic(self):
+        """窗口变宽 -> 每列都不缩（单调不减）。"""
+        a = dashboard.stats_col_widths(974)
+        b = dashboard.stats_col_widths(1400)
+        for i in range(len(a)):
+            self.assertLessEqual(a[i], b[i])
+
+    def test_set_and_get(self):
+        """set_avail_width 后 col_width 反映新值；越界返回 0（不抛）。"""
+        try:
+            dashboard.set_avail_width(1400)
+            self.assertGreaterEqual(dashboard.col_width(0), 52)
+            self.assertEqual(dashboard.col_width(999), 0)
+        finally:
+            dashboard.set_avail_width(0)     # 还原最小宽（别污染别的用例）
+
+class TrapColumnSwitchTest(unittest.TestCase):
+    """战绩页「我方/对方手坑列」显示开关（用户 2026-10-17）。"""
+
+    def _patch(self, **kv):
+        """临时改 `stats_show_traps` 返回值（不碰真实 QSettings）。"""
+        orig = dashboard.stats_show_traps
+        dashboard.stats_show_traps = lambda: kv.get('v', (True, True))
+        self.addCleanup(lambda: setattr(dashboard, 'stats_show_traps', orig))
+
+    def test_hidden_col_gets_zero_width(self):
+        self._patch(v=(True, False))
+        w = dashboard.stats_col_widths(956, (True, False))
+        self.assertGreater(w[dashboard.TRAP_COL_IDX[0]], 0)
+        self.assertEqual(w[dashboard.TRAP_COL_IDX[1]], 0)
+
+    def test_other_cols_absorb_space(self):
+        """关掉一列后其余列**变宽**（省下的空间分回去）。"""
+        full = dashboard.stats_col_widths(956, (True, True))
+        off = dashboard.stats_col_widths(956, (True, False))
+        self.assertGreater(off[2], full[2])          # 「对手」列变宽
+
+    def test_both_off(self):
+        self._patch(v=(False, False))
+        w = dashboard.stats_col_widths(956, (False, False))
+        self.assertEqual(w[dashboard.TRAP_COL_IDX[0]], 0)
+        self.assertEqual(w[dashboard.TRAP_COL_IDX[1]], 0)
+
+    def test_default_shows_both(self):
+        """默认两列都显示（不该默认藏起来）。"""
+        self.assertEqual(dashboard.STATS_TRAP_KEYS,
+                         (('显示我方手坑列', 'ui/stats_show_my_traps'),
+                          ('显示对方手坑列', 'ui/stats_show_opp_traps')))
+
+class SettingsLiveApplyTest(unittest.TestCase):
+    """★ 设置改动**必须实时生效**（用户 2026-10-17：不能要重启）。
+
+    🔴 回归锁：`_reload_stats` 有「数据没变就不重画」的指纹闸门，而列开关
+    只改显示、**数据一模一样** -> 不清闸门等于「勾了没反应、得重启」。
+    """
+
+    def test_stats_columns_update_without_reload(self):
+        """关掉一列手坑后，表头**立刻**少一列（不必重启）。
+
+        🔴 回归点：`_reload_stats` 的指纹闸门见「数据没变」就 return，
+        而列开关只改显示 —— 闸门不清就等于「勾了没反应」。
+        """
+        app = _qapp_for_settings()
+        loader = _stats_rows_loader()
+        win = dashboard.DashboardWindow(loader=loader)
+        win.resize(1200, 620)
+        win.open_page('stats')
+        win.show()
+        app.processEvents()
+        pg = win.pages['stats']
+
+        def heads():
+            from PySide6.QtWidgets import QLabel
+            h = pg.findChildren(dashboard.MatchHeader)
+            return [l.text() for l in h[0].findChildren(QLabel)] if h else []
+
+        self.assertIn('对方手坑', heads())
+        orig = dashboard.stats_show_traps
+        dashboard.stats_show_traps = lambda: (True, False)
+        self.addCleanup(lambda: setattr(dashboard, 'stats_show_traps', orig))
+        try:
+            win._on_settings_changed('ui/stats_show_opp_traps')
+            app.processEvents()
+            app.processEvents()
+            self.assertNotIn('对方手坑', heads(),
+                             '关掉列后表头没变 -> 得重启才生效')
+            self.assertIn('我方手坑', heads())
+        finally:
+            win.hide()
+            win.deleteLater()
+
+    def test_floating_flag_routes_to_floating_callback(self):
+        app = _qapp_for_settings()
+        called = []
+        win = dashboard.DashboardWindow(
+            loader=lambda **kw: {},
+            on_floating_layout_changed=lambda: called.append(1))
+        win._on_settings_changed('ui/float_hide_order')
+        self.assertEqual(called, [1], '悬浮窗列开关没通知 app 去重排')
+        win.hide()
+        win.deleteLater()
+
+
+def _stats_rows_loader():
+    """造一份**有对局记录**的战绩数据（一行，带手坑两列）。"""
+    row = {'match_id': 'x', 'date': '09-16', 'time': '23:45', 'result': 'Win',
+           'went_first': True, 'opp_player': 'p', 'total_turns': 5,
+           'mode_label': '排名决斗', 'opp_deck': '', 'my_traps': [],
+           'opp_traps': []}
+    st = {'n_total': 1, 'n_win': 1, 'n_lose': 0, 'first_n': 1, 'second_n': 0,
+          'first_rate': 100.0, 'second_rate': None, 'win_rate': 100.0,
+          'first_wins': 1, 'second_wins': 0, 'img': None}
+    data = {'groups': [('甲', st, [row])], 'daily': {}, 'months': [],
+            'overview': {}, 'accounts': [], 'month': '2026-09'}
+    return lambda **kw: dict(data)
+
+
+_APP2 = None
+
+
+def _qapp_for_settings():
+    """取（或建）QApplication 单例（`settings()` 走真实 QSettings，这里只画控件）。"""
+    global _APP2
+    from PySide6.QtWidgets import QApplication
+    if _APP2 is None:
+        _APP2 = QApplication.instance() or QApplication([])
+    return _APP2
+
+class OverviewUniformFontTest(unittest.TestCase):
+    """★ 2026-10-17 用户：「先攻/后攻胜率字号不对」。
+
+    原来每格**各自**降档（只有带括号的才降）-> 五格 32/21/16/16 参差。
+    现在先算一个**公共字号**（按最挤的那格），五格统一用它。
+    """
+
+    def test_metric_size_fits_all_items(self):
+        from PySide6.QtGui import QFont, QFontMetrics
+        from ui import widgets
+        #: 场数已挪到下一行（用户 2026-10-17 第二次纠正）-> 只验主值
+        items = [('73', ''), ('64.4%', ''), ('68.4%', '')]
+        avail = 120
+        size = dashboard._metric_size(avail, items)
+        self.assertGreaterEqual(size, dashboard.theme.PAGE_F_OVER_TITLE)
+        fm_main = QFontMetrics(widgets.font(
+            size, QFont.Weight.Bold, tabular=True))
+        fm_sub = QFontMetrics(widgets.font(
+            dashboard.theme.PAGE_F_SUB, QFont.Weight.Bold, tabular=True))
+        for main, suf in items:
+            need = fm_main.horizontalAdvance(main) +                 (fm_sub.horizontalAdvance(suf) if suf else 0)
+            #: 装不下时**不再降**（字号有下限 `PAGE_F_OVER_TITLE`）——
+            #: 这时宁可截断/省略，也不能把字缩成蚂蚁。
+            self.assertTrue(
+                need <= avail
+                or size == dashboard.theme.PAGE_F_OVER_TITLE,
+                '%s+%s 在 %dpx 里塞不下（字号已到下限 %d）'
+                % (main, suf, avail, size))
+
+    def test_metric_size_takes_largest_that_fits(self):
+        """★ 主值取「装得下的**最大**字号」（用户：改**大**到一致，不是改小）。
+
+        场数已挪到下一行，主值只看自己 —— 所以五个百分比都能用上限
+        `PAGE_F_BIG`，而不是被括号挤到 `PAGE_F_OVER_TITLE`。
+        """
+        from PySide6.QtGui import QFont, QFontMetrics
+        from ui import widgets
+        avail = 120
+        size = dashboard._metric_size(avail, [(x, '') for x in
+                                            ('73', '64.4%', '68.4%', '60.0%')])
+        fm = QFontMetrics(widgets.font(size, QFont.Weight.Bold, tabular=True))
+        one_more = QFontMetrics(widgets.font(size + 1, QFont.Weight.Bold,
+                                             tabular=True))
+        for x in ('64.4%', '68.4%', '60.0%'):
+            self.assertLessEqual(fm.horizontalAdvance(x), avail)
+            #: 再大一号就该装不下了 —— **除非已到字号上限**（`PAGE_F_BIG` 是设计封顶，
+            #: 不能因为格宽富余就无限放大）
+            if size < dashboard.theme.PAGE_F_BIG:
+                self.assertGreater(one_more.horizontalAdvance(x), avail)
+
+    def test_metric_size_shrinks_when_too_narrow(self):
+        self.assertLess(dashboard._metric_size(40, [('100.0%', '')]),
+                        dashboard._metric_size(400, [('100.0%', '')]))
+
+    def test_metric_line_honors_explicit_size(self):
+        from PySide6.QtWidgets import QLabel
+        app = _qapp_for_settings()
+        w = dashboard._metric_line('50%', '', size=20)
+        sizes = [l.font().pixelSize()
+                 for l in w.findChildren(QLabel) if l.text()]
+        self.assertTrue(sizes)
+        for s_ in sizes:
+            self.assertLessEqual(s_, 20)
+
+
+class RailAffordanceTest(unittest.TestCase):
+    """★ 2026-10-17：左栏「导出」补图标；「查询」分组**不可点击**。"""
+
+    def test_export_has_icon(self):
+        self.assertIn('export', dashboard.ICON_KEYS)
+
+    def test_query_not_clickable(self):
+        from PySide6.QtCore import Qt
+        app = _qapp_for_settings()
+        rail = dashboard.Rail()
+        item = None
+        for w in rail.findChildren(dashboard.RailItem):
+            if w.key == dashboard.QUERY_KEY:
+                item = w
+        self.assertIsNotNone(item, '左栏里找不到「查询」项')
+        self.assertFalse(item._clickable, '「查询」应该是不可点的分组标题')
+        self.assertEqual(item.cursor().shape(), Qt.ArrowCursor)
+
+    def test_nav_icons_all_drawable(self):
+        """每个 ICON_KEYS 都要有绘制分支（漏一个 = 左栏少个图标）。"""
+        import inspect
+        src = inspect.getsource(dashboard.draw_nav_icon)
+        for k in dashboard.ICON_KEYS:
+            self.assertIn("key == '%s'" % k, src, '%s 没有图标分支' % k)
+
+
+class SettingsPageFitTest(unittest.TestCase):
+    """★ 2026-10-17：设置页去掉页底提示，620 高窗口**不出拖拽条**。"""
+
+    def test_no_hint_label(self):
+        """页底不再有那句常驻说明（红框区域）。"""
+        import inspect
+        src = inspect.getsource(dashboard.SettingsIndexPage.__init__)
+        self.assertNotIn("if hint:", src,
+                         '页底那句 hint 说明还在（用户要求去掉）')
+
+    def test_no_scrollbar_at_min_height(self):
+        from PySide6.QtWidgets import QScrollArea
+        app = _qapp_for_settings()
+        win = dashboard.DashboardWindow(loader=lambda **kw: {})
+        try:
+            #: ⚠️ 用 `setFixedSize` 而不是 `resize`：`DashboardWindow.__init__` 末尾会
+            #: `_restore_geometry()` 从 QSettings 恢复尺寸，把 resize 覆盖掉 ——
+            #: 全量里别的用例存过小窗口，这里就会测到 600 高而不是 620。
+            win.setFixedSize(1200, 620)       # 看板最小高度
+            win.open_page('settings')
+            win.show()
+            app.processEvents()
+            app.processEvents()
+            sa = win.pages['settings'].findChildren(QScrollArea)
+            self.assertTrue(sa)
+            #: ★ 判据 = **不显示滚动条**（用户口径「不要出现拖拽条」）。
+            #: 内容高度会随字体度量浮动（不同环境差 ±14px），所以只要策略是
+            #: AlwaysOff 就满足；仍可滚轮滚动，信息不丢。
+            from PySide6.QtCore import Qt as _Qt
+            self.assertEqual(sa[0].verticalScrollBarPolicy(),
+                             _Qt.ScrollBarAlwaysOff,
+                             '设置页还显示拖拽条')
+        finally:
+            win.hide()
+            win.deleteLater()
+
+
+class FloatingSectionTitleTest(unittest.TestCase):
+    """★ 2026-10-17：「最近对局显示哪些列」→「最近对局设置」。"""
+
+    def test_title_renamed(self):
+        from ui import i18n
+        from ui.i18n import tr
+        self.assertEqual(tr('最近对局设置'), '最近对局设置')
+        self.assertIn('最近对局设置', i18n._T)

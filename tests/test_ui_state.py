@@ -1240,7 +1240,8 @@ class CrossMatrixTest(unittest.TestCase):
                                             'mode_group', 'cols', 'rows',
                                             'col_avgs', 'months',
                                             'total_calibre',
-                                            'total_in_matrix']))
+                                            'total_in_matrix',
+                                            'hand_traps']))
         self.assertEqual(d['cols'], ['K9vs', '闪刀姬'])          # 列 = 我方
         self.assertEqual([r['deck'] for r in d['rows']],
                          ['未知卡组', '烙印', '珠泪', '闪刀姬'])  # 行 = 对手（未知卡组 09-28 起显示）

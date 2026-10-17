@@ -11,7 +11,13 @@
 三条纪律：
 1. **失败不抛** —— 单张取不到返回 None，界面留空占位（布局不跳）；
 2. **礼貌抓取** —— 串行 + 间隔，别并发猛拉别人家的 CDN（月度/按需触发，不做定时）；
-3. **网络只在 `fetch_art()` 里** —— `art_path()` 纯本地查缓存，界面先问它。
+3. **网络只在 `fetch_*()` 里** —— `*_path()` 纯本地查缓存，界面先问它。
+
+★ 2026-10-16 加**第二族：纯卡绘**（去卡框，`cards_cropped`）——
+手坑格只有 18px，整张卡的框+文案占满、看不清卡面（用户实测反馈）。
+两族**并存、别混**：
+* `art_path` / `fetch_art` / `art_path_by_en` = **整张卡**（禁限表、卡组构成用）；
+* `cropped_path` / `fetch_cropped` = **纯卡绘**（手坑格用，方形、无框）。
 """
 from __future__ import annotations
 
@@ -26,6 +32,11 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ART_URL = 'https://cdn.233.momobako.com/ygopro/pics/%s.jpg'
 #: 缓存目录（可再生 → gitignore）
 CACHE_DIR = os.path.join(PROJ, 'data', 'card_art')
+#: **纯卡绘** CDN（去卡框、去效果文）—— 按 **Konami 密码**寻址。
+#: ⚠️ 与 `cards/<konami>.jpg`（整张卡）不同；2026-10-08 肉眼确认过是纯卡绘。
+CROPPED_URL = 'https://images.ygoprodeck.com/images/cards_cropped/%s.jpg'
+#: 纯卡绘缓存目录（可再生 → gitignore；与整张卡分开存，别互相覆盖）
+CROPPED_DIR = os.path.join(PROJ, 'data', 'card_art_cropped')
 #: 存图**高**（完整卡是 59:86 长方形，宽按比例；KeepAspectRatio 不裁切）
 SIDE = 200
 #: 两次下载之间的最小间隔（秒）—— 礼貌限流
@@ -189,5 +200,62 @@ def fetch_art(cid=None, name_en=None) -> Optional[str]:
         return out
     raw = _download(konami)
     if not raw or not _save(raw, out):
+        return None
+    return out
+
+
+# ---------------------------------------------------------------- 纯卡绘（手坑格用）
+
+def cropped_path(cid) -> Optional[str]:
+    """**纯卡绘**本地缓存路径；没有缓存返回 None（纯本地，不联网）。"""
+    konami = konami_id(cid)
+    if not konami:
+        return None
+    p = os.path.join(CROPPED_DIR, '%s.webp' % konami)
+    return p if os.path.exists(p) else None
+
+
+def _save_square(raw: bytes, out: str, side: int = SIDE) -> bool:
+    """缩放存 webp —— 纯卡绘本就是方形，**直接缩到 side×side**（不裁切）。
+
+    ⚠️ 与 `_save`（整张卡，KeepAspectRatio）不同：这里用 IgnoreAspectRatio 的
+    语义等价做法（先方阵再缩），免得个别非方图被压扁留白。
+    """
+    try:
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QImage
+        img = QImage()
+        if not img.loadFromData(raw):
+            return False
+        img = img.scaled(side, side, Qt.IgnoreAspectRatio,
+                         Qt.SmoothTransformation)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        return bool(img.save(out, 'WEBP'))
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
+def fetch_cropped(cid) -> Optional[str]:
+    """确保某张卡的**纯卡绘**在本地（**要联网**）→ 返回路径；失败返回 None。"""
+    konami = konami_id(cid)
+    if not konami:
+        return None
+    out = os.path.join(CROPPED_DIR, '%s.webp' % konami)
+    if os.path.exists(out):
+        return out
+    gap = MIN_GAP - (time.time() - _last_fetch[0])
+    if gap > 0:
+        time.sleep(gap)
+    import urllib.request
+    try:
+        req = urllib.request.Request(CROPPED_URL % konami,
+                                     headers={'User-Agent': 'masterduel-tools'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read()
+    except Exception:                                    # noqa: BLE001
+        _last_fetch[0] = time.time()
+        return None
+    _last_fetch[0] = time.time()
+    if not raw or not _save_square(raw, out):
         return None
     return out

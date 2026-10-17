@@ -278,6 +278,11 @@ MATCH_FIELDS = (
     #    KEEP_IF_NEW_NULL），漏 MATCH_FIELDS = 采集器写了也静默丢。
     'peak_rate_before', 'peak_rate_after', 'peak_season',
     'opp_revealed', 'opp_revealed_ids',
+    # 手坑两列（2026-10-16）：JSON 数组字符串，每项
+    # [{'turn':0,'id':12950,'key':'ash','name_cn':'灰流丽'}, ...]
+    # ⚠️ None = 判不出（seat 判不出 / 无 ShowTurn）-> 界面显示「—」；
+    #    [] = 确实没用过。两种语义**别混**（见 core/duel_record.py）。
+    'my_traps', 'opp_traps',
     'record_dir', 'result_note', 'winbits',
     'account_name', 'account_pcode',
     'created_at',
@@ -299,6 +304,9 @@ KEEP_IF_NEW_NULL = (
     # ⚠️ `result_src` **不在**这里：它跟 `result` 同生共死（见 _build_insert_sql
     #    里那对 CASE 分支），拆开写会出现「值人工、来源自动」的错配。
     'record_dir', 'result_note', 'winbits',
+    # 手坑（2026-10-16）：重跑 import 时无 ShowTurn 的局算出 NULL，
+    # 必须保留已回填的值（与 record_dir/winbits 同一批坑）
+    'my_traps', 'opp_traps',
 )
 
 #: 只在**首次插入**时落值，之后永不改动
@@ -333,6 +341,8 @@ ADDED_COLUMNS = (
     ('record_dir', 'TEXT'),
     ('result_note', 'TEXT'),
     ('winbits', 'TEXT'),
+    # 手坑两列（2026-10-16）：JSON 数组字符串（结论层，见 core/hand_traps.py）
+    ('my_traps', 'TEXT'), ('opp_traps', 'TEXT'),
 )
 
 #: 库里按 0/1/NULL 存、读出来要还原成 bool/None 的列
@@ -340,7 +350,8 @@ BOOL_FIELDS = ('won_initiative', 'went_first')
 
 #: 库里按 JSON 文本存、读出来要还原成 list 的列
 #: 对局表里按 JSON 文本存的列（upsert_match 会遍历它们做 dump）
-JSON_FIELDS = ('opp_revealed', 'opp_revealed_ids', 'winbits')
+JSON_FIELDS = ('opp_revealed', 'opp_revealed_ids', 'winbits',
+               'my_traps', 'opp_traps')
 
 #: meta_decks 里按 JSON 文本存的列（**不能混进 JSON_FIELDS**，
 #: 否则 upsert_match 会去找对局表里不存在的 aliases 而 KeyError）
@@ -447,6 +458,8 @@ CREATE TABLE IF NOT EXISTS matches (
     record_dir      TEXT,                   -- M3：自有记录目录名（origin='record' 或已并档的 log 行）
     result_note     TEXT,                   -- M3：收局文案备注（只记录不判断）
     winbits         TEXT,                   -- M3：JSON [我方位, 对方位]（胜负判据）
+    my_traps        TEXT,                   -- 手坑（我）：JSON 数组，NULL=判不出
+    opp_traps       TEXT,                   -- 手坑（对手）：同上
     account_name    TEXT,                   -- 多账号（2026-10-03）：我方游戏名（收局盖戳）
     account_pcode   INTEGER,                -- 我方玩家代码（profile.pcode，唯一账号键）
     created_at      INTEGER,
@@ -1210,7 +1223,8 @@ class Storage:
         return None, 'no-candidate'
 
     def apply_record_meta(self, match_id, record_dir=None, winbits=None,
-                          result=None, result_src=None, result_note=None):
+                          result=None, result_src=None, result_note=None,
+                          my_traps=None, opp_traps=None):
         """把 record 侧带来的元数据并进**既有行**（origin=log/api）。
 
         * ``record_dir``：旧值为空才填（不覆盖）；
@@ -1222,6 +1236,8 @@ class Storage:
           ``result`` / ``result_src`` **一个字节都不动**，只在自动值与人工值
           不同时往 ``result_note`` 追加一行冲突备注 —— 人工修复优先；
         * ``result_note``（收局文案）：**只记录不判断** —— 旧值为空才填。
+        * ``my_traps`` / ``opp_traps``（手坑，2026-10-16）：**旧值为空才填**
+          （重跑幂等；`[]` = 确实没用过，也算有值，不许被 NULL 冲掉）。
 
         返回动作 dict（'record_dir'/'winbits'/'result'/'result_note' -> 动作描述）；
         match_id 不存在返回 {}。
@@ -1257,6 +1273,16 @@ class Storage:
                     actions['winbits'] = 'kept'
                 else:
                     actions['winbits'] = 'unchanged'
+
+            for col, val in (('my_traps', my_traps),
+                             ('opp_traps', opp_traps)):
+                if val is None:
+                    continue
+                if row.get(col) is None:
+                    _set(col, _json_dump(val))
+                    actions[col] = 'set'
+                else:
+                    actions[col] = 'kept'
 
             conflict_note = None
             #: 判据 = **人工 + 有值**：`result_src='manual'` 但 `result` 是空的行
@@ -1313,6 +1339,24 @@ class Storage:
             conn.execute('UPDATE matches SET %s WHERE match_id = ?'
                          % ', '.join(sets), args)
             return actions
+
+    def set_hand_traps_by_record(self, record_dir, my_traps, opp_traps):
+        """按 `record_dir` 写手坑两列（回填工具用）。
+
+        * 两列都传 ``None`` = 这局判不出（seat 缺失 / 无 ShowTurn）→ **不动**，返回 0；
+        * 传 ``[]`` = 确实没用过（**有值**，照写）；
+        * 值按 JSON 文本存（同 upsert 的 `_json_dump`）。
+
+        返回更新的行数。
+        """
+        if my_traps is None and opp_traps is None:
+            return 0
+        with self._open() as conn:
+            cur = conn.execute(
+                'UPDATE matches SET my_traps = ?, opp_traps = ?'
+                ' WHERE record_dir = ?',
+                (_json_dump(my_traps), _json_dump(opp_traps), record_dir))
+            return cur.rowcount
 
     def set_my_deck_for_record(self, match_id, name, src='manual'):
         """行级修正某局显示的**我方卡组**（09-28 用户需求：点行内卡图弹选择器改）。

@@ -505,6 +505,49 @@ _T = {
     '游戏启动时弹悬浮窗': ('Pop Up When Game Starts', 'ゲーム起動時にオーバーレイを表示'),
     '检测到游戏启动时，自动弹出悬浮窗': ('Automatically show the overlay when the game starts',
                               'ゲームの起動を検知したらオーバーレイを自動表示'),
+    # ---- 手坑（2026-10-16）------------------------------------------------
+    '对阵矩阵': ('Matchup Matrix', '対戦マトリクス'),
+    '手坑汇总': ('Hand Traps', '手札誘発まとめ'),
+    '我方用过': ('Used by me', '自分が使用'),
+    '对方用过': ('Used by opponent', '相手が使用'),
+    '对方用·我方没用': ('Opp only', '相手のみ'),
+    '胜率 %s': ('Win rate %s', '勝率 %s'),
+    '胜率 -': ('Win rate -', '勝率 -'),
+    '先 %s / 后 %s': ('1st %s / 2nd %s', '先攻 %s / 後攻 %s'),
+    '共 %d 场入统计': ('%d games counted', '%d 戦を集計'),
+    '共 %d 场入统计 / %d 场有逐卡记录（其余为 API 补录或座位/回合判不出）':
+        ('%d games counted / %d with per-card records (rest are API imports'
+         ' or have unclear seat/turn)', '%d 戦集計 / %d 戦にカード別記録'
+         '（残りは API 取込または席・ターン不明）'),
+    '第 %d 回合': ('Turn %d', '%d ターン目'),
+    '回合未知': ('turn unknown', 'ターン不明'),
+    '共 %d 张': ('%d cards', '%d 枚'),
+    '这局没有逐卡记录（API 补录 / 手工补录 / 座位判不出）':
+        ('No per-card record for this game (API/manual import, or seat unclear)',
+         'この対戦にカード別記録なし（API/手動取込、または席不明）'),
+    '我方手坑': ('My Traps', '自分'),
+    '对方手坑': ('Opp Traps', '相手'),
+    '先 %s 后 %s': ('1st %s 2nd %s', '先攻 %s 後攻 %s'),
+    '%d 场': ('%d games', '%d 戦'),
+    '还没有可统计的对局（需要逐卡记录）':
+        ('No games to summarize yet (needs per-card records)',
+         '集計できる対戦がまだありません（カード別記録が必要）'),
+    '先手': ('Going 1st', '先攻'),
+    '后手': ('Going 2nd', '後攻'),
+    '先手胜率': ('Going 1st Win Rate', '先攻勝率'),
+    '显示我方手坑列': ('Show My Hand Traps', '自分の手札誘発列を表示'),
+    '显示对方手坑列': ('Show Opp Hand Traps', '相手の手札誘発列を表示'),
+    '最近对局设置': ('Recent Duels Settings', '最近の対戦の設定'),
+    '隐藏卡组列': ('Hide Deck Column', 'デッキ列を隠す'),
+    '隐藏先/后列': ('Hide Order Column', '先/後列を隠す'),
+    '隐藏段位列': ('Hide Rank Column', 'ランク列を隠す'),
+    '后手胜率': ('Going 2nd Win Rate', '後攻勝率'),
+    '对手手坑': ('Opponent Hand Traps', '相手の手札誘発'),
+    '我的胜率': ('My Win Rate', '自分の勝率'),
+    '还没有可统计的对局（需要逐卡记录 + 先/后已知）':
+        ('No games to summarize yet (needs per-card records and known order)',
+         '集計できる対戦がまだありません（カード別記録と先後が必要）'),
+    '我方卡组': ('My Deck', '自分のデッキ'),
 }
 
 

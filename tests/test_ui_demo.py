@@ -420,7 +420,8 @@ class DemoAnalysisPageTest(unittest.TestCase):
     （与 D1「组头用真函数重算」同款防漂移），锁别退回手拼 dict。"""
 
     KEYS = ('note', 'went_first', 'month', 'mode_group', 'cols', 'rows',
-            'col_avgs', 'months', 'total_calibre', 'total_in_matrix')
+            'col_avgs', 'months', 'total_calibre', 'total_in_matrix',
+            'hand_traps')        # 2026-10-16：第二个视图「手坑汇总」
 
     def test_keys_match_data_layer(self):
         """★ demo 的键集合必须与真函数一致（审查 §5 契约锁）。"""

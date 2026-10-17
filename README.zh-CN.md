@@ -33,6 +33,9 @@
 - **参照库一键刷新**：看板「设置 → 数据工具 → 参照库刷新」，不用敲命令行。
 - **模式筛选可多选**：战绩页与对局分析页都能像 Excel 那样打勾选模式
   （排名决斗 / 巅峰决斗 / DC 杯 / 活动决斗），两页各自独立；勾一下就即时刷新。
+- **手坑识别**：自动识别本局前两回合双方用过的 12 张手坑（含异画版本）——
+  战绩页最右两列显示卡图（一格最多 5 张，超出 `+N`），
+  「对局分析 → 手坑汇总」按我方卡组看**先手 / 后手**两张开局的手坑与胜率。
 
 ## 安装与运行
 
@@ -40,8 +43,8 @@
 
 | 附件 | 体积 | 需要什么 |
 |---|---|---|
-| `masterduel-stats-v1.0.6-win64-full.zip` | ~194 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `MDStats.exe` |
-| `masterduel-stats-v1.0.6-win64-lite.zip` | ~5 MB | 需先装 Python 3.13；首次运行 `MDStats.exe` 会自动安装依赖 |
+| `masterduel-stats-v1.0.7-win64-full.zip` | ~194 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `MDStats.exe` |
+| `masterduel-stats-v1.0.7-win64-lite.zip` | ~5 MB | 需先装 Python 3.13；首次运行 `MDStats.exe` 会自动安装依赖 |
 | Source code (zip / tar.gz) | 自动 | 源码包，GitHub 对每个 tag 自动附带 |
 
 **最省事的做法**：装好 [Python 3.13](https://www.python.org/downloads/)（勾选

@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from PySide6.QtCore import (QPoint, QPointF, QRectF, QSettings, QSize, Qt,
-                            Signal)
+                            QTimer, Signal)
 from PySide6.QtGui import (QActionGroup, QColor, QFont, QFontMetrics,
                            QPainter, QPainterPath, QPen)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFrame,
@@ -84,6 +84,8 @@ SETTINGS_PAGES: Tuple[Tuple[str, str], ...] = (
     ('卡表更新', 's_cardtable'),
     ('参照库刷新', 's_refdecks'),
     ('语言', 's_lang'),
+    ('显示我方手坑列', 's_show_my_traps'),
+    ('显示对方手坑列', 's_show_opp_traps'),
     ('游戏启动时弹悬浮窗', 's_autoshow'),
     ('当窗口关闭时', 's_close'),
     ('开机自启', 's_autostart'),
@@ -93,6 +95,34 @@ SETTINGS_PAGES: Tuple[Tuple[str, str], ...] = (
 #: 点左栏「设置」本身 = 进这个**设置概览页**（悬浮窗右键「设置…」也进这里，Q18）
 SETTINGS_KEY = 'settings'
 
+#: 战绩页「对局记录」两列手坑的**显示开关**（用户 2026-10-17 要求可关）。
+#: 默认都开（这就是本轮新加的功能，不该默认藏起来）。
+STATS_TRAP_KEYS = (('显示我方手坑列', 'ui/stats_show_my_traps'),
+                   ('显示对方手坑列', 'ui/stats_show_opp_traps'))
+#: 悬浮窗「最近对局」要隐藏哪些列（用户 2026-10-17：卡组 / 先后 / 段位）。
+#: 默认**全显示**（不藏）。
+FLOAT_HIDE_KEYS = (('隐藏卡组列', 'ui/float_hide_deck'),
+                   ('隐藏先/后列', 'ui/float_hide_order'),
+                   ('隐藏段位列', 'ui/float_hide_rank'))
+
+
+def _settings_flag(qkey: str, default: bool = True) -> bool:
+    """读一个「布尔开关」设置项（默认 True = 显示）。"""
+    v = settings().value(qkey)
+    if v is None:
+        return default
+    return str(v) not in ('0', 'false', 'False')
+
+
+def stats_show_traps() -> tuple:
+    """战绩页两列手坑的显示开关 -> ``(显示我方, 显示对方)``。"""
+    return tuple(_settings_flag(k) for _l, k in STATS_TRAP_KEYS)
+
+
+def float_hidden_cols() -> tuple:
+    """悬浮窗最近对局要**隐藏**的列 -> ``(卡组, 先后, 段位)``（True = 隐藏）。"""
+    return tuple(not _settings_flag(k) for _l, k in FLOAT_HIDE_KEYS)
+
 #: 概览页的分组（三组九项；键并集 = `SETTINGS_PAGES`、无重复 —— 测试锁着）。
 #: ⚠️ 3 个工具（数据体检/抓禁限表/卡表更新）在概览页行内「运行」
 #: （09-27 起无独立工具页），这里只负责分组展示。
@@ -100,7 +130,7 @@ SETTINGS_KEY = 'settings'
 #:    工具本体 tools/import_duel_records.py 保留（--apply 仍可手动跑）。
 SETTING_GROUPS = (
     ('数据工具', ('s_audit', 's_banlist', 's_cardtable', 's_refdecks')),
-    ('界面', ('s_lang',)),
+    ('界面', ('s_lang', 's_show_my_traps', 's_show_opp_traps')),
     ('行为', ('s_autoshow', 's_close', 's_autostart', 's_restart')),
 )
 
@@ -111,6 +141,8 @@ SETTING_NOTES = {
     's_cardtable': '上游卡表比对与更新（三语卡名）',
     's_refdecks': '卡组构成的参照库（每张卡的使用率，每月一次）',
     's_lang': '卡名 / 卡组名的显示语言（匹配一律走卡 id）',
+    's_show_my_traps': '战绩页「对局记录」最右「我方手坑」列',
+    's_show_opp_traps': '战绩页「对局记录」最右「对方手坑」列',
     's_autoshow': '检测到游戏启动时，自动弹出悬浮窗',
     's_close': '点悬浮窗的 × 是隐藏到托盘还是退出',
     's_autostart': '开机后自动启动悬浮窗',
@@ -191,7 +223,8 @@ def _lab(text: str, role: str = 'body', size: Optional[int] = None,
 
 #: 哪些 key 有图标（用户 2026-09-18 点名的 6 个；**分组下的子项不给**，
 #: 正好用「有没有图标」再加一层层级差）
-ICON_KEYS = ('stats', 'analysis', 'decks', 'overlay', 'query', 'settings')
+ICON_KEYS = ('stats', 'analysis', 'decks', 'export', 'overlay',
+              'query', 'settings')
 
 
 def draw_nav_icon(painter, key: str, size: int, color: str) -> None:
@@ -235,6 +268,11 @@ def draw_nav_icon(painter, key: str, size: int, color: str) -> None:
     elif key == 'query':                # 查询：放大镜（圆 + 柄）
         p.drawEllipse(QPointF(s(7.6), s(7.6)), s(4.4), s(4.4))
         p.drawLine(QPointF(s(11), s(11)), QPointF(s(15.3), s(15.3)))
+    elif key == 'export':               # 导出：向下箭头 + 底线（下载/导出语义）
+        p.drawLine(QPointF(s(9), s(3)), QPointF(s(9), s(11)))
+        p.drawLine(QPointF(s(5.4), s(7.6)), QPointF(s(9), s(11.4)))
+        p.drawLine(QPointF(s(12.6), s(7.6)), QPointF(s(9), s(11.4)))
+        p.drawLine(QPointF(s(3.5), s(14.5)), QPointF(s(14.5), s(14.5)))
     elif key == 'settings':             # 设置：滑杆（两条轨 + 两个滑块）
         p.drawLine(QPointF(s(3), s(6.5)), QPointF(s(15), s(6.5)))
         p.drawLine(QPointF(s(3), s(11.5)), QPointF(s(15), s(11.5)))
@@ -275,14 +313,19 @@ class RailItem(QWidget):
     clicked = Signal(str)
 
     def __init__(self, text: str, key: str, big: bool = False,
-                 child: bool = False, parent=None):
+                 child: bool = False, clickable: bool = True, parent=None):
         super().__init__(parent)
         self.key = key
         self._big = bool(big)
         self._child = bool(child)
+        #: ★ 2026-10-17 用户：「查询改成不可点击」—— 它只是**分组标题**
+        #: （下面挂着禁限表/查卡/礼盒），点它不该跳到一个空白页。
+        self._clickable = bool(clickable)
         self._selected = False
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setCursor(Qt.PointingHandCursor)
+        #: 不可点的项不显示手型（可点的暗示才是手型）
+        self.setCursor(Qt.PointingHandCursor if self._clickable
+                       else Qt.ArrowCursor)
         #: ⚠️ 字号就是**层级本身**（Q13 口径），值来自 theme（用户 2026-09-18 放大过一档）
         self.setFixedHeight(theme.RAIL_H_GROUP if big else theme.RAIL_H_CHILD
                             if child else theme.RAIL_H_ITEM)
@@ -338,7 +381,7 @@ class RailItem(QWidget):
             QFont.Weight.Medium if (self._big or self._selected) else self._weight))
 
     def mousePressEvent(self, ev):                          # noqa: N802
-        if ev.button() == Qt.LeftButton:
+        if ev.button() == Qt.LeftButton and self._clickable:
             self.clicked.emit(self.key)
             ev.accept()
 
@@ -405,7 +448,8 @@ class Rail(QWidget):
         lay.addStretch(1)
         lay.addWidget(widgets.hairline())
         lay.addSpacing(theme.S_XS)
-        lay.addWidget(self._add(tr('查询'), QUERY_KEY, big=True))
+        lay.addWidget(self._add(tr('查询'), QUERY_KEY, big=True,
+                                  clickable=False))
         for name, key in QUERY_PAGES:
             lay.addWidget(self._add(tr(name), key, child=True))
         lay.addSpacing(theme.S_XS)
@@ -413,8 +457,8 @@ class Rail(QWidget):
         lay.addWidget(self._add(tr('设置'), SETTINGS_KEY, big=True))
 
     def _add(self, name: str, key: str, big: bool = False,
-             child: bool = False) -> RailItem:
-        item = RailItem(name, key, big=big, child=child)
+             child: bool = False, clickable: bool = True) -> RailItem:
+        item = RailItem(name, key, big=big, child=child, clickable=clickable)
         item.clicked.connect(self.page_requested.emit)
         self.items[key] = item
         return item
@@ -487,6 +531,10 @@ class SettingRow(QWidget):
         self._key = key
         self.control = control
         self.setObjectName('settingRow')
+        #: ★ 2026-10-18 用户：「设置的字体还是太小了，恢复之前字体大小」——
+        #: 上一轮我把它**挤成一行**（标题｜说明｜控件），视觉上又小又密。
+        #: 现在恢复原样：**标题一行 + 说明一行**（原字号 F_BODY / F_BODY_SM）。
+        #: 高度不够就靠滚轮滚（滚动条已设为不显示，不会出拖拽条）。
         v = QVBoxLayout(self)
         v.setContentsMargins(theme.S_MD, theme.S_SM, theme.S_MD, theme.S_SM)
         v.setSpacing(2)
@@ -519,7 +567,7 @@ class SettingsIndexPage(QWidget):
 
     def __init__(self, subtitle, hint='', runner_factory=None,
                  on_restart=None, on_set_autostart=None,
-                 on_lang_changed=None, parent=None):
+                 on_lang_changed=None, on_settings_changed=None, parent=None):
         super().__init__(parent)
         self._runner_factory = runner_factory or (
             lambda script, args: ScriptRunner(script, args))
@@ -528,9 +576,12 @@ class SettingsIndexPage(QWidget):
         #: 语言改了（2026-10-04 用户口径：实时切换）—— app 侧重建两个窗口；
         #: None（独立/测试）= 保持旧行为只提示重启
         self._on_lang_changed = on_lang_changed
+        #: 任意设置项改了 -> 通知外部（战绩页/悬浮窗要按新开关重画）
+        self._on_settings_changed = on_settings_changed
         self._runner = None
         self._tool_btns = []          # 运行中的互斥禁用
         lay = QVBoxLayout(self)
+        #: ★ 2026-10-18 恢复原边距（上一轮为塞进一屏收紧过）
         lay.setContentsMargins(theme.S_XL, theme.S_XL, theme.S_XL, theme.S_XL)
         lay.setSpacing(theme.S_MD)
         lay.addWidget(_lab(tr('设置'), 'title', size=theme.F_STAT,
@@ -540,16 +591,21 @@ class SettingsIndexPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        #: ★ 2026-10-17 用户：「不要出现拖拽条」。默认布局已能一屏放下；
+        #: 万一换了字体/缩放到装不下（实测差 14px 那种），**也不显示那条竖条**
+        #: —— 滚轮照样能滚（内容仍可滚，只是不画滚动条）。
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         host = QWidget()
         col = QVBoxLayout(host)
         col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(theme.S_SM)
+        col.setSpacing(theme.S_SM)      # ★ 2026-10-18 恢复原行距
         self._rows = {}
         by_key = {k: n for n, k in SETTINGS_PAGES}
         for gname, keys in SETTING_GROUPS:
             gname = tr(gname)
             col.addWidget(_lab(gname, 'title', size=theme.PAGE_F_TITLE,
-                               weight=QFont.Weight.Medium))
+                               weight=QFont.Weight.Medium))  # ★ 恢复原来字号
             for key in keys:
                 row = SettingRow(tr(by_key.get(key, key)), key,
                                  tr(SETTING_NOTES.get(key, '')),
@@ -563,14 +619,21 @@ class SettingsIndexPage(QWidget):
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setFont(widgets.font(theme.F_BODY_SM))
-        self._log.setFixedHeight(112)
+        #: ★ 2026-10-17 用户：「让设置完整显示、不要出现拖拽条」。
+        #: ⚠️ 别再靠「把日志区压到某个像素值 + 赌余量」—— 字体度量会随环境/先后
+        #: 用例漂 3~5px，赌出来的余量迟早翻车（昨天就翻过一次）。
+        #: 现在**平时整块收起（高度 0）**，只在跑工具时才展开（见 `_run_tool`）——
+        #: 设置列表于是恒定拿满剩余空间，与字体度量无关。
+        self._log.setFixedHeight(0)
+        self._log.setVisible(False)
         self._log.setPlaceholderText(tr('点「运行」后，脚本输出显示在这里。'))
         lay.addWidget(self._log)
         self._status = _lab('', 'muted', size=theme.F_BODY_SM)
         self._status.setWordWrap(True)
         lay.addWidget(self._status)
-        if hint:
-            lay.addWidget(_lab(hint, 'muted', size=theme.F_METRIC_SM))
+        #: ★ 2026-10-17 用户：去掉页底那句 `hint` 说明（「右侧即控件：改完即存…」）
+        #: —— 它是**常驻**的一行字，白占地方还把设置列表挤出滚动条。
+        #: 要留提示就让 `_status` 动态显示（跑完工具才有字）。
 
     # ---- 行内控件（09-27：一级直达） --------------------------------
     def _make_control(self, key):
@@ -584,6 +647,10 @@ class SettingsIndexPage(QWidget):
                 'ui/close_action')
         if key == 's_autostart':
             return self._make_autostart_checkbox()
+        for label, qk in STATS_TRAP_KEYS:
+            if key == {'显示我方手坑列': 's_show_my_traps',
+                       '显示对方手坑列': 's_show_opp_traps'}[label]:
+                return self._make_flag_checkbox(qk)
         if key == 's_autoshow':
             box = QCheckBox()
             box.setChecked(str(settings().value('ui/auto_show_floating', '1'))
@@ -634,6 +701,19 @@ class SettingsIndexPage(QWidget):
             lambda idx, q=qkey: self._save(q, combo.itemData(idx)))
         return combo
 
+    def _make_flag_checkbox(self, qkey):
+        """一个**布尔开关**（QCheckBox），勾上写 '1'、取消写 '0'。
+
+        ⚠️ 勾完要**立刻重画战绩页**（不然下次刷新才生效，用户以为没反应）——
+        走 `self._save` 的同款回调链（见 `_save` 里的 `on_settings_changed`）。
+        """
+        box = QCheckBox()
+        box.setChecked(_settings_flag(qkey))
+        box.setFont(widgets.font(theme.RAIL_F_ITEM))
+        box.clicked.connect(
+            lambda on: self._save(qkey, '1' if on else '0'))
+        return box
+
     def _make_autostart_checkbox(self):
         on = _autostart_state()
         box = QCheckBox()
@@ -658,6 +738,13 @@ class SettingsIndexPage(QWidget):
                                         '（设置 → 重启界面）。'))
         else:
             self._status.setText(tr('已保存。'))
+        #: 开关类设置（手坑列显示等）改完要**立刻重画**战绩页，
+        #: 否则用户以为没生效（见 `STATS_TRAP_KEYS`）。
+        if callable(self._on_settings_changed):
+            try:
+                self._on_settings_changed(qkey)
+            except Exception:                                # noqa: BLE001
+                pass
 
     def _toggle_autostart(self, on):
         box = self.sender()
@@ -694,6 +781,9 @@ class SettingsIndexPage(QWidget):
             return
         for b in self._tool_btns:
             b.setEnabled(False)                        # 互斥：跑时全禁
+        #: 跑工具时才把日志区**展开**（平时收起 -> 设置列表恒拿满空间）
+        self._log.setFixedHeight(112)
+        self._log.setVisible(True)
         self._log.appendPlainText('--- %s ---' % tr(cfg.get('title') or key))
         runner = self._runner_factory(script, list(args or []))
         runner.line.connect(self._log.appendPlainText)
@@ -729,9 +819,15 @@ def _fixed(text: str, width: int, size: int, color: str = None) -> QLabel:
 
     ⚠️ **水平居中**（用户 2026-09-18 第四轮：「表头和列应该居中对齐」）——
     表头也用同一套对齐，两者才是"一根中轴"。要用左对齐就显式传 `align`。
+    ⚠️ 文字**超宽先 elide**（2026-10-16）：`QLabel` 的 `minimumSizeHint` 由全文
+    驱动 —— 不 elide 的话「09-16」@14px=70 会让 52px 的列把整行 `minimumSizeHint`
+    撑大 8px，内容一高就冒横向滚动条。
     """
-    lab = _lab(text, 'body', size=size, align=Qt.AlignCenter)
+    shown = _elide(text, int(width), size)
+    lab = _lab(shown, 'body', size=size, align=Qt.AlignCenter)
     lab.setFixedWidth(int(width))
+    if shown != text:
+        lab.setToolTip(str(text))
     if color:
         lab.setStyleSheet('color: %s; background: transparent;' % color)
     return lab
@@ -795,6 +891,9 @@ def _block(title: str, note: str = '', extra=None):
 #: 换机器 / 换字体 / 换 DPI 也不会撑破格子。
 OVERVIEW_W = 179
 OVERVIEW_W_RANK = 212
+#: 每格的**绝对下限**（2026-10-17）：`53(30-23)` + `72.0%(18-7)` @小字号实测 ≈ 130。
+#: 缩到下限就不再缩（宁可横向滚动，也不要把数字挤成豆腐块）。
+OVERVIEW_W_MIN = 130
 #: 格内可用宽 = 格宽 − 卡片内边距（`theme.S_MD` × 2）
 OVERVIEW_PAD = theme.S_MD * 2
 
@@ -802,17 +901,124 @@ OVERVIEW_PAD = theme.S_MD * 2
 #: `7 × 26 + 6 × 3 = 200`，4 张 + 3 个 12px 列距 = **836 ≤ 976** ✓（5 张要 1048，放不下）。
 HEAT_PER_ROW = 4
 
-MATCH_GAP = 8                      # 逐局行的列间距（比 S_MD 紧，给列宽让路）
+MATCH_GAP = 4                      # 逐局行的列间距（2026-10-16：8 -> 4，给手坑两列让路）
 #: ★ 2026-09-20 用户：「去除日志列，不添加这个功能了」→ 10 列改 9 列；
 #:   「钻石5升段显示不全」→ 段位列 108 → 132（图标 + 全名 + 升降箭头）。
+#: ★★ 2026-10-16 手坑两列（用户：「缩减先后、对手的列宽、模式和时间的间距减少，
+#:   最右做两列」）：全部按 docs/手坑识别计划.md §5.4.1 的实测预算重排：
+#:   * 胜负 56->52、先/后 92->56（硬币图 18 + 4 + 「先攻」@15px ≈ 52）、
+#:     对手 168->140（实测长名 120）、对手卡组 168->94（实测「耀圣杀手旋律」90）、
+#:     日期/时间 44->60（原来已被截：实测 75）、模式 112->64（实测「排名决斗」60）；
+#:   * 回合 66 / 段位 132 **还原现状**（各自都被 elide，与改前一致）；
+#:   * 列间距 8->4（用户明说「模式和时间的间距减少」）。
+#:   压缩后 9 列 = 766 + 间距 32 = 798；+ 手坑两列 128 + 间距 8 = **934**。
+#:   预算（RAIL_W=150）视口 1038 - 32 - 24 - 8 = 974 -> 余 40。
+#: ⚠️ 每列元素宽度**必须等于列宽**（不是 `-8`）—— 见下面这条注释的老坑。
 STATS_COLS = (
-    ('胜负', 56), ('先/后', 92), ('对手', 168), ('回合', 66), ('段位', 132),
-    ('对手卡组', 168), ('日期', 44), ('时间', 44), ('模式', 112),
+    ('胜负', 52), ('先/后', 56), ('对手', 120), ('回合', 62), ('段位', 96),
+    ('对手卡组', 118), ('日期', 70), ('时间', 70), ('模式', 64),
+    ('我方手坑', 98), ('对方手坑', 98),
 )
+#: 手坑两列的列号（`HandTrapCell` 取宽用；改列序要同步）
+TRAP_COL_IDX = (9, 10)
+
+#: ★ 2026-10-16 用户实测：「手坑列右侧还有很多空间，可以填满让各列更宽松」——
+#: `STATS_COLS` 从此是**最小宽**（视口再窄也不低于它），多余空间按下表**权重**
+#: 分给各列。权重只表达「这列更愿意变宽」：定宽控件（胜负徽章）权重小、文字列大。
+#: 顺序与 `STATS_COLS` 一一对应。
+STATS_COL_FLEX = (0.3, 0.6, 2.0, 0.6, 1.6, 2.4, 0.5, 0.5, 0.6, 1.5, 1.5)
+
+
+def stats_col_widths(avail: int, show_traps=(True, True)) -> tuple:
+    """按可用宽度 `avail` 求各列宽：从最小宽出发，多余空间按权重分配。
+
+    * ``avail`` 不够（≤ 最小宽合计 + 间距）-> **原样返回最小宽**（外面会裁/滚）；
+    * 够 -> 把 ``avail - 最小值 - 间距`` 按 :data:`STATS_COL_FLEX` 分下去
+      （向下取整，余数按小数部分从大到小补齐 —— 保证合计**恰好**等于 avail）；
+    * ``show_traps`` = `(显示我方手坑, 显示对方手坑)`（用户 2026-10-17 开关）——
+      **关掉的列宽给 0**（行与表头都按 0 宽跳过，省下的空间分给其余列）。
+
+    ⚠️ 纯函数（单测直接锁）；调用方负责传**行内可用宽**（含内边距扣减）。
+    """
+    show = list(show_traps or (True, True))
+    while len(show) < 2:
+        show.append(True)
+    #: ⚠️ `TRAP_COL_IDX` 是**列号**；`show` 的 0/1 是「我方/对方」——
+    #: 别把 enumerate 的下标当列号用（否则会关错列）。
+    hide = set(col for i, col in enumerate(TRAP_COL_IDX)
+               if not show[i])
+    mins = [0 if i in hide else w for i, (_n, w) in enumerate(STATS_COLS)]
+    flex = [0.0 if i in hide else f
+            for i, f in enumerate(STATS_COL_FLEX)]
+    #: 间距只算**可见**列之间的（隐藏列不占位、不产生间距）
+    n_show = len(mins) - len(hide)
+    gaps = max(n_show - 1, 0) * MATCH_GAP
+    if avail <= sum(mins) + gaps:
+        return tuple(mins)
+    extra = int(avail) - sum(mins) - gaps
+    wsum = float(sum(flex)) or 1.0
+    raw = [extra * f / wsum for f in flex]
+    ints = [int(x) for x in raw]
+    rem = extra - sum(ints)
+    order = sorted(range(len(raw)), key=lambda i: raw[i] - ints[i], reverse=True)
+    for i in order[:rem]:
+        ints[i] += 1
+    return tuple(m + ints[i] for i, m in enumerate(mins))
+
+
+def set_avail_width(avail: int, show_traps=(True, True)) -> None:
+    """按行内可用宽刷新当前列宽（`stats_col_widths` 的唯一写入口）。"""
+    global _COL_W
+    _COL_W = list(stats_col_widths(avail, show_traps))
+
+
+#: **当前**生效的列宽（`set_avail_width` 按视口刷新；行/表头/各格都读它）——
+#: 默认 = 最小宽（任何不走刷新路径的代码都还能工作）。
+_COL_W = [w for _n, w in STATS_COLS]
+
+
+
+def col_width(i: int) -> int:
+    """取第 `i` 列**当前**宽度（越界回退到最小宽，不抛）。"""
+    try:
+        return int(_COL_W[i])
+    except (IndexError, TypeError):
+        pass
+    try:
+        return int(STATS_COLS[i][1])
+    except (IndexError, TypeError):
+        return 0
+
+
+#: 列宽合计校验用（单测锁「总宽 ≤ 视口可用宽」，见 test_ui_dashboard）
+#: ⚠️ 手坑列 90px 是**物理下限**：3×18 图 + 2×1 间距 + `+N`@14px(28) + 2×2 内边距 = 88。
+#: 对手卡组 118px 同理：图 22 + 4 + 「未知卡组」60 + 4 + `!` 15 + 内边距 = 113。
+
+
+def _metric_size(avail: int, items) -> int:
+    """多组「主值 + 括号」在 ``avail`` 内**都能放下**的最大字号（纯函数）。
+
+    ★ 2026-10-17：总览五格共用一个字号 —— 原来每格各自降档，五格大小参差
+    （32 / 21 / 16 / 16），看着像 bug。宁可统一小一号，也不要参差。
+    """
+    size = theme.PAGE_F_BIG
+    while size > theme.PAGE_F_OVER_TITLE:
+        fm_main = QFontMetrics(widgets.font(size, QFont.Weight.Bold,
+                                             tabular=True))
+        fm_sub = QFontMetrics(widgets.font(theme.PAGE_F_SUB, QFont.Weight.Bold,
+                                            tabular=True))
+        fits = all(fm_main.horizontalAdvance(m) +
+                   (fm_sub.horizontalAdvance(x) if x else 0) <= int(avail)
+                   for m, x in items)
+        if fits:
+            break
+        size -= 1
+    return size
 
 
 def _metric_line(main: str, suffix: str = '', color: str = theme.INK,
-                 avail: Optional[int] = None) -> QWidget:
+                 avail: Optional[int] = None,
+                 size: Optional[int] = None) -> QWidget:
     """一格里的「**一行数据**」：`53(30-23)` / `72.0%(18-7)` / `56.6%`。
 
     ★ 用户 2026-09-18：「2 行变 1 行数据」「**字体加粗居中**」→
@@ -823,16 +1029,22 @@ def _metric_line(main: str, suffix: str = '', color: str = theme.INK,
     主值字号，直到「主值 + 括号」塞得进去 —— 这样字号可以贴着上限给
     （用户第二轮：「字体太小，**填满这个框**」），换机器 / 换字体也不会撑破格子。
     """
-    size = theme.PAGE_F_BIG
-    if avail and suffix:
-        sub_w = QFontMetrics(widgets.font(theme.PAGE_F_SUB, QFont.Weight.Bold,
-                                          tabular=True)).horizontalAdvance(suffix)
-        while size > theme.PAGE_F_OVER_TITLE:
-            got = QFontMetrics(widgets.font(size, QFont.Weight.Bold,
-                                            tabular=True)).horizontalAdvance(main)
-            if got + sub_w <= int(avail):
-                break
-            size -= 1
+    #: ``size`` 显式给了就用它（**五格统一字号**用，见 `_metric_size`）；
+    #: 否则自己按 ``avail`` 降档（有没有括号都算它自己的宽 —— 2026-10-17 用户
+    #: 报「先攻/后攻胜率字号不对」：原来只有带括号的降档，胜率格永远最大）。
+    if size is None:
+        size = theme.PAGE_F_BIG
+        if avail:
+            extra = QFontMetrics(widgets.font(
+                theme.PAGE_F_SUB, QFont.Weight.Bold, tabular=True)
+            ).horizontalAdvance(suffix) if suffix else 0
+            while size > theme.PAGE_F_OVER_TITLE:
+                got = QFontMetrics(widgets.font(
+                    size, QFont.Weight.Bold,
+                    tabular=True)).horizontalAdvance(main)
+                if got + extra <= int(avail):
+                    break
+                size -= 1
     host = QWidget()
     hl = QHBoxLayout(host)
     hl.setContentsMargins(0, 0, 0, 0)
@@ -851,7 +1063,7 @@ def _metric_line(main: str, suffix: str = '', color: str = theme.INK,
         sub.setStyleSheet('color: %s; background: transparent;' % theme.INK_MUTED)
         sub.setFont(widgets.font(theme.PAGE_F_SUB, QFont.Weight.Bold, tabular=True))
         sub.setFixedHeight(sub.fontMetrics().height() + 2)
-        hl.addWidget(sub, 0, Qt.AlignBottom)
+        hl.addWidget(sub)      # ★ 下一行：主值因此能用上限字号
     hl.addStretch(1)
     host.setFixedHeight(big.height())
     return host
@@ -890,7 +1102,7 @@ class ResultBadge(QLabel):
         super().__init__(text, parent)
         self.setAlignment(Qt.AlignCenter)
         #: ⚠️ 宽度**等于列宽**（不是 `- 8`）—— 少给 8px 整行就往左错 8px（见 STATS_COLS 注释）
-        self.setFixedSize(STATS_COLS[0][1], theme.PAGE_ROW_H - 6)
+        self.setFixedSize(col_width(0), theme.PAGE_ROW_H - 6)
         self.setFont(widgets.font(theme.PAGE_F_BODY, QFont.Weight.Medium))
         self.setStyleSheet('color: %s; background: %s; border-radius: %dpx;'
                            % (theme.result_fg(result),
@@ -934,7 +1146,7 @@ class CoinLabel(QLabel):
         lay.addStretch(1)                   # 首尾各一条 → 内容居中
         #: ⚠️ **必须定宽**：不然它是整行里唯一能压缩的控件，列宽一紧张就被压成 0，
         #: 硬币和文字一起消失（用户 2026-09-18：「硬币列没显示」的半个原因）。
-        self.setFixedWidth(STATS_COLS[1][1])
+        self.setFixedWidth(col_width(1))
 
 
 class MatchHeader(QWidget):
@@ -948,9 +1160,11 @@ class MatchHeader(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(theme.S_XS, 0, theme.S_XS, 0)
         lay.setSpacing(MATCH_GAP)
-        for name, width in STATS_COLS:
+        for i, (name, _w) in enumerate(STATS_COLS):
+            if col_width(i) <= 0:
+                continue          # ★ 手坑列被开关关掉 -> 连控件都不建（省一个间距）
             lab = _lab(tr(name), 'label', size=theme.PAGE_F_SMALL)
-            lab.setFixedWidth(int(width))
+            lab.setFixedWidth(col_width(i))
             #: ★ 用户 2026-09-18 第四轮：「表头和列应该居中对齐」—— 表头与列内容都居中
             lab.setAlignment(Qt.AlignCenter)
             lab.setStyleSheet('color: %s; background: transparent;'
@@ -988,17 +1202,17 @@ class MatchRow(QWidget):
         vl.setSpacing(0)
         vl.addStretch(1)
         #: 名字按列宽省略（QFontMetrics），全文进 tooltip —— 长名字不撑破列
-        lab = _lab(_elide(name, STATS_COLS[2][1] - 8, theme.PAGE_F_BODY), 'body',
+        lab = _lab(_elide(name, col_width(2) - 8, theme.PAGE_F_BODY), 'body',
                    size=theme.PAGE_F_BODY)
         lab.setToolTip(name)
         vl.addWidget(lab)
         vl.addStretch(1)
-        versus.setFixedWidth(STATS_COLS[2][1])
+        versus.setFixedWidth(col_width(2))
         lay.addWidget(versus)
 
         turns = self.row.get('total_turns')
         lay.addWidget(_fixed((tr('%s 回合') % turns) if turns else '—',
-                             STATS_COLS[3][1], theme.PAGE_F_BODY))
+                             col_width(3), theme.PAGE_F_BODY))
         lay.addWidget(self._rank_cell())
 
         #: ★ 五轮：「对手卡组」列挪到**段位右边**（这一列单独左对齐，见 `OppDeckChip`）
@@ -1006,13 +1220,21 @@ class MatchRow(QWidget):
         chip.clicked.connect(lambda: on_pick(self.row, chip))
         lay.addWidget(chip)
 
-        lay.addWidget(_fixed(self.row.get('date') or '—', STATS_COLS[6][1],
+        lay.addWidget(_fixed(self.row.get('date') or '—', col_width(6),
                              theme.PAGE_F_SMALL, theme.INK_MUTED))
-        lay.addWidget(_fixed(self.row.get('time') or '—', STATS_COLS[7][1],
+        lay.addWidget(_fixed(self.row.get('time') or '—', col_width(7),
                              theme.PAGE_F_SMALL, theme.INK_MUTED))
 
-        lay.addWidget(_fixed(self.row.get('mode_label') or '—', STATS_COLS[8][1],
+        lay.addWidget(_fixed(self.row.get('mode_label') or '—', col_width(8),
                              theme.PAGE_F_BODY, theme.INK_MUTED))
+
+        #: ★ 2026-10-16 手坑两列（最右）：我方手坑 / 对方手坑（卡图式）
+        #: ★ 2026-10-17：设置里关掉哪列就不建哪列（关掉时列宽为 0）
+        for _i, traps in ((TRAP_COL_IDX[0], self.row.get('my_traps')),
+                          (TRAP_COL_IDX[1], self.row.get('opp_traps'))):
+            if col_width(_i) <= 0:
+                continue
+            lay.addWidget(HandTrapCell(traps, col_width(_i)))
         lay.addStretch(1)
 
     def _rank_cell(self) -> QWidget:
@@ -1056,7 +1278,7 @@ class MatchRow(QWidget):
             icon = _M.icon_path('peak')
             label = peak
         #: 有箭头时名字要让出「间距 + 箭头」的宽，否则会被挤出列外
-        room = STATS_COLS[4][1] - theme.RANK_ICON_ROW - theme.S_XS
+        room = col_width(4) - theme.RANK_ICON_ROW - theme.S_XS
         if moving:
             room -= theme.S_XS + 12
         hl.addStretch(1)                    # ★ 居中（用户：「表头和列应该居中对齐」）
@@ -1078,7 +1300,7 @@ class MatchRow(QWidget):
             wait.setToolTip(tr('段位获取中…（结算写入通常需要 1~2 分钟）'))
             hl.addWidget(wait)
         hl.addStretch(1)
-        host.setFixedWidth(STATS_COLS[4][1])
+        host.setFixedWidth(col_width(4))
         if label:
             tip = label
             if delta == 'up':
@@ -1218,6 +1440,78 @@ def _fingerprint(data) -> str:
         return 'id:%s' % id(data)
 
 
+#: 单卡卡绘缺图时的兜底（悠悠）—— 与项目既有口径一致（`DeckImages` 那套）
+def _default_art() -> str:
+    try:
+        from core.deck_images import DEFAULT_IMAGE
+        return DEFAULT_IMAGE or ''
+    except Exception:                                    # noqa: BLE001
+        return ''
+
+
+class HandTrapCell(QWidget):
+    """逐局行那格：**手坑卡图横排**（最多 5 张 + `+N` 角标），整簇居中。
+
+    * 值语义（数据层 `ui_state._trap_items` 定的）：
+      ``None`` = 判不出（seat 判不出 / 无逐卡数据）与 ``[]`` = 确实没用过
+      —— **两种都留空、渲染完全一致**（用户 2026-10-16 第四轮：「不要一个用 `—`
+      一个没有」）；区分只在 tooltip（判不出会说明原因）。
+    * ``[...]``= 用过 → 每张画一个卡图（缺图回落悠悠 `_default.webp`）；
+    * **按 5 张排**（用户 2026-10-17：目测放得下 5 张）：第 6 张起收成 `+N` 角标，
+      tooltip 列**全部**明细；
+    * 卡图走 `widgets.thumb_label`（与段位图标 / 卡组图同一入口）；
+    * ``width`` **显式传入**（列宽唯一来源 = `STATS_COLS`，别在格子里硬编码列号）。
+    """
+
+    #: 每张图边长 —— 用户 2026-10-17：改回 **18px**（16px 太小）
+    THUMB = 18
+    #: 一格最多画几张
+    MAX_CARDS = 5
+
+    def __init__(self, traps, width: int, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(2, 0, 2, 0)
+        lay.setSpacing(1)
+        #: ⚠️ 判不出（None）与没用过（[]）**渲染一致**（都留空）—— 用户口径。
+        #: tooltip 不同：判不出说明「没有逐卡记录」，没用过不挂 tooltip。
+        if not traps:
+            lay.addStretch(1)
+            self.setFixedWidth(int(width))
+            if traps is None:
+                self.setToolTip(
+                    tr('这局没有逐卡记录（API 补录 / 手工补录 / 座位判不出）'))
+            return
+        shown = traps[:self.MAX_CARDS]
+        extra = len(traps) - len(shown)
+        lay.addStretch(1)                    # ★ 整簇居中（首尾各一条弹性）
+        for t in shown:
+            img = t.get('img') or _default_art()
+            lay.addWidget(widgets.thumb_label(img, self.THUMB,
+                                              radius=theme.R_XS))
+        if extra > 0:
+            #: ⚠️ 字号**不许低于 PAGE_F_SMALL(14)** —— 测试锁下限；用 14px 的 `+N`。
+            more = _lab('+%d' % extra, 'muted', size=theme.PAGE_F_SMALL)
+            more.setStyleSheet('color: %s; background: transparent;'
+                               % theme.INK_MUTED)
+            lay.addWidget(more)
+        lay.addStretch(1)
+        self.setFixedWidth(int(width))
+        self.setToolTip(self._tooltip(traps))
+
+    @staticmethod
+    def _tooltip(traps) -> str:
+        """列**全部**明细（用了几张、分别在哪个回合）。"""
+        lines = []
+        for t in traps:
+            turn = t.get('turn')
+            tn = (tr('第 %d 回合') % (int(turn) + 1)) if turn is not None \
+                else tr('回合未知')
+            lines.append('%s（%s）' % (t.get('name') or '?', tn))
+        head = tr('共 %d 张') % len(traps)
+        return head + '\n' + '\n'.join(lines)
+
+
 class OppDeckChip(QWidget):
     """逐局行那格：对手卡组 —— **按钮样**（可点 → 标注）。缺 = 琥珀 `!` + 「未知卡组」。
 
@@ -1256,7 +1550,7 @@ class OppDeckChip(QWidget):
         lay.addWidget(widgets.thumb_label(img if img else '', thumb,
                                           radius=theme.R_XS))
         show = name or tr('未知卡组')
-        room = (STATS_COLS[5][1] - thumb - theme.S_XS * 3
+        room = (col_width(5) - thumb - theme.S_XS * 3
                 - (0 if known else 14))          # 未标注还要给 `!` 留位
         lab = _lab(_elide(show, room, theme.PAGE_F_BODY), 'body',
                    size=theme.PAGE_F_BODY)
@@ -1269,7 +1563,7 @@ class OppDeckChip(QWidget):
             bang.setStyleSheet('color: %s; background: transparent;' % theme.WARN)
             lay.addWidget(bang)
         lay.addStretch(1)                         # ★ **左对齐**（用户口径）
-        self.setFixedWidth(STATS_COLS[5][1])
+        self.setFixedWidth(col_width(5))
         self.setFixedHeight(theme.PAGE_ROW_H - 6)
         self.setToolTip(tr('点一下标注对手卡组') if not known else tr('点一下改标'))
 
@@ -1373,6 +1667,79 @@ class StatsPage(QWidget):
         self.col.setSpacing(theme.S_XL)
         self.scroll.setWidget(self.host)
         outer.addWidget(self.scroll, 1)
+        #: ★ 2026-10-16：列宽**跟着视口走**（用户：「右侧很多空间，填满让各列更宽松」）。
+        #: resize 连发 -> 防抖 60ms 合一次；重排只动列宽、不重建控件树。
+        self._width_timer = QTimer(self)
+        self._width_timer.setSingleShot(True)
+        self._width_timer.setInterval(60)
+        self._width_timer.timeout.connect(self._apply_widths)
+        self._avail_now = 0
+        #: 手坑两列开关的**上一次取值**（变了才重排，见 `_apply_widths`）
+        self._show_traps = stats_show_traps()
+
+    # ------------------------------------------------------------ 列宽（自适应）
+    def _row_avail(self) -> int:
+        """行内可用宽 = 视口 − 页面内边距(S_LG×2) − 组框内边距(S_MD×2) − 行内边距(S_XS×2)。
+
+        与 `stats_col_widths` 的预算口径一致（见 `STATS_COLS` 注释）。
+        ⚠️ **再减去竖滚动条宽**：内容一高 vbar 就出现、viewport 瞬间少 ~18px，
+        不预留的话右侧会冒出一条横向滚动条（2026-10-16 实测）。
+        """
+        vp = self.scroll.viewport().width() or self.width()
+        vsb = self.scroll.verticalScrollBar().sizeHint().width()
+        return int(vp - vsb - theme.S_LG * 2 - theme.S_MD * 2 - theme.S_XS * 2)
+
+    def _sync_widths(self) -> int:
+        """只按当前视口**算并设**列宽（不重建）—— 建块**之前**必须调一次，
+        否则 `MatchRow` 用的是上一次的列宽。返回当前可用宽。
+
+        ⚠️ 手坑两列的**显示开关**在这里读（用户 2026-10-17）—— 关掉的列宽为 0。
+        """
+        avail = self._row_avail()
+        self._avail_now = avail
+        set_avail_width(avail, stats_show_traps())
+        return avail
+
+    def _apply_widths(self) -> int:
+        """按当前视口重算列宽 —— 变化了就**重建「对局记录」块**（返回新可用宽）。
+
+        ⚠️ 为什么不逐格改宽：行里的对手名/卡组名是**按列宽预先 elide** 的
+        （`_elide`），只 `setFixedWidth` 不改文字 = 变宽了仍显示旧截断
+        （用户要的是「更宽松、少截」）。重建最省事且与切月同一条路
+        （`_refresh_month_view` 也是这么换块的）。防抖在 `resizeEvent`。
+        """
+        avail = self._row_avail()
+        if avail == self._avail_now and stats_show_traps() == self._show_traps:
+            return avail
+        self._show_traps = stats_show_traps()
+        self._avail_now = avail
+        set_avail_width(avail, self._show_traps)
+        #: 只换 records 块（overview 那五格是流式布局，自己会跟着变宽；
+        #: 热力图与月卡的宽度是固定的，不该被列宽刷新牵动）。
+        if getattr(self, 'blocks', None) and 'records' in self.blocks:
+            old = self.blocks.get('records')
+            if old is not None:
+                idx = self.col.indexOf(old)
+                old.hide()
+                old.setParent(None)
+                old.deleteLater()
+                new_blk = self._block_records(
+                    list(self._data.get('groups') or []),
+                    bool(self._data.get('session_live')))
+                self.blocks['records'] = new_blk
+                self.col.insertWidget(idx if idx >= 0 else self.col.count() - 1,
+                                      new_blk)
+                for r in new_blk.findChildren(MatchRow):
+                    r.result_pick.connect(self.result_pick.emit)
+                for w in new_blk.findChildren(QWidget):
+                    w.setMouseTracking(True)
+        else:
+            self._rebuild()
+        return avail
+
+    def resizeEvent(self, ev) -> None:                    # noqa: N802
+        super().resizeEvent(ev)
+        self._width_timer.start()             # 防抖（resize 会连发）
 
     # ------------------------------------------------------------ 数据
     def set_data(self, data: dict) -> None:
@@ -1403,6 +1770,7 @@ class StatsPage(QWidget):
 
     def _refresh_month_view(self) -> None:
         """快路径的重画：高亮原地挪 + 摘掉总览/记录两块重挂（热力图不动）。"""
+        self._sync_widths()               # 同 _rebuild：建行前先定列宽
         d = self._data
         for month, card in self._heat_cards.items():
             card.set_selected(month == d.get('month'))
@@ -1444,6 +1812,7 @@ class StatsPage(QWidget):
                 w.deleteLater()
 
     def _rebuild(self) -> None:
+        self._sync_widths()               # 列宽先定，再建行（否则行用旧列宽）
         self._clear()
         d = self._data
         #: 模式按钮的文字**它自己管**（勾选态是唯一来源）—— 这里别再 `setText` 覆盖。
@@ -1572,7 +1941,30 @@ class StatsPage(QWidget):
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(theme.S_MD)
 
-        avail = OVERVIEW_W - OVERVIEW_PAD       # 四格的格内可用宽
+        #: ★ 五格宽度按**当前可用宽**等比缩放（2026-10-17）：原来是固定
+        #: `OVERVIEW_W` 拉伸因子，最小窗口下五格合计 928 > 可用宽 → 横向滚动条
+        #: 且 `_metric_line` 的降档用的是固定 avail，数字被压到看不见。
+        #: 现在按内容需求比例（4×179 + 212）缩放到真实可用宽。
+        row_w = row.width() or (self.host.width() or 0)
+        if row_w <= 8:
+            row_w = OVERVIEW_W * 4 + OVERVIEW_W_RANK + theme.S_MD * 4
+        scale = float(row_w - theme.S_MD * 4) / (
+            OVERVIEW_W * 4 + OVERVIEW_W_RANK)
+        ov4 = max(int(OVERVIEW_W * scale), OVERVIEW_W_MIN)
+        ovr = max(int(OVERVIEW_W_RANK * scale), OVERVIEW_W_MIN)
+        avail = ov4 - OVERVIEW_PAD       # 四格的格内可用宽
+
+        #: ★ 2026-10-17 用户：「改**大**到一致」—— 我上一轮把五格一起改**小**
+        #: （16px）了，那不是要的。
+        #: 真因是「场数 (26-12)」和主值**挤在同一行**把主值压小；现在场数挪到
+        #: **下一行**（用户自己也叫「胜率**下方**场数」），主值独占一行 ->
+        #: 五格都能用上限字号 `PAGE_F_BIG`，且**取最大的那个装得下的**（不是最小）。
+        shared = _metric_size(avail, [
+            ('%d' % n_all, ''),
+            (theme.fmt_pct(st.get('win_rate')), ''),
+            (theme.fmt_pct(st.get('first_rate')), ''),
+            (theme.fmt_pct(st.get('second_rate')), ''),
+        ])
 
         def cell(title, main, suffix, color):
             card = widgets.panel('dashOverviewCard', pad=theme.S_MD,
@@ -1584,22 +1976,22 @@ class StatsPage(QWidget):
                         weight=QFont.Weight.Bold)
             head.setAlignment(Qt.AlignCenter)
             cl.addWidget(head)
-            cl.addWidget(_metric_line(main, suffix, color, avail=avail))
+            cl.addWidget(_metric_line(main, suffix, color, size=shared))
             cl.addStretch(1)
             return card
 
         #: ⚠️ stretch 用**内容需求**的比例（不是 1:1:1:1:1），见 `OVERVIEW_W` 注释
         rl.addWidget(cell(tr('对局数'), '%d' % n_all, '(%d-%d)' % (n_win, n_lose),
-                          theme.INK), OVERVIEW_W)
+                          theme.INK), ov4)
         rl.addWidget(cell(tr('胜率'), theme.fmt_pct(st.get('win_rate')), '',
-                          theme.win_rate_color(st.get('win_rate'))), OVERVIEW_W)
+                          theme.win_rate_color(st.get('win_rate'))), ov4)
         rl.addWidget(cell(tr('先攻胜率'), theme.fmt_pct(st.get('first_rate')),
                           '(%d-%d)' % (f_w, f_n - f_w),
-                          theme.win_rate_color(st.get('first_rate'))), OVERVIEW_W)
+                          theme.win_rate_color(st.get('first_rate'))), ov4)
         rl.addWidget(cell(tr('后攻胜率'), theme.fmt_pct(st.get('second_rate')),
                           '(%d-%d)' % (s_w, s_n - s_w),
-                          theme.win_rate_color(st.get('second_rate'))), OVERVIEW_W)
-        rl.addWidget(self._best_rank_card(best_rank), OVERVIEW_W_RANK)
+                          theme.win_rate_color(st.get('second_rate'))), ov4)
+        rl.addWidget(self._best_rank_card(best_rank), ovr)
         lay.addWidget(row)
         return box
 
@@ -1708,7 +2100,32 @@ class FloatingTogglePage(QWidget):
         rl.addWidget(self.btn)
         rl.addStretch(1)
         lay.addWidget(row)
+        #: ★ 2026-10-17 用户：最近对局可**隐藏 卡组 / 先后 / 段位 列**
+        lay.addWidget(widgets.hairline())
+        lay.addWidget(_lab(tr('最近对局设置'), 'body',
+                           size=theme.PAGE_F_BODY, weight=QFont.Weight.Medium))
+        for label, qk in (('隐藏卡组列', 'ui/float_hide_deck'),
+                          ('隐藏先/后列', 'ui/float_hide_order'),
+                          ('隐藏段位列', 'ui/float_hide_rank')):
+            box = QCheckBox(tr(label))
+            box.setChecked(_settings_flag(qk, default=False))
+            box.setFont(widgets.font(theme.PAGE_F_BODY))
+            box.setCursor(Qt.PointingHandCursor)
+            #: 勾上 = 隐藏 -> 写 '1'；默认 False = 显示（写 '0'）
+            box.clicked.connect(
+                lambda on, k=qk: self._save_float_flag(k, '1' if on else '0'))
+            lay.addWidget(box)
         lay.addStretch(1)
+
+    def _save_float_flag(self, qkey, value) -> None:
+        """写悬浮窗的「隐藏某列」开关，并通知 app 让悬浮窗按新设置重排。"""
+        settings().setValue(qkey, value)
+        #: 悬浮窗列宽要重算 —— 走与战绩页同一个回调
+        if callable(getattr(self, '_on_settings_changed', None)):
+            try:
+                self._on_settings_changed(qkey)
+            except Exception:                                # noqa: BLE001
+                pass
 
     def set_floating_visible(self, visible: bool) -> None:
         self.btn.setText(tr('隐藏悬浮窗') if visible else tr('显示悬浮窗'))
@@ -1782,7 +2199,7 @@ class DashboardWindow(QWidget):
                  export_loader=None,
                  on_restart=None, on_set_autostart=None,
                  on_toggle_floating=None, on_lang_changed=None,
-                 parent=None):
+                 on_floating_layout_changed=None, parent=None):
         super().__init__(parent)
         self._loader = loader
         self._analysis_loader = analysis_loader
@@ -1790,6 +2207,8 @@ class DashboardWindow(QWidget):
         self._banlist_loader = banlist_loader
         self._deckview_loader = deckview_loader
         self._on_fetch_decks = on_fetch_decks              # Q17（app 侧接）
+        #: 悬浮窗「隐藏某列」改了 -> 通知 app 让它重排（用户 2026-10-17 要**实时**生效）
+        self._on_floating_layout_changed = on_floating_layout_changed
         #: 「卡组名管理」页签的卡组图解析（`(名字) -> 路径`；app 侧给 `DeckImages.resolve`）
         self._opp_deck_images = opp_deck_images
         #: 「卡组名管理」换图要写库 —— storage 由 app 侧给（单测可省）
@@ -1936,6 +2355,8 @@ class DashboardWindow(QWidget):
                 continue
             if key == 'overlay':             # ★ 悬浮窗开关（2026-10-03 用户）
                 page = FloatingTogglePage()
+                #: 悬浮窗「隐藏某列」开关改了 -> 让悬浮窗按新设置重排
+                page._on_settings_changed = self._on_settings_changed
                 page.toggle_requested.connect(self._toggle_floating)
                 self.pages[key] = page
                 self.stack.addWidget(page)
@@ -1968,7 +2389,8 @@ class DashboardWindow(QWidget):
             '', tr(hint), runner_factory=self._script_runner_factory,
             on_restart=self._on_restart,
             on_set_autostart=self._on_set_autostart,
-            on_lang_changed=self._on_lang_changed)
+            on_lang_changed=self._on_lang_changed,
+            on_settings_changed=self._on_settings_changed)
         self.pages[SETTINGS_KEY] = page
         self.stack.addWidget(page)
         # 09-27：数据工具的独立工具页由概览页的「运行」按钮 + 页底日志区
@@ -2209,6 +2631,27 @@ class DashboardWindow(QWidget):
             return
         self._account = name
         settings().setValue('dash/account', name or '')
+        self._reload_stats()
+
+    def _on_settings_changed(self, qkey=None) -> None:
+        """设置项改了 -> **立刻重画**相关页（用户 2026-10-17：不能要重启才生效）。
+
+        🔴 必须**清掉战绩页的指纹闸门**：`_reload_stats` 见「数据没变」就 return，
+        而列开关只改显示、**数据一模一样** -> 不清闸门等于没生效（实测踩过）。
+
+        * 手坑列开关（`ui/stats_show_*`）-> 重画战绩页；
+        * 悬浮窗隐藏列（`ui/float_hide_*`）-> 让 app 通知悬浮窗重排（见
+          `on_floating_layout_changed` 回调）。
+        """
+        if str(qkey or '').startswith('ui/float_hide'):
+            cb = getattr(self, '_on_floating_layout_changed', None)
+            if callable(cb):
+                try:
+                    cb()
+                except Exception:                        # noqa: BLE001
+                    pass
+            return
+        self._page_fps.pop('stats', None)   # ★ 清闸门：强制重画
         self._reload_stats()
 
     def _reload_stats(self) -> None:

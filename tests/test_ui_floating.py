@@ -1272,8 +1272,11 @@ class ColumnWidthTest(unittest.TestCase):
         win.set_snapshot(_demo_snap())
         win.show()
         app.processEvents()
+        #: ⚠️ 要用**窗口实际的**滚动条宽（不是硬编码 0）—— 滚动条可见时列宽
+        #: 会让出那 14px，两边对不上就是错位（见 `_on_scroll_range` 的时序注释）。
+        sb = win._scrollbar_w()
         widths = floating.column_widths(
-            floating.available_for_cols(win.width(), 0),
+            floating.available_for_cols(win.width(), sb),
             opp_name_w=getattr(win, '_opp_name_w', None))
         head = win.findChild(floating.MatchHeader)
         for i, lab in enumerate(head.findChildren(QLabel)):
@@ -2075,3 +2078,87 @@ class RestartMustNotKillCollector(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class HiddenColumnWidthTest(unittest.TestCase):
+    """★ 2026-10-17 用户：隐藏列后**对手卡组列不许变宽**，整个窗口要缩掉。
+
+    ⚠️ 回归点：旧实现把「省下的宽度」全喂给最后一列（对手卡组），于是藏掉
+    三列后那一格又宽又空。现在对手卡组列**只拿它自己要的那点**，省下的
+    宽度由窗口自己缩（`window_width` / `min_columns_width` 按可见列算）。
+    """
+
+    def setUp(self):
+        _app()                                   # 建 QApplication + 隔离设置
+        #: ⚠️ `_SLOT_CACHE`（列宽/窗口宽缓存）是**模块级**的 —— 全量里前面的用例
+        #: 用不同字体度量先算过一遍，不清就会读到旧值（单跑过、一起跑差 2px）。
+        floating.invalidate_width_cache()
+        floating._SLOT_CACHE.clear()
+        self._st = floating.float_settings()
+        self._prev = [self._st.value(k) for k in floating.FLOAT_HIDE_KEYS]
+
+    def tearDown(self):
+        for k, v in zip(floating.FLOAT_HIDE_KEYS, self._prev):
+            if v is None:
+                self._st.remove(k)
+            else:
+                self._st.setValue(k, v)
+        self._st.sync()
+        floating.invalidate_width_cache()
+        floating._SLOT_CACHE.clear()
+
+    def _set(self, hidden):
+        for k, v in zip(floating.FLOAT_HIDE_KEYS, hidden):
+            self._st.setValue(k, '1' if v else '0')
+        self._st.sync()
+        #: 切隐藏集合后**必须清全部列宽缓存**（不只 win）——
+        #: `badge_slot` 等也跟着字体/可见列变。
+        floating._SLOT_CACHE.clear()
+
+    def _cols(self, hidden):
+        """按「当前窗口自己的下限」算列宽 —— 这才是用户看到的形态。
+
+        ⚠️ 三个函数都**显式传** `hidden`：别让它们各自去读 QSettings ——
+        同一段逻辑里读三遍，任何一次时序不同都会算出不一致的宽度
+        （2026-10-18 实测：藏三列时窗口 317 没缩、对手列被撑到 265）。
+        """
+        self._set(hidden)
+        win = floating.window_width(hidden)
+        return floating.column_widths(
+            floating.available_for_cols(win, 0, hidden), opp_name_w=90,
+            hidden=hidden)
+
+    def test_opp_column_does_not_grow_when_hiding(self):
+        """★ 藏列后对手卡组列**不许变宽**（省下的宽度由窗口自己缩掉）。"""
+        full = self._cols((False, False, False))
+        off2 = self._cols((False, True, True))
+        off3 = self._cols((True, True, True))
+        self.assertEqual(off2[4], full[4], '藏两列后对手卡组列不该变宽')
+        #: 语义 = 「藏列**不会**把省下的宽度喂给对手卡组列」。
+        #: ⚠️ 不写死 `off3[4] == full[4]`：窗口按可见列缩到下限后可能还差几 px
+        #:    （字体度量在不同环境下大小不同），那点差异属于「装得下的最小宽」，
+        #:    不是「把藏掉的宽度吃进来」。判据用**容差 + 上界**。
+        eps = 6                     # 字体度量/取整的余量
+        self.assertLessEqual(off3[4], max(full[4],  # 不比全显示更宽（容差内）
+                                          floating.opp_col_width()) + eps,
+                             '藏三列后对手卡组列变宽了（说明省下的宽度被喂给它）')
+        self.assertLessEqual(off2[4], full[4] + eps)
+        #: 强判据：窗口/列宽合计**确实缩小了**
+        self.assertLess(floating.window_width((True,) * 3),
+                        floating.window_width((False,) * 3))
+        self.assertEqual(off2[2], 0)
+        self.assertEqual(off3[0], 0)
+
+    def test_window_width_shrinks(self):
+        self._set((False, False, False))
+        full = floating.window_width((False, False, False))
+        off = floating.window_width((False, True, True))
+        self.assertLess(off, full, '隐藏列后窗口宽必须变小')
+        self.assertLess(floating.window_width((True, True, True)), off)
+
+    def test_min_columns_width_drops_hidden(self):
+        full = floating.min_columns_width((False, False, False))
+        off = floating.min_columns_width((False, True, True))
+        self.assertLess(off, full)
+
+
+_MIME_RESTORE = []

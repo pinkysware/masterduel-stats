@@ -42,6 +42,10 @@ decks, rank progress and the metagame — with UI in **English / 中文 / 日本
 - **Multi-select mode filter** — on both the Matches page and the Analysis page,
   tick the modes you care about (Ranked / Rating / DC Cup / Events); they are
   filtered independently, and the menu updates the figures as you tick.
+- **Hand-trap detection**: automatically detects the 12 hand traps (alt-arts included)
+  used by both sides in the first two turns — two card-art columns on the Matches page
+  (up to 5 per cell, `+N` beyond), plus a "Hand Traps" view under Analysis showing
+  going-first / going-second splits per deck.
 
 ## Install & Run
 
@@ -49,8 +53,8 @@ decks, rank progress and the metagame — with UI in **English / 中文 / 日本
 
 | Asset | Size | Requirements |
 |---|---|---|
-| `masterduel-stats-v1.0.6-win64-full.zip` | ~194 MB | **None** — Python & all deps bundled; unzip anywhere and run `MDStats.exe` |
-| `masterduel-stats-v1.0.6-win64-lite.zip` | ~5 MB | Python 3.13 installed; `MDStats.exe` installs the dependencies on first run |
+| `masterduel-stats-v1.0.7-win64-full.zip` | ~194 MB | **None** — Python & all deps bundled; unzip anywhere and run `MDStats.exe` |
+| `masterduel-stats-v1.0.7-win64-lite.zip` | ~5 MB | Python 3.13 installed; `MDStats.exe` installs the dependencies on first run |
 | Source code (zip / tar.gz) | auto | for developers — attached automatically by GitHub for each tag |
 
 **The easy way:** install [Python 3.13](https://www.python.org/downloads/)

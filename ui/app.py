@@ -1173,6 +1173,24 @@ class MasterDuelUiApp(object):
 
     # ------------------------------------------------------ S6 统计窗
     # ---------------------------------------------------------- 看板（S7）
+    def floating_relayout(self) -> None:
+        """悬浮窗按新设置**重排列**（隐藏了哪几列就立刻生效，不���重启）。
+
+        窗口宽下限也跟着变（列少了 -> 窗口可以更窄），所以先按新设置重新
+        定尺寸、再强制走一遍 `_relayout_columns`（它的「列宽没变就跳过」缓存
+        会被 `_last_layout` 的新宽度自然打破）。
+        """
+        win = self.win
+        try:
+            from ui import floating as _fl
+            #: 列少了 -> 窗口下限/上限都重算（否则留一圈空白，见用户 2026-10-17）
+            _fl.invalidate_width_cache()
+            win.setMinimumWidth(_fl.window_width())
+            win._last_layout = None          # 强制重排（别被缓存骗过去）
+            win._relayout_columns()
+        except Exception:                                # noqa: BLE001
+            pass
+
     def toggle_floating(self) -> bool:
         """看板「悬浮窗」页的开关（2026-10-03）：显示/隐藏悬浮窗。
 
@@ -1245,6 +1263,8 @@ class MasterDuelUiApp(object):
                 on_set_autostart=self.dash_set_autostart,
                 on_lang_changed=self._apply_lang_switch,
                 on_toggle_floating=self.toggle_floating,
+                #: 悬浮窗「隐藏某列」改了 -> 立刻重排（用户 2026-10-17：实时生效）
+                on_floating_layout_changed=self.floating_relayout,
                 on_pick_deck=self.on_dash_pick_deck,
                 loader=self.dashboard_loader(),
                 on_pick_result=self.on_dash_pick_result,
@@ -1333,6 +1353,15 @@ class MasterDuelUiApp(object):
                 a['img'] = imgs.resolve(a.get('deck'))
             for r in data.get('rows') or []:
                 r['img'] = imgs.resolve(r.get('deck'))
+            #: ★ 2026-10-16：手坑汇总表每行 = 一副我方卡组 —— 补卡组图
+            #: （`DeckImages.resolve` 是「卡组名 → 图」的唯一入口）。
+            ht = data.get('hand_traps') or {}
+            for key in ('second_my', 'first_opp'):
+                for r in ht.get(key) or []:
+                    try:
+                        r['img'] = imgs.resolve(r.get('deck'))
+                    except Exception:                        # noqa: BLE001
+                        r['img'] = None
             return data
         return load
 

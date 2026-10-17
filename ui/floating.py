@@ -179,10 +179,24 @@ def chrome_width() -> int:
     return 2 + theme.S_SM * 2
 
 
-def min_columns_width() -> int:
-    """各列都取最小值时的列宽之和（= 窗口下限时的那一份）。"""
-    return (deck_col_width() + result_col_width() + order_col_width()
-            + badge_slot() + opp_col_width())
+def min_columns_width(hidden=None) -> int:
+    """各列都取最小值时的列宽之和（= 窗口下限时的那一份）。
+
+    ⚠️ **隐藏的列不计入**（用户 2026-10-17）—— 否则窗口下限还按五列算，
+    藏掉三列后右边留一圈空白（用户实测）。
+    """
+    hide = tuple(hidden or float_hidden_cols())
+    while len(hide) < 3:
+        hide = hide + (False,)
+    h_deck, h_order, h_rank = hide[0], hide[1], hide[2]
+    w = opp_col_width() + result_col_width()
+    if not h_deck:
+        w += deck_col_width()
+    if not h_order:
+        w += order_col_width()
+    if not h_rank:
+        w += badge_slot()
+    return w
 
 
 #: ★ `QFontMetrics` **实例**缓存（2026-10-10）。
@@ -284,7 +298,39 @@ def opp_col_width() -> int:
     return max(COL_OPP, COL_OPP_THUMB + OPP_GAP + need)
 
 
-def column_widths(avail_w: int, opp_name_w: Optional[int] = None) -> tuple:
+#: 悬浮窗「最近对局」隐藏哪些列（用户 2026-10-17 要求可隐藏卡组/先后/段位）。
+#: 顺序与 `column_widths` 返回的**前三列**对应：(卡组, 先/后, 段位)。
+#: 默认**全显示**（不藏）—— 值 False = 隐藏。
+FLOAT_HIDE_KEYS = ('ui/float_hide_deck', 'ui/float_hide_order',
+                   'ui/float_hide_rank')
+#: **藏了列**时窗口宽的绝对下限（用户 2026-10-17）—— 低于它就装不下
+#: 「结果胶囊 + 对手卡组」这条最小链。只当**兜底**，正常下限由可见列算出。
+FLOAT_W_MIN = 150
+
+
+def float_settings() -> QSettings:
+    """设置读写的**唯一入口**（`FloatingWindow._settings` 同款）。
+
+    ⚠️ 走 `FloatingWindow._settings` 而不是自己 `QSettings('masterduel','M7')`：
+    测试正是通过替换 `FloatingWindow._settings` 来**隔离用户真实设置**的
+    （见 `tests/test_ui_floating._isolate_settings`）。这里另起一个实例 =
+    绕过隔离 -> 测试读到用户真机状态（踩过一次，`test_ui_floating` 整片红）。
+    """
+    return FloatingWindow._settings()
+
+
+def float_hidden_cols() -> tuple:
+    """悬浮窗要**隐藏**的列 -> ``(卡组, 先/后, 段位)``（True = 隐藏）。"""
+    st = float_settings()
+    out = []
+    for k in FLOAT_HIDE_KEYS:
+        v = st.value(k)
+        out.append(False if v is None else str(v) not in ('0', 'false', 'False'))
+    return tuple(out)
+
+
+def column_widths(avail_w: int, opp_name_w: Optional[int] = None,
+                  hidden=None) -> tuple:
     """`(卡组, 结果, 先/后, 段位, 对手卡组)` —— **表头与行都调这一个**。
 
     ⚠️ **口径演变**：2026-09-15「所有列一起拉伸」→ 2026-10-04「窄列钉死、
@@ -296,17 +342,32 @@ def column_widths(avail_w: int, opp_name_w: Optional[int] = None) -> tuple:
     传 `opp_name_w`（= `opp_name_width(rows)`，见 `_relayout_columns`）时按新口径；
     **不传**（CLI / 无行数据）→ 返回各列基准宽，与旧版逐字一致（单测锁着）。
     """
-    fixed = (deck_col_width(), result_col_width(), order_col_width(),
-             badge_slot())
+    hide = tuple(hidden or ())
+    while len(hide) < 3:
+        hide = hide + (False,)
+    #: 隐藏的三列是「卡组(0) / 先/后(2) / 段位(3)」—— 见 `FLOAT_HIDE_KEYS`
+    h_deck, h_order, h_rank = hide[0], hide[1], hide[2]
+    deck_w = 0 if h_deck else deck_col_width()
+    order_w = 0 if h_order else order_col_width()
+    rank_w = 0 if h_rank else badge_slot()
+    fixed = (deck_w, result_col_width(), order_w, rank_w)
     if not opp_name_w:
         return fixed + (opp_col_width(),)
-    gaps = (theme.S_SM - 2) * 4          # 4 个列间距（chrome_width 不含，见它）
-    left = int(avail_w) - sum(fixed) - gaps      # 剩给最后一列的
-    # ★ 2026-10-14 二次修正：**吃满可用宽**，不再以「名字需要的宽」为上限。
-    #   上一版设了 `min(left, need)` 的上限，实测后果是**横拉窗口列宽纹丝不动**
-    #   （名字宽 73px -> 上限 103px，窗口从 262 拉到 662 都是 103），用户报
-    #   「横拉悬浮窗卡组名还是没显示全」。现在窗口拉多宽、这一列就多宽 ——
-    #   名字长过窗口的部分才省略（`OppDeckCell.apply_width` 的 elide 兜底）。
+    #: 间距也只算**可见**列之间的
+    n_show = 5 - sum(1 for x in (h_deck, h_order, h_rank) if x)
+    gaps = (theme.S_SM - 2) * max(n_show - 1, 0)
+    #: ★ 2026-10-17 用户纠正：「**隐藏列后不要增加对手卡组的宽度**」——
+    #: 之前这里把「省下的宽度」全部喂给最后一列，于是藏掉三列后对手卡组
+    #: 那一格撑得又宽又空（用户实测）。现在对手卡组列**只拿它自己要的那点**
+    #: （名字实测宽，见 `opp_name_width`），**省下的宽度由窗口自己缩掉**
+    #: （见 `window_width` / `min_columns_width` 都按可见列算）。
+    #: 窗口拉宽时它仍会跟着长（名字要多少给多少 + 下限 `COL_OPP`）。
+    #: ⚠️ 2026-10-17 用户：**隐藏列不许让对手卡组列变宽**（实测藏三列后那格
+    #: 撑得又宽又空）。做法：把窗口宽的**下限余量**也从可用宽里扣掉 ——
+    #: 窗口按可见列缩窄后如果还剩下「低于 `window_width()` 的那点富余」，
+    #: 那是窗口下限的填充，不该摊给任何一列。
+    #: 拉宽窗口时它照旧跟着长（2026-10-14 口径：名字要多少给多少）。
+    left = int(avail_w) - sum(fixed) - gaps
     return fixed + (max(COL_OPP, left),)
 
 
@@ -323,20 +384,37 @@ def max_window_width(names) -> int:
     fm = body_fm()
     need = max([fm.horizontalAdvance(str(n)) for n in names if n]
                or [COL_OPP_NAME])
-    fixed = (deck_col_width() + result_col_width() + order_col_width()
-             + badge_slot())
-    gaps = (theme.S_SM - 2) * 4
-    avail = fixed + gaps + max(COL_OPP_THUMB + OPP_GAP + need + 8, COL_OPP)
+    #: ⚠️ 隐藏的列不计入（用户 2026-10-17：藏列后窗口整体也要变窄）
+    hide = float_hidden_cols()
+    fixed = [result_col_width()]
+    if not hide[0]:
+        fixed.append(deck_col_width())
+    if not hide[1]:
+        fixed.append(order_col_width())
+    if not hide[2]:
+        fixed.append(badge_slot())
+    gaps = (theme.S_SM - 2) * len(fixed)      # 可见列之间的间距
+    avail = sum(fixed) + gaps + max(COL_OPP_THUMB + OPP_GAP + need + 8, COL_OPP)
     return max(window_width(), chrome_width() + theme.SCROLL_W + avail)
 
 
-def available_for_cols(win_w: int, scrollbar_w: int = 0) -> int:
-    """窗口宽 → 列的可用宽。滚动条**可见时**要把它的宽度扣掉（设计 §4.3）。"""
-    floor = min_columns_width() + (theme.S_SM - 2) * 4 + int(scrollbar_w)
+def available_for_cols(win_w: int, scrollbar_w: int = 0,
+                       hidden=None) -> int:
+    """窗口宽 → 列的可用宽。滚动条**可见时**要把它的宽度扣掉（设计 §4.3）。
+
+    ⚠️ **下界不能加 `scrollbar_w`**（2026-10-18 修的真 bug）：下面那句已经
+    `- scrollbar_w` 扣过一次，floor 里再加一遍 = 多留一条滚动条的宽度 ->
+    窗口窄到下限时「对手卡组列」会多吃到 10px（实测藏列后 106 vs 104 的 2px
+    偏差就是这么来的）。
+    """
+    hide = tuple(hidden) if hidden is not None else float_hidden_cols()
+    n_show = 5 - sum(1 for x in hide[:3] if x)
+    floor = (min_columns_width(hide)
+             + (theme.S_SM - 2) * max(n_show - 1, 0))
     return max(floor, int(win_w) - chrome_width() - int(scrollbar_w))
 
 
-def window_width() -> int:
+def window_width(hidden=None) -> int:
     """窗口宽的**下限**：一行各列最小值 + chrome + **滚动条**，不低于 `theme.FLOAT_W`。
 
     ⚠️ **按当前字体实测**，别写死 —— 字体解析在不同环境差别极大
@@ -345,13 +423,34 @@ def window_width() -> int:
     不算的话列会溢出 `SCROLL_W` 像素、最右边那格（对手卡组）被切掉
     （2026-09-15 量出来的：下限 262 时实际需要 272）。
     """
-    if _SLOT_CACHE.get('win'):
-        return _SLOT_CACHE['win']
-    w = max(theme.FLOAT_W,
-            chrome_width() + (theme.S_SM - 2) * 4
-            + min_columns_width() + theme.SCROLL_W)
-    _SLOT_CACHE['win'] = w
+    hide = tuple(hidden) if hidden is not None else float_hidden_cols()
+    #: ⚠️ 缓存键要**区分隐藏集合**：只用 `'win'` 一个槽的话，切了开关还命中旧值
+    #: （实测 317 vs 156 —— 藏了列窗口却不变窄）。
+    ckey = 'win:%s' % (hide,)
+    if _SLOT_CACHE.get(ckey):
+        return _SLOT_CACHE[ckey]
+    n_show = 5 - sum(1 for x in hide[:3] if x)
+    #: ⚠️ `theme.FLOAT_W` 只是**全显示**时的下限（用户 2026-10-17 藏列实测：
+    #: 它把窗口钉在 262，省下的宽度就全灌进对手卡组列 -> 那格又宽又空）。
+    #: **藏了列时下限跟着可见列走**（`FLOAT_W_MIN` 保底，别缩到装不下）。
+    floor = theme.FLOAT_W if n_show == 5 else FLOAT_W_MIN
+    w = max(floor,
+            chrome_width() + (theme.S_SM - 2) * max(n_show - 1, 0)
+            + min_columns_width(hide) + theme.SCROLL_W)
+    _SLOT_CACHE[ckey] = w
     return w
+
+
+def invalidate_width_cache() -> None:
+    """列宽/窗口宽的缓存作废（**设置改了必调**）。
+
+    `window_width()` 的结果缓存在 `_SLOT_CACHE['win']` —— 隐藏几列之后不清缓存，
+    窗口下限还按五列算（右边留一圈空白，用户 2026-10-17 实测）。
+    """
+    #: `_SLOT_CACHE` 里既有字符串键也有元组键（字体缓存）—— 只清 win 系列。
+    for k in [k for k in list(_SLOT_CACHE)
+              if isinstance(k, str) and (k == 'win' or k.startswith('win:'))]:
+        _SLOT_CACHE.pop(k, None)
 
 
 def cursor_for(edges) -> Qt.CursorShape:
@@ -864,7 +963,10 @@ class MatchHeader(QWidget):
         for i, w in enumerate(widths):
             item = lay.itemAt(i)
             if item is not None and item.widget() is not None:
-                item.widget().setFixedWidth(int(w))
+                wdg = item.widget()
+                #: ★ 宽为 0 = 该列被设置隐藏 -> 连控件一起藏（否则留一个列间距的空缝）
+                wdg.setVisible(int(w) > 0)
+                wdg.setFixedWidth(int(w))
 
 
 # ----------------------------------------------------------------- 徽章
@@ -1335,14 +1437,21 @@ class MatchRow(QWidget):
             self.pick_deck.emit(self.row, self)
 
     def apply_widths(self, widths) -> None:
-        """按新的列宽重排本行。**必须**和表头用同一份 `widths`。"""
+        """按新的列宽重排本行。**必须**和表头用同一份 `widths`。
+
+        ⚠️ 宽为 0 的列 = 设置里被**隐藏**（用户 2026-10-17 可藏卡组/先后/段位）——
+        连控件一起 `hide()`，否则会留一个列间距的空缝。
+        """
         if tuple(widths) == self._widths:
             return                       # 没变就别动（拖动时每帧都在重排）
-        _my, res_w, order_w, badge_w, opp_w = widths
+        my_w, res_w, order_w, badge_w, opp_w = widths
         self._widths = tuple(widths)
-        self.my_deck_cell.apply_width(int(widths[0]))
+        self.my_deck_cell.setVisible(int(my_w) > 0)
+        self.my_deck_cell.apply_width(int(my_w))
         self.chip_host.setFixedWidth(int(res_w))
+        self.order_label.setVisible(int(order_w) > 0)
         self.order_label.setFixedWidth(int(order_w))
+        self.badge.setVisible(int(badge_w) > 0)
         self.badge.set_slot_width(int(badge_w))
         self.opp_cell.apply_width(int(opp_w))
 
@@ -2122,7 +2231,8 @@ class FloatingWindow(QWidget):
             return
         sb = self._scrollbar_w()
         widths = column_widths(available_for_cols(self.width(), sb),
-                               opp_name_w=getattr(self, '_opp_name_w', None))
+                               opp_name_w=getattr(self, '_opp_name_w', None),
+                               hidden=float_hidden_cols())
         if (widths, sb) == getattr(self, '_last_layout', None):
             return                       # 列宽没变就别重排（拖动/滚动时每帧都会调）
         self._last_layout = (widths, sb)
@@ -2144,8 +2254,30 @@ class FloatingWindow(QWidget):
         return int(bar.sizeHint().width())
 
     def _on_scroll_range(self, _lo: int, _hi: int) -> None:
-        """滚动条出现/消失 → 表头与行一起重排列宽（否则两边差一个滚动条宽）。"""
+        """滚动条出现/消失 → 表头与行一起重排列宽（否则两边差一个滚动条宽）。
+
+        🔴 2026-10-18 修的时序 bug：`rangeChanged` 发出时滚动条**还没 show()**，
+        这一刻 `_scrollbar_w()` 仍返回 0 -> 按「没有滚动条」排完就再没人管，
+        表头/行一直比内容宽 14px（实测 `_last_layout` 卡在 `sb=0`）。
+        所以这里**立刻排一次**（保证布局不为空），再**等一轮事件循环**后补一次
+        精确的（那时滚动条已可见，能读到真实宽度）。
+        """
         self._schedule_relayout()
+        QTimer.singleShot(0, self._relayout_after_scrollbar)
+
+    def _relayout_after_scrollbar(self) -> None:
+        """滚动条显隐**稳定后**再对齐一次（见 `_on_scroll_range` 的时序说明）。"""
+        if getattr(self, 'header', None) is None:
+            return
+        t = getattr(self, '_relayout_timer', None)
+        if t is not None and t.isActive():
+            return                      # 手势中：让限流那条路自己收尾
+        sb_now = self._scrollbar_w()
+        last = getattr(self, '_last_layout', None)
+        if last is not None and last[1] == sb_now:
+            return                      # 已经按这个滚动条宽排过了
+        self._last_layout = None        # 滚动条宽变了 -> 强制重排
+        self._relayout_columns()
 
     def _schedule_relayout(self) -> None:
         """重排**限流**：手势期间最多每 `RELAYOUT_MS` 一次，手势结束再补一次精确的。

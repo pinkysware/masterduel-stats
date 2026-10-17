@@ -422,9 +422,23 @@ def _sum_stats(parts) -> dict:
 
 # ---------------------------------------------------- D1「战绩」页的 demo 数据
 #: 形状与 `core.ui_state.stats_page_data()` **逐键对齐**（少一个键界面就少一块）
+#: demo 手坑样例（**用真卡 id**，卡图走本地缓存；没有缓存就走兜底图）。
+#: 三种形态：一/两张、空（没用过）、无（判不出，行里传 None）。
+_DEMO_TRAPS_A = [
+    {'name': '灰流丽', 'turn': 0, 'id': 12950, 'img': None},
+]
+_DEMO_TRAPS_B = [
+    {'name': '增殖的Z', 'turn': 0, 'id': 9455, 'img': None},
+    {'name': '无限泡影', 'turn': 1, 'id': 13631, 'img': None},
+    {'name': '效果遮蒙者', 'turn': 1, 'id': 8933, 'img': None},
+    {'name': '幽鬼兔', 'turn': 1, 'id': 11708, 'img': None},
+]
+
+
 def _prow(date, time, result, went_first, opp_player, turns,
           rank_before=None, rank_after=None, opp_deck='',
-          opp_rb='', opp_ra='', opp_img=None, mode='ranked') -> dict:
+          opp_rb='', opp_ra='', opp_img=None, mode='ranked',
+          my_traps=None, opp_traps=None) -> dict:
     """拼一行「对局记录」demo 行（字段 = 界面那 10 列要用的）。
 
     ★ `mode` 与真库那条路**同一口径**：**不是天梯就不给段位**
@@ -462,6 +476,10 @@ def _prow(date, time, result, went_first, opp_player, turns,
         'opp_deck': opp_deck, 'opp_known': bool(opp_deck),
         'opp_revealed_ids': None, 'opp_deck_id': None,
         'opp_deck_img': opp_img,
+        #: ★ 2026-10-16 手坑两列（demo 三种形态都要出现，渲染自检才看得全）：
+        #: 传 None = 判不出（画「—」）；[] = 确实没用过（留空）；有值 = 画卡图。
+        'my_traps': my_traps if my_traps is not None else _DEMO_TRAPS_A,
+        'opp_traps': opp_traps if opp_traps is not None else _DEMO_TRAPS_B,
     }
 
 
@@ -722,6 +740,11 @@ class _DemoAnalysisStorage(object):
     def __init__(self, rows):
         self._rows = list(rows)
 
+    def get_recent_matches(self, limit=5000, account=None):
+        """`cross_matrix` 现在也拉手坑汇总（2026-10-16）—— 给一份空表，
+        汇总自然归零，不影响矩阵那几张图。"""
+        return []
+
     def get_cross_stats(self, since=None, until=None, went_first=None,
                         mode_group=None):
         if went_first is None:
@@ -763,6 +786,22 @@ def demo_analysis_page(went_first=None, month=None, mode_group=None) -> dict:
     for r in data.get('rows') or []:
         r['img'] = _analysis_img(r.get('deck'))
     data['months'] = ['2026-09', '2026-08']
+    #: ★ 2026-10-16：本页第二个视图「手珈汇总」—— 走**真函数**（同一份桩数据），
+    #: 形状与真库一致（防漂移）。
+    data['hand_traps'] = demo_hand_trap_summary()
+    return data
+
+
+def demo_hand_trap_summary() -> dict:
+    """「手坑汇总」demo：走真函数 `ui_state.hand_trap_summary`（同一份桩）。
+
+    桩只实现 `get_recent_matches`（手坑汇总唯一用到的 storage 方法）。
+    """
+    from core.ui_state import hand_trap_summary
+    data = hand_trap_summary(_DemoTrapStorage())
+    for key in ('second_my', 'first_opp'):
+        for r in data.get(key) or []:
+            r['img'] = _analysis_img(r.get('deck'))
     return data
 
 
@@ -797,6 +836,38 @@ class _DemoMetaStorage(object):
 
     def list_meta_decks(self, tiers=None, kinds=None, include_hidden=False):
         return list(DEMO_TIER_DECKS)
+
+
+class _DemoTrapStorage(object):
+    """`demo_hand_trap_summary` 专用桩：手坑汇总只需 `get_recent_matches`。
+
+    ★ 2026-10-16 重设计后每行 = 一副**我方卡组** —— 桩里带 `my_deck_name`
+    （两副：闪刀姬 / K9vs），否则全归到「(未识别)」一行，看不出表格形态。
+    """
+
+    def get_recent_matches(self, limit=10, account=None):
+        M = {'key': 'maxx', 'id': 9455, 'name_cn': '增殖的Z', 'turn': 0}
+        A = {'key': 'ash', 'id': 12950, 'name_cn': '灰流丽', 'turn': 1}
+        I = {'key': 'imperm', 'id': 13631, 'name_cn': '无限泡影', 'turn': 1}
+        #: (match_id, 我方卡组, 胜负, 先/后, 我方手坑, 敌方手坑)
+        #: ⚠️ 表 A 收「我后手(wf=False) + 我方手坑」；表 B 收「我先手(wf=True) + 敌方手坑」。
+        rows = [
+            ('d1', '闪刀姬', 'Win', 0, [A], [M]),      # 我后手 -> 表A(灰流丽)
+            ('d2', '闪刀姬', 'Lose', 0, [A], [M, I]),   # 我后手 -> 表A
+            ('d3', '闪刀姬', 'Lose', 0, [], [M]),       # 我后手，我没用 -> 表A 计入但不带坑
+            ('d4', '闪刀姬', 'Win', 1, [M], [A]),       # 我先手 -> 表B(对面灰流丽)
+            ('d5', 'K9vs', 'Win', 1, [I], []),          # 我先手，对面没用 -> 表B
+            ('d6', 'K9vs', 'Lose', 1, [], [I]),         # 我先手 -> 表B(对面泡影)
+            ('d7', 'K9vs', 'Lose', 0, [A, I], [M]),     # 我后手 -> 表A
+        ]
+        out = []
+        for mid, deck, res, wf, my, opp in rows:
+            out.append({'match_id': mid, 'started_at': '2026-09-16 12:00:00',
+                        'my_deck_name': deck,
+                        'result': res, 'went_first': wf, 'game_mode': 3,
+                        'mode': 'pvp', 'my_traps': my, 'opp_traps': opp,
+                        'record_dir': 'demo_' + mid})
+        return out
 
 
 def demo_tier_page() -> dict:

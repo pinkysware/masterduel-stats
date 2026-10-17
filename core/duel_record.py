@@ -24,6 +24,7 @@ import struct
 from datetime import datetime
 
 from core import card_names as _cn
+from core import hand_traps as _ht
 from core.memread import duel_log as _dl
 from core.memread.end_message import derive_result_from_winbits
 from core.storage import (DECK_SNAPSHOT_TRUSTED_MODES,
@@ -336,6 +337,118 @@ def find_unknown_card_ids(events, summ, table=None):
             if not _cn.is_known(cid, table)]
 
 
+# ---------------------------------------------------------------- 手坑识别
+# 见 docs/手坑识别计划.md（v4）。三条定案：
+#   ① 「使用」判据 = kind ∈ 发动族 且 zone ∈ {Hand} ∪ {Zone7..12}
+#      （泡影是陷阱卡，盖后开的 zone 是魔陷区 —— 只认 Hand 会漏 43%）；
+#   ② 排除 DRAW / SETV / SETH / SEARCH / RETURN / SENDTOGRAVE（用户 Q2：只算从手牌打出）；
+#   ③ 一次发动 = 同卡同侧、seq 间隔 ≤ HAND_TRAP_GAP 的连续记录
+#      （HAPPEN 与 UNKNOWN_A/B 是同一次发动的两条记录；用**差分验证**定的平台区）。
+#      ⚠️ 计划 §3.3b 正文写的「同卡连续（R2）」措辞与它自己的样表**互相矛盾** ——
+#      seq153/seq171 两次泡影、seq275/306 两次遮蒙，R2 会各并成 1 次，与手核样本
+#      「= 2 次」冲突。**本实现取 seq 间隔规则**（平台区 [3,8] 内结果一致），
+#      过一个事件内 l/r 双侧重复也按间隔 0 合并（不会算成两次）。
+
+#: 「发动族」动作（与 docs/手坑识别计划.md §3.6 的实测定案一致）
+HAND_TRAP_KINDS = frozenset(('HAPPEN', 'UNKNOWN_A', 'UNKNOWN_B', 'EFFECTIMPL'))
+#: 允许的区域：手牌 ∪ 场上魔陷区（7~12）—— 泡影盖后开发动在魔陷区
+HAND_TRAP_ZONES = frozenset(
+    ['Hand'] + ['Zone%d' % i for i in range(7, 13)])
+#: 一次发动的 seq 间隔上界（平台区 [3,8] 内结果一致，取上界）
+HAND_TRAP_GAP = 8
+#: 回合号上限（正常一局 ≤ 20；record_20261010_203819 有 turn=597 脏值）。
+#: ⚠️ 名字带前缀：这是**手坑回合判据**的上限，不是通用的局回合上限。
+HAND_TRAP_MAX_TURN = 30
+#: 统计范围 = **前两回合**（用户 2026-10-16 明确：只统计前 2 回合）。
+#: ⚠️ 语义是「本局的第 1、2 个回合」= turn 0（先攻方首回合）+ turn 1（后攻方首回合），
+#: **不是**「双方各自的第二回合」（那是 turn 2/3，用户不要 —— 我先前按 §3.4 的
+#: 分类误收了 0..3，实测被用户纠正）。计划 §5.4.2 的定版统计本来也是按 turn 0..1 算的。
+HAND_TRAP_TURNS = (0, 1)
+
+
+def summarize_hand_traps(events):
+    """事件流 -> 手坑证据（**只存证据，不存结论**，可重判）。
+
+    输出::
+
+        {'activations': [{'seq','turn','player','key','id','kind','zone'}, ...],
+         'has_turns': bool,     # 本局有没有可用的 ShowTurn（无 -> 两列 NULL）
+         'dirty_turn': int,     # 被回合上限滤掉的脏 ShowTurn 条数（可观测）
+         'n': int}
+
+    * ``turn`` 取「最近一条前置 ShowTurn」（§5.6）；无前置/脏回合号为 ``None``；
+    * ``player`` 用 **per-card 的 ``side.player``**（P0/P1），不要用事件级 player
+      （双侧事件会误归，见 §5.1 / 审查 P3-4）；
+    * ``id`` 是**标准 id**（异画与标准归一到同一张，展示/卡图都用它）。
+    """
+    acts = []
+    cur_turn = None
+    has_turn = False
+    dirty = 0
+    last = {}                       # (player, key) -> 上一次计入的 seq
+    for e in events:
+        label = e.get('label')
+        if label == 'ShowTurn':
+            t = e.get('turn')
+            if isinstance(t, int):
+                if 0 <= t <= HAND_TRAP_MAX_TURN:
+                    cur_turn = t
+                    has_turn = True
+                else:
+                    dirty += 1      # 脏回合号：忽略，不污染其后事件
+            continue
+        if label != 'ShowAction':
+            continue
+        if e.get('kind_name') not in HAND_TRAP_KINDS:
+            continue
+        if e.get('zone_name') not in HAND_TRAP_ZONES:
+            continue
+        seq = e.get('seq')
+        seen = set()                # 同一事件里 l/r 双侧重复 -> 只算一次
+        for c in e.get('cards') or []:
+            key = _ht.key_of(c.get('card_id'))
+            if key is None:
+                continue
+            pl = c.get('player')
+            k = (pl, key)
+            if k in seen:
+                continue
+            seen.add(k)
+            prev = last.get(k)
+            if (prev is not None and seq is not None
+                    and 0 <= seq - prev <= HAND_TRAP_GAP):
+                continue            # 同一次发动的附属记录（seq 间隔在平台区）
+            last[k] = seq
+            acts.append({
+                'seq': seq, 'turn': cur_turn, 'player': pl,
+                'key': key, 'id': _ht.standard_id(key),
+                'kind': e.get('kind_name'), 'zone': e.get('zone_name'),
+            })
+    return {'activations': acts, 'has_turns': has_turn,
+            'dirty_turn': dirty, 'n': len(acts)}
+
+
+def hand_trap_sides(summary, seat, turns=None):
+    """手坑证据 + 座位 -> ``(my_traps, opp_traps)``（**结论**，入库的两列）。
+
+    每项 ``{'turn', 'id', 'key', 'name_cn'}``（turn 升序、同 turn 按 seq 升序，
+    顺序即事件顺序）。判不出座位 / 本局没有可用回合 -> ``(None, None)``
+    （两列都 NULL，界面显示 ``—``；这与「确实没用过」的空列表 ``[]`` 不同）。
+    """
+    turns = HAND_TRAP_TURNS if turns is None else turns
+    if seat is None or not summary or not summary.get('has_turns'):
+        return None, None
+    mine, opp = [], []
+    for a in summary.get('activations') or []:
+        t = a.get('turn')
+        if t not in turns or a.get('id') is None:
+            continue
+        item = {'turn': t, 'id': a['id'], 'key': a['key'],
+                'name_cn': _ht.name_cn(a['key'])}
+        (mine if a.get('player') == seat else opp).append(item)
+    return mine, opp
+
+
 # ---------------------------------------------------------------- 解码
 
 def decode_record(scan, card_names_file=None):
@@ -572,6 +685,7 @@ def _summary(events, payloads, bin_for):
             (('#unknown' if k is None else k), v)
             for k, v in _count_labels(events).items())),
     }
+    summ['hand_traps'] = summarize_hand_traps(events)
     return summ
 
 
@@ -788,6 +902,8 @@ def to_row(duel):
         trusted = True
     else:
         trusted = False
+    _ht = summ.get('hand_traps') or {}
+    _ht_mine, _ht_opp = hand_trap_sides(_ht, seat)
     snap_id = meta.get('my_deck_id') if trusted else None
     snap_name = meta.get('my_deck_name') if trusted else None
     return {
@@ -820,4 +936,7 @@ def to_row(duel):
         'winbits': meta.get('winbits'),
         'opp_revealed': opp_names,
         'opp_revealed_ids': opp_ids,
+        # 手坑两列（JSON 文本存 list；seat 判不出 -> None 两列 NULL）
+        'my_traps': _ht_mine,
+        'opp_traps': _ht_opp,
     }

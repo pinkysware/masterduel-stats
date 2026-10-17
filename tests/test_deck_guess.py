@@ -434,6 +434,14 @@ class TestUiEntryPoints(unittest.TestCase):
         self.assertEqual((got[0]['hits'], got[0]['revealed']), (5, 5))
 
 
+#: 字段校验依赖 **ygocdb 完整卡表**（13MB，不进版本库）。发布仓/干净克隆没有它
+#: -> 这些用例**跳过**而不是失败（2026-10-18：发布仓全量 4 红就是缺这个）。
+_HAS_YGOCDB = os.path.exists(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 'ygocdb.com.cards', 'cards.json'))
+
+
+@unittest.skipUnless(_HAS_YGOCDB, 'ygocdb cards.json absent (publish repo)')
 class TestFieldCheck(unittest.TestCase):
     """★ 字段校验（2026-10-16 用户拍板「字段当罚分项」）。
 

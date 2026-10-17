@@ -171,9 +171,11 @@ def shot_dashboard(qapp) -> None:
                           'opp_deck': '烙印星辰', 'mode_label': '排名决斗'}],
                 'total': 53}
 
+    from core.ui_demo import demo_analysis_page
     win = DashboardWindow(loader=demo_stats_page,
                           collector_loader=_collector,
-                          export_loader=_export)
+                          export_loader=_export,
+                          analysis_loader=demo_analysis_page)
     win.resize(1200, 620)
     win.open_page('stats')
     win.show()
@@ -221,6 +223,23 @@ def shot_dashboard(qapp) -> None:
     print('  %-24s %d x %d（1 倍）-> %s  [滚动到底：%d/%d]'
           % ('_demo_dashboard_records.png', win.width(), win.height(), out2,
              bar.value(), bar.maximum()))
+    #: 对局分析页（2026-10-16 加）：矩阵视图 + 手坑汇总视图（各一张自检图）
+    win.open_page('analysis')
+    qapp.processEvents()
+    out6 = os.path.join(PROJ, 'tmp', '_demo_analysis.png')
+    _grab(win).save(out6)
+    print('  %-24s %d x %d（1 倍）-> %s'
+          % ('_demo_analysis.png', win.width(), win.height(), out6))
+    ap = win.pages.get('analysis')
+    if ap is not None:
+        ap._pick_view('traps')
+        qapp.processEvents()
+        out7 = os.path.join(PROJ, 'tmp', '_demo_analysis_traps.png')
+        _grab(win).save(out7)
+        print('  %-24s %d x %d（1 倍）-> %s'
+              % ('_demo_analysis_traps.png', win.width(), win.height(), out7))
+        ap._pick_view('matrix')
+
     #: D4c：导出页（左栏独立一项）
     win.open_page('export')
     qapp.processEvents()

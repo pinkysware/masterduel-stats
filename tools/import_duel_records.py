@@ -407,6 +407,14 @@ def process(records_dir=DEFAULT_RECORDS, storage=None, apply=False,
             duel['summary']['went_first'] = bool(
                 int(seat) == int(duel['summary']['first_player']))
 
+        # -- 手坑两列（2026-10-16）：seat 判出后映射（我/敌）；判不出两列 NULL
+        #    ⚠️ hand_trap_sides 返回 (None, None) = 判不出、( [], [] ) = 没用过。
+        ht_mine, ht_opp = duel_record.hand_trap_sides(
+            duel['summary'].get('hand_traps'), seat)
+        item['hand_traps'] = {
+            'my': len(ht_mine) if ht_mine is not None else None,
+            'opp': len(ht_opp) if ht_opp is not None else None}
+
         # meta_updates 同步回内存 dict（write_duel_json 落盘 / to_row 出行都要用）
         for k, v in meta_updates.items():
             if v is not None:
@@ -433,7 +441,8 @@ def process(records_dir=DEFAULT_RECORDS, storage=None, apply=False,
                 winbits=meta_updates.get('winbits'),
                 result=meta_updates.get('result'),
                 result_src=meta_updates.get('result_src'),
-                result_note=meta_updates.get('result_note'))
+                result_note=meta_updates.get('result_note'),
+                my_traps=ht_mine, opp_traps=ht_opp)
             item['db'] = {'merged_into': pair['match_id'], 'actions': actions}
             report['merged'] += 1
         else:
@@ -482,6 +491,11 @@ def _print_report(report):
         upd = it.get('meta_updates') or {}
         if upd:
             print('  注入：' + json.dumps(upd, ensure_ascii=False))
+        if it.get('hand_traps'):
+            ht = it['hand_traps']
+            print('  手坑：我方 %s / 对手 %s'
+                  % ('—' if ht.get('my') is None else ht['my'],
+                     '—' if ht.get('opp') is None else ht['opp']))
         if it.get('unknown_card_ids'):
             print('  ⚠️ 未知卡 id：%s' % _fmt_ids(it['unknown_card_ids']))
         if it.get('db'):

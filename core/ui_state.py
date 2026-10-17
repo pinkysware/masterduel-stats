@@ -810,6 +810,7 @@ def _page_row(m) -> dict:
     """
     from core import modes as M
     from core import ranks
+    lang = _ui_lang()
     group = M.group(m.get('game_mode'))
     ranked = (group == 'ranked')
     rb = ((m.get('my_rank_before'), m.get('my_rate_before')) if ranked
@@ -859,6 +860,10 @@ def _page_row(m) -> dict:
         #: M5 反推的输入（点了对手卡组格要拿它算建议，见 app.on_pick_deck）
         'opp_revealed_ids': m.get('opp_revealed_ids'),
         'opp_deck_id': m.get('opp_deck_id'),
+        # 手坑两列（2026-10-16）：None = 判不出/无逐卡数据（界面画「—」）；
+        # [] = 确实没用过（界面留空）。**两种语义别混**（见 core/duel_record.py）。
+        'my_traps': _trap_items(m.get('my_traps'), lang),
+        'opp_traps': _trap_items(m.get('opp_traps'), lang),
     }
 
 
@@ -1122,6 +1127,165 @@ def stats_page_data(storage, limit: int = 500, mode_group=None,
 
 # ===================================================== 对局分析页（D2）
 
+
+def hand_trap_summary(storage, month=None, mode_group=None) -> Dict[str, object]:
+    """手坑汇总（对局分析页「手坑汇总」视图用）—— **两张表**（用户 2026-10-16 口径）。
+
+    行 = 我方卡组，列 = 12 张手坑，格子 = **我的胜率**（+ 小字场数）：
+
+    * 表 A ``second_my``：「**我后手** · 我用手坑」—— 我后手时，前两回合（turn 0/1）
+      **我**用了某坑的局 → 我的胜率；
+    * 表 B ``first_opp``：「**我先手** · 敌用手坑」—— 我先手时，前两回合
+      **对方**用了某坑的局 → 我的胜率。
+
+    口径与旧版一致：**界面口径**（`match_groups` 那套），只算有逐卡数据的局；
+    turn 范围 = `duel_record.HAND_TRAP_TURNS`（= `(0,1)`，先攻/后攻各自的第一回合）。
+    """
+    from core import hand_traps as _ht
+    from core import duel_record as _dr
+    since = until = None
+    if month:
+        try:
+            since, until = month_bounds(str(month))
+        except Exception:                                    # noqa: BLE001
+            since = until = None
+    traps = [{'key': k, 'name_cn': _ht.name_cn(k), 'name': _trap_display(k),
+              'group': _ht.group_of(k)} for k in _ht.TRAPS]
+    empty = {'traps': traps, 'second_my': [], 'first_opp': [],
+             'n_games': 0, 'n_calibre': 0, 'month': month,
+             'mode_group': mode_group}
+    try:
+        rows = list(storage.get_recent_matches(limit=5000) or [])
+    except Exception:                                        # noqa: BLE001
+        return empty
+
+    from core import modes as M
+    sel = _mode_sel(mode_group)
+
+    def _keep(m):
+        if m.get('result') not in _DONE_RESULTS or not _in_duel_calibre(m):
+            return False
+        if sel:
+            g = M.group(m.get('game_mode'))
+            fallback = ('ranked' in sel and g is None
+                        and m.get('mode') == 'pvp' and not m.get('ended_at'))
+            if g not in sel and not fallback:
+                return False
+        at = m.get('started_at') or ''
+        if since and at < since:
+            return False
+        if until and at > until:
+            return False
+        return True
+
+    calibre = [m for m in rows if _keep(m)]
+    usable = [m for m in calibre
+              if m.get('my_traps') is not None and m.get('opp_traps') is not None]
+    valid = _dr.HAND_TRAP_TURNS
+    keys = [t['key'] for t in traps]
+
+    #: 表 A / 表 B 各按我方卡组分桶：deck -> {key: [n,w,l]}
+    def _blank():
+        return {k: [0, 0, 0] for k in keys}
+    buckets = {'second_my': {}, 'first_opp': {}}
+
+    for m in usable:
+        wf = m.get('went_first')
+        if wf is None:
+            continue                       # 先/后判不出 -> 两张表都不收
+        deck = (m.get('my_deck_name') or '').strip() or MY_DECK_UNKNOWN
+        if wf is False:                    # 我后手 -> 表 A「我用手坑」
+            side, table = m.get('my_traps') or [], 'second_my'
+        else:                              # 我先手 -> 表 B「敌用手坑」
+            side, table = m.get('opp_traps') or [], 'first_opp'
+        b = buckets[table].setdefault(deck, {'all': 0, 'cells': _blank()})
+        b['all'] += 1
+        seen = set()
+        for t in side:
+            k = t.get('key')
+            if k not in keys or t.get('turn') not in valid or k in seen:
+                continue                   # 同一局同一张坑只记一次
+            seen.add(k)
+            cell = b['cells'][k]
+            cell[0] += 1
+            if m.get('result') == 'Win':
+                cell[1] += 1
+            elif m.get('result') == 'Lose':
+                cell[2] += 1
+
+    def _rows(table):
+        out = []
+        for deck, b in buckets[table].items():
+            cells = {}
+            for k in keys:
+                n, w, l = b['cells'][k]
+                cells[k] = {'n': n, 'w': w, 'l': l,
+                            'rate': (100.0 * w / (w + l)) if (w + l) else None}
+            out.append({'deck': deck, 'n_total': b['all'], 'cells': cells})
+        out.sort(key=lambda r: (-int(r['n_total'] or 0), r['deck']))
+        return out
+
+    return {'traps': traps, 'second_my': _rows('second_my'),
+            'first_opp': _rows('first_opp'),
+            'n_games': len(usable), 'n_calibre': len(calibre),
+            'month': month, 'mode_group': mode_group}
+
+
+def _trap_display(key) -> str:
+    """手坑 key -> 当前语言显示名（缺该语言顺延到中文名）。"""
+    from core import hand_traps as _ht
+    lang = _ui_lang()
+    sid = _ht.standard_id(key)
+    try:
+        from core.card_names import display
+        return display(sid, lang) or _ht.name_cn(key) or key
+    except Exception:                                        # noqa: BLE001
+        return _ht.name_cn(key) or key
+
+
+def _acc() -> Dict[str, int]:
+    """一个视角的计数器（总 + 先攻 + 后攻）。"""
+    return {'n': 0, 'w': 0, 'l': 0, 'd': 0,
+            'f_n': 0, 'f_w': 0, 'f_l': 0, 'f_d': 0,
+            's_n': 0, 's_w': 0, 's_l': 0, 's_d': 0}
+
+
+def _acc_add(a: Dict[str, int], result, went_first) -> None:
+    a['n'] += 1
+    if result == 'Win':
+        a['w'] += 1
+    elif result == 'Lose':
+        a['l'] += 1
+    else:
+        a['d'] += 1
+    if went_first is None:
+        return
+    pre = 'f_' if went_first else 's_'
+    a[pre + 'n'] += 1
+    if result == 'Win':
+        a[pre + 'w'] += 1
+    elif result == 'Lose':
+        a[pre + 'l'] += 1
+    else:
+        a[pre + 'd'] += 1
+
+
+def _acc_finish(a: Dict[str, int], total: int) -> Dict[str, object]:
+    """计数器 -> 带胜率的出口形状（胜率 = 胜 / (胜+负)，平局不算）。"""
+    def rate(w, l):
+        n = w + l
+        return (100.0 * w / n) if n else None
+    return {
+        'n': a['n'], 'w': a['w'], 'l': a['l'], 'd': a['d'],
+        'pct_of_total': (100.0 * a['n'] / total) if total else None,
+        'rate': rate(a['w'], a['l']),
+        'first': {'n': a['f_n'], 'w': a['f_w'], 'l': a['f_l'], 'd': a['f_d'],
+                  'rate': rate(a['f_w'], a['f_l'])},
+        'second': {'n': a['s_n'], 'w': a['s_w'], 'l': a['s_l'], 'd': a['s_d'],
+                   'rate': rate(a['s_w'], a['s_l'])},
+    }
+
+
 def month_bounds(ym: str) -> Tuple[str, str]:
     """'YYYY-MM' -> ``(月初时刻, 月末时刻)``（含首含尾；定宽文本比较口径）。
 
@@ -1165,7 +1329,16 @@ def cross_matrix(storage, went_first=None, hide_pseudo: bool = True,
         'went_first': went_first, 'month': month, 'mode_group': mode_group,
         'cols': [], 'rows': [], 'col_avgs': [], 'months': [],
         'total_calibre': 0, 'total_in_matrix': 0,
+        #: ★ 2026-10-16：本页第二个视图「手坑汇总」（四组 × 三视角 × 胜负交叉）。
+        #: **在这里算**（而不是让 app 的 loader 补）—— 否则 demo 与真函数的键集合
+        #: 会对不上（tests/test_ui_demo 的契约锁）。失败退零值形态。
+        'hand_traps': {},
     }
+    try:
+        data['hand_traps'] = hand_trap_summary(storage, month=month,
+                                               mode_group=mode_group)
+    except Exception:                                        # noqa: BLE001
+        data['hand_traps'] = {'groups': [], 'n_games': 0}
     try:
         data['months'] = list(reversed(months_of(merged_daily(storage))))
     except Exception:
@@ -1576,6 +1749,50 @@ def _art_path(cid) -> Optional[str]:
         return None
 
 
+def _cropped_path(cid) -> Optional[str]:
+    """**纯卡绘**（去卡框）缓存路径（`core.card_art.cropped_path`，纯本地不联网）。
+
+    手坑格用 —— 整张卡在 18px 格里看不清卡面（2026-10-16 用户实测反馈）。
+    """
+    try:
+        from core import card_art
+        return card_art.cropped_path(cid)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _trap_items(traps, lang) -> Optional[List[Dict[str, object]]]:
+    """手坑结论列表 -> 显示项 ``[{'name','turn','img'}, ...]``。
+
+    * ``traps is None``（判不出 / 无逐卡数据）-> ``None``（界面画「—」）；
+    * ``[]``（确实没用过）-> ``[]``（界面留空）；
+    * 名字按界面语言（缺该语言顺延，`card_names.display`）；
+    * ``img`` = **纯卡绘**缓存（`core.card_art.cropped_path` —— 去卡框，
+      2026-10-16 用户实测：整张卡在 18px 格里框+文案占满、看不清卡面），
+      纯本地不联网；没有就 None —— 界面回落 `_default.webp`（悠悠）。
+    """
+    if traps is None:
+        return None
+    out = []
+    for t in traps or []:
+        if not isinstance(t, dict):
+            continue
+        cid = t.get('id')
+        name = None
+        try:
+            from core.card_names import display
+            name = display(cid, lang)
+        except Exception:                                    # noqa: BLE001
+            name = None
+        out.append({
+            'name': name or t.get('name_cn') or ('#%s' % cid),
+            'turn': t.get('turn'),
+            'id': cid,
+            'img': _cropped_path(cid),
+        })
+    return out
+
+
 #: 自组卡组 → **共用参照库哪个键**（2026-10-10，用户口径）。
 #:
 #: 「狱神耀圣」是用户自组的牌，站内没有这一条，但它的构成与 `Elfnote`
@@ -1816,6 +2033,10 @@ EXPORT_COLUMNS: Tuple[Tuple[str, str], ...] = (
     ('rank_label_before', '局前段位'),
     ('rank_label_after', '局后段位'),
     ('rank_delta', '段位变化'),
+    #: ★ 2026-10-16 手坑两列：逗号分隔的卡名（按界面语言）；
+    #: 判不出（无逐卡数据）留空 —— 与界面「—」同源（`_trap_names_cell`）。
+    ('my_traps', '我方手坑'),
+    ('opp_traps', '对方手坑'),
     ('match_id', '对局 ID'),
 )
 
@@ -1843,6 +2064,18 @@ def export_months(storage, limit: int = 5000) -> List[Tuple[str, str]]:
         if m:
             out.append((str(m), str(m)))
     return out
+
+
+def _trap_names_cell(traps) -> str:
+    """手坑结论 -> 导出格文本（逗号分隔的卡名）。
+
+    * ``None``（判不出 / 无逐卡数据）-> 空串（与界面「—」同源，不留 `None` 进 CSV）；
+    * ``[]``（确实没用过）-> 空串；
+    * 有值 -> `灰流丽, 无限泡影`（**顺序 = 事件顺序**，同名多张会重复出现）。
+    """
+    if not traps:
+        return ''
+    return ', '.join(str(t.get('name') or '') for t in traps if t)
 
 
 def export_rows(storage, mode_group=None, limit: int = 5000,
@@ -1895,6 +2128,8 @@ def export_rows(storage, mode_group=None, limit: int = 5000,
                 'rank_label_before': r.get('rank_label_before') or '',
                 'rank_label_after': r.get('rank_label_after') or '',
                 'rank_delta': tr(EXPORT_DELTA_CN.get(r.get('rank_delta'), '')),
+                'my_traps': _trap_names_cell(r.get('my_traps')),
+                'opp_traps': _trap_names_cell(r.get('opp_traps')),
                 'match_id': r.get('match_id') or '',
             })
     #: 按日期 + 时间**倒序**（近的在上，与战绩页一致）
