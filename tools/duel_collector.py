@@ -104,6 +104,15 @@ RANK_WAIT_SEC = 30.0
 #: 21:00 / 22:27 / 22:28 三局因此**整局没有段位**，而回主界面后同一份数据又读得到。
 #: 不放弃 = 窗口内每拍重试一次（`read_my_rank` 是便宜路径，不扫描，2s 一拍无压力）。
 RANK_BASE_WAIT_SEC = 60.0
+#: ★ 2026-10-18：收口探测校准 `rank_state` 的最大间隔（秒）——
+#: 「本局最后一次活动」到「收口那一刻」隔了这么久以上，读到的 rank/rate
+#: 就**不是本局的结论**（中间多半又打了局并升/掉段），此时只修本局行、
+#: 不校准 rank_state（否则后续每局的推断都被带歪）。
+#: 取值依据：Sora 局事故实测间隔 567 秒（23:57:15 → 00:06:37），
+#: 而正常收口（Ctrl-C / 掉线超时）间隔在分钟级以内。取 180 秒：
+#: 宽到能覆盖「结算画面慢 + 用户回主界面」的正常延迟，又短于
+#: 「再开一局并打完」的量级（一局天梯含排队 5 分钟上下）。
+RANK_RECALLIB_SEC = 180.0
 #: 巅峰积分（2026-09-28）：收局后等「本局结算对」出现的窗口（秒）。
 #: watch 实测（tmp/_probe_peak_rate.py）：结算对**结算画面才出现**（比 pvpFinished
 #: 晚一拍），且存活到下一局开局 —— 窗口比段位的 30s 宽是安全的（不抢时间），
@@ -1071,6 +1080,15 @@ class DuelCollector(object):
         # ★ 收口的局**没有 pvpFinished 探测**（2026-10-05 实测：段位只有推断值，
         #   state 一脱节就错）—— 收口时用户多半在主界面，profile 读得到：
         #   读一次真值，修本局行 + 校准 rank_state（与 _finish_record 路径同守卫）。
+        # 🔴 ★ 2026-10-18：**校准 rank_state 必须带时间窗守卫**（Sora 局事故）。
+        #   实机：23:57 Sora 局（大师5 晋级赛）→ 采集器 00:06:37 才收口，
+        #   那时用户已打完下一局并升到大师4。收口探测把「下一局的段位」
+        #   当本局真值，`init_from(7,4)` 覆盖 rank_state；紧接着 00:06:51
+        #   的推断用这个**被污染的状态**把 `7-4 → 7-4` 只补空写进 Sora 局行
+        #   （正确应为 `7-5 → 7-4` 升段）—— 段位列从此错、连胜计数也断档。
+        #   修法：**只修本局行**（那是本局目录的收口，方向明确），但
+        #   `init_from` 校准**只在「本局刚结束不久」时做** —— 间隔太久
+        #   说明中间又打了局，读到的 rank/rate 已经不是本局的结论了。
         try:
             cur = self.hooks.read_my_rank()
             cur_rank = (cur or {}).get('rank')
@@ -1082,14 +1100,39 @@ class DuelCollector(object):
                 st = rank_state.load()
                 if (st.get('rank'), st.get('rate')) != (cur_rank,
                                                         (cur or {}).get('rate')):
-                    rank_state.init_from(cur_rank, cur.get('rate'))
-                    lines.append('段位复核（收口）：探测真值 %s 与推断不符，已修正'
-                                 % _rank_label(cur))
+                    # 本局最后一次活动时刻：目录的采集区间比 open_rec 的
+                    # last_write_ts 更权威（它是磁盘上那局的真实截止）。
+                    gap = self._close_rank_gap(rec, now)
+                    if gap is None or gap <= RANK_RECALLIB_SEC:
+                        rank_state.init_from(cur_rank, cur.get('rate'))
+                        lines.append('段位复核（收口）：探测真值 %s 与推断不符，已修正'
+                                     % _rank_label(cur))
+                    else:
+                        # 隔太久：只修本局行（上面已做），**不动 rank_state** ——
+                        # 拿下一局的段位校准会把后续每一局的推断都带歪。
+                        lines.append(
+                            '段位（收口）：只修本局行，不校准 rank_state'
+                            '（距本局结束 %.0f 秒 > %d 秒窗，读到的可能是下一局段位）'
+                            % (gap, RANK_RECALLIB_SEC))
         except Exception as e:
             self.log('段位复核失败（不阻塞）：%r' % e)
         lines.append('对局收口（%s）：%s 已标 final'
                      % (reason, os.path.basename(rec.dir_path)))
         return lines
+
+    def _close_rank_gap(self, rec, now):
+        """收口探测距「本局最后一次活动」多少秒；判不出给 None（= 放行校准）。
+
+        为什么用 `last_write_ts` 而不是目录的 `capture.last_saved_at`：
+        后者是**上一次**落盘的时刻（可能远早于收口），而 `last_write_ts`
+        是本采集进程内最后一次为该局写盘的时刻，更贴近「局还在进行」的边界。
+        ⚠️ `0.0` = 本进程没写过这局（重启后继承的 open 目录）→ 判不出，
+        按老口径放行（那正是这条收口路径原本要救的场景）。
+        """
+        ts = float(getattr(rec, 'last_write_ts', 0.0) or 0.0)
+        if ts <= 0.0:
+            return None
+        return max(0.0, float(now) - ts)
 
     def _write(self, now, state, size, state_data=None):
         rec = self.open_rec

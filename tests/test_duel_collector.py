@@ -1774,6 +1774,94 @@ class TestCloseCurrentImports(Base):
         self.assertEqual(self.st.imports, [])
 
 
+class TestCloseRankRecalib(Base):
+    """★ 2026-10-18：收口探测**校准 rank_state 的时间窗守卫**（Sora 局事故）。
+
+    事故还原：23:57 Sora 局（大师5 晋级赛）→ 采集器 00:06:37 才收口，
+    那时用户已打完下一局并升到大师4。收口探测把「下一局的段位」当真值，
+    `init_from(7,4)` 污染 rank_state；紧接着 00:06:51 的推断用这个被污染的
+    状态把 `7-4 → 7-4` 只补空写进 Sora 局行（正确应为 `7-5 → 7-4` 升段）。
+
+    口径：**本局行照修**（那是本局目录的收口，方向明确），但 `init_from`
+    只在「距本局最后一次活动 ≤ RANK_RECALLIB_SEC」时做。
+    """
+
+    def _open_duel(self, now=1000.0):
+        self.st.size = 5
+        self.st.state = mk_state(5)
+        self.c.observe(TS0, True, 3, now=now)
+        name = dir_name_for(TS0)
+        self.st.imports.clear()
+        return name
+
+    def test_recent_close_still_calibrates(self):
+        """间隔在窗内（本局刚结束）：照老口径修本局行 + 校准 rank_state。"""
+        import core.rank_state as rank_state
+        name = self._open_duel(now=1000.0)
+        rank_state.save({'rank': 7, 'rate': 5, 'win_streak': 4,
+                         'lose_streak': 0, 'src': 'probe'})
+        # 探测读到「下一局才有的」7-4，但间隔只有 20s —— 仍算本局结论
+        self.st.rank = {'rank': 7, 'rate': 4}
+        DB_CALLS['repair'][:] = []
+        lines = self.c._close_current(TS1, 'flushed', 1020.0)
+        self.assertEqual(DB_CALLS['repair'], [(name, 7, 4)])
+        st = rank_state.load()
+        self.assertEqual((st['rank'], st['rate']), (7, 4))
+        self.assertTrue(any('已修正' in x for x in lines), lines)
+
+    def test_stale_close_fixes_row_but_not_state(self):
+        """🔴 回归锁：间隔超窗（中间又打了局）→ 只修本局行，**不动 rank_state**。
+
+        这就是 Sora 局事故本身：23:57 开局的局，00:06:37 才收口（隔 567s），
+        此时探测读到的 7-4 已是「下一局」的段位。
+        """
+        import core.rank_state as rank_state
+        name = self._open_duel(now=1000.0)
+        # 手工把本局的最后一次写盘拨回 567 秒前，复刻「隔了 9 分钟才收口」
+        # ⚠️ 必须在 _close_current 之前取引用 —— 它一进来就把 open_rec 置 None
+        rec = self.c.open_rec
+        self.assertIsNotNone(rec)
+        rec.last_write_ts = 1000.0
+        rank_state.save({'rank': 7, 'rate': 5, 'win_streak': 4,
+                         'lose_streak': 0, 'src': 'probe'})
+        self.st.rank = {'rank': 7, 'rate': 4}
+        DB_CALLS['repair'][:] = []
+        lines = self.c._close_current(TS1, 'flushed', 1000.0 + 567.0)
+        # ① 本局行照修（那是本局目录的收口，方向明确）
+        self.assertEqual(DB_CALLS['repair'], [(name, 7, 4)])
+        # ② rank_state 不许被下一局的段位污染 —— 否则后续每局推断都歪
+        st = rank_state.load()
+        self.assertEqual((st['rank'], st['rate']), (7, 5))
+        self.assertEqual(st['win_streak'], 4)
+        # ③ 日志要说清「为什么没校准」（用户看板可见）
+        self.assertTrue(any('不校准 rank_state' in x for x in lines), lines)
+
+    def test_gap_none_when_never_written(self):
+        """本进程没写过这局（重启继承的 open 目录）→ 判不出 → 放行校准。
+
+        那正是这条收口路径原本要救的场景（用户重启采集器时正在打的那局），
+        不能因为「算不出间隔」就拒绝校准 —— 宁可修正，也不留推断的错值。
+        """
+        self.c.open_rec = None
+        self.assertIsNone(self.c._close_rank_gap(
+            type('R', (), {'last_write_ts': 0.0})(), 1000.0))
+
+    def test_gap_computed_from_last_write(self):
+        """间隔 = now − last_write_ts（不是目录的 last_saved_at，那可能远早于收口）。"""
+        self.c.open_rec = None
+        rec = type('R', (), {'last_write_ts': 900.0})()
+        self.assertEqual(self.c._close_rank_gap(rec, 1000.0), 100.0)
+
+    def test_window_constant_is_sane(self):
+        """窗长要「宽过结算画面慢 + 回主界面」，又「短于再打一局」的量级。
+
+        Sora 事故实测 567s；一局天梯含排队 5 分钟上下 → 180s 卡在中间。
+        """
+        self.assertEqual(dc.RANK_RECALLIB_SEC, 180.0)
+        # 与两拍探测的窗口量级一致（都是「秒级等待结算」的一族）
+        self.assertGreater(dc.RANK_RECALLIB_SEC, dc.RANK_WAIT_SEC)
+
+
 class TestEmSlotAcrossDuels(Base):
     """★ 2026-09-18 实锤：EM 抓取只有**一个槽位** —— 上一局的窗口还没关就走完的局，
     `capture_end_message` 见槽被占就**整局不抓**（record_20260918_222756 那局一行

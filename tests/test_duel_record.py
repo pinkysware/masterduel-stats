@@ -686,6 +686,44 @@ class TestDeriveResultAndToRow(unittest.TestCase):
         self.assertEqual(row['opp_revealed_ids'], [100, 200])
         self.assertTrue(row['opp_revealed'])           # 卡名查表
 
+    def test_to_row_self_made_name_normalized(self):
+        """★ 2026-10-17：快照名是**游戏内自组名**（别名命中）时也要归一成显示名。
+
+        实机起因：用户的神艺卡组游戏内叫「狱神神艺」，站内条目是 `Artmage`
+        （中文「神艺」）—— 自组名当时不在别名里，于是界面搜不到、配不到图、
+        统计也单独分一桶。修法是「把自组名挂成别名」+ `to_row` 过一次归一。
+        ⚠️ 打桩 `_display_deck_name` 而不是依赖真库：发布仓库的
+        `data/masterduel.db` 是旧快照（别名列与主仓不同步），
+        直接查真库会在发布仓红（2026-10-18 踩过，同 test_deck_guess 那类坑）。
+        """
+        orig = dr._display_deck_name
+        dr._display_deck_name = lambda n: '神艺' if n == '狱神神艺' else None
+        try:
+            duel = {'record_id': 'r-selfmade',
+                    'meta': {'game_mode': 3, 'my_deck_id': '50459520',
+                             'my_deck_name': '狱神神艺', 'winbits': [1, 0]},
+                    'summary': {}}
+            row = dr.to_row(duel)
+        finally:
+            dr._display_deck_name = orig
+        # 落库的是**显示名**，不是游戏里的自组名
+        self.assertEqual(row['my_deck_name'], '神艺')
+        self.assertEqual(row['deck_source'], 'snapshot')
+
+    def test_to_row_unknown_name_kept_verbatim(self):
+        """参照库里没有的自组名 → **原样保留**（归一不了也不许丢信息）。"""
+        orig = dr._display_deck_name
+        dr._display_deck_name = lambda n: None      # 一律查不到
+        try:
+            duel = {'record_id': 'r-verbatim',
+                    'meta': {'game_mode': 3, 'my_deck_id': '99999999',
+                             'my_deck_name': '我瞎起的卡组名', 'winbits': [1, 0]},
+                    'summary': {}}
+            row = dr.to_row(duel)
+        finally:
+            dr._display_deck_name = orig
+        self.assertEqual(row['my_deck_name'], '我瞎起的卡组名')
+
     def test_to_row_no_seat_no_opp(self):
         duel = {'record_id': 'r1',
                 'meta': {'winbits': None, 'game_mode': None},

@@ -865,6 +865,37 @@ def derive_result(winbits):
     return _RESULT_LABEL.get(r)
 
 
+def _display_deck_name(name):
+    """卡组名（**任意叫法**）→ meta 清单里的中文显示名；查不到返回 None。
+
+    给 `to_row` 的快照名字归一用：游戏内自组名（如「狱神神艺」）落在覆盖表
+    某条的别名上时，库内应存**显示名**（「神艺」），这样界面搜索 / 配图 /
+    统计分桶都走同一条路。与 `tools/import_duel_records._meta_display` 同口径，
+    但那边要 storage 实例，这里懒建一个（只在有快照名时调，开销可忽略）。
+
+    ⚠️ 查不到**必须**返回 None（调用方保留原值）—— 自组名在参照库里没有时，
+    原样保留比丢信息。
+    ⚠️ 命中判据是「**五字段里有一模一样的叫法**」（name / name_display /
+    name_cn / name_ja / aliases），不是模糊匹配 —— `search_meta_decks` 会做
+    近似匹配，别名「狱神神艺」命中时 `name` 是 `Artmage`（≠查询词），
+    只比 `name` 会漏掉全部别名命中（2026-10-17 踩过）。
+    """
+    try:
+        from core.storage import Storage
+        storage = Storage()
+        key = str(name).strip()
+        for d in (storage.search_meta_decks(key, limit=5) or []):
+            names = [str(d.get(k) or '').strip()
+                     for k in ('name', 'name_display', 'name_cn', 'name_ja')]
+            names += [str(a or '').strip()
+                      for a in (d.get('aliases') or [])]
+            if key in [n for n in names if n]:
+                return d.get('name_cn') or d.get('name_display') or d.get('name')
+    except Exception:                                        # noqa: BLE001
+        pass
+    return None
+
+
 def to_row(duel):
     """duel.json -> matches 行形状（origin='record'；入库判定在 import 工具）。"""
     from core.card_names import display
@@ -906,6 +937,12 @@ def to_row(duel):
     _ht_mine, _ht_opp = hand_trap_sides(_ht, seat)
     snap_id = meta.get('my_deck_id') if trusted else None
     snap_name = meta.get('my_deck_name') if trusted else None
+    # ★ 2026-10-17：快照名字也可能是**游戏内自组名**（用户卡组叫「狱神神艺」，
+    #   站内条目叫 `Artmage`）—— 原样进库的话界面既搜不到也配不到图。
+    #   所以先过一次 meta 清单的显示名归一（`_meta_display` 同一条路径）；
+    #   查不到（真是自组的、参照库没有）就保留原值，绝不丢信息。
+    if snap_name and snap_id is not None:
+        snap_name = _display_deck_name(snap_name) or snap_name
     return {
         'match_id': 'rec:' + duel['record_id'],
         'record_dir': duel['record_id'],

@@ -510,18 +510,35 @@ class TestUpsert(Base):
         got = self.st.get_match('m1')
         self.assertEqual(got['my_deck_name'], '闪刀姬')
         self.assertEqual(got['my_deck_name_src'], 'manual')
-        # 直接 UPDATE 的统一名（src=NULL）同样受保护
-        with self.st._open() as conn:
-            conn.execute("UPDATE matches SET my_deck_name = 'K9VS',"
-                         " my_deck_name_src = NULL WHERE match_id = 'm1'")
-        self.st.upsert_match(mk('m1', '2026-09-10 10:00:00.000',
-                                deck_name='K9vs'))
-        self.assertEqual(self.st.get_match('m1')['my_deck_name'], 'K9VS')
         # 但「已知自动来源」的旧值允许被新解析刷新
         self.st.set_my_deck_for_record('m1', '旧名', src='snapshot-name')
         self.st.upsert_match(mk('m1', '2026-09-10 10:00:00.000',
                                 deck_name='新名'))
         self.assertEqual(self.st.get_match('m1')['my_deck_name'], '新名')
+
+    def test_rescrape_refreshes_null_src_name(self):
+        """★ 2026-10-18：`src=NULL` 的旧名**不再享受人工保护**。
+
+        实机起因：神艺局库里 14 行 `my_deck_name='狱神神艺'`（游戏内自组名、
+        src=NULL）。加了「自组名→显示名」归一后重解析改不动这些行 ——
+        NULL-src 的语义是「没有人工介入」（snapshot 路径本来就不写 src），
+        把它当人工值保护等于把采集器的第一版输出钉死。
+        ⚠️ 只放开 NULL-src；`manual` / `manual-fix-*` 照旧顶住（上一个用例）。
+        """
+        self.st.init_schema()
+        self.st.upsert_match(mk('m1', '2026-09-10 10:00:00.000'))
+        with self.st._open() as conn:
+            conn.execute("UPDATE matches SET my_deck_name = '狱神神艺',"
+                         " my_deck_name_src = NULL WHERE match_id = 'm1'")
+        # 归一后的新值（神艺）必须能进得来
+        self.st.upsert_match(mk('m1', '2026-09-10 10:00:00.000',
+                                deck_name='神艺'))
+        got = self.st.get_match('m1')
+        self.assertEqual(got['my_deck_name'], '神艺')
+        # 新值为空时仍然不抹旧值（这条没变）
+        self.st.upsert_match(mk('m1', '2026-09-10 10:00:00.000',
+                                deck_name=None))
+        self.assertEqual(self.st.get_match('m1')['my_deck_name'], '神艺')
 
     def test_rescrape_keeps_api_backfilled_result(self):
         """🔴 2026-10-01 事故回归：API 补录的胜负（src=untapped-api-…）
@@ -543,6 +560,61 @@ class TestUpsert(Base):
         self.st.upsert_match(mk('m1', '2026-09-29 10:59:00.000',
                                 result='Win'))
         self.assertEqual(self.st.get_match('m1')['result'], 'Win')
+
+    def test_rescrape_never_nulls_an_automatic_result(self):
+        """★ 2026-10-18 修：重解析**判不出结果**时不许把已有的自动结论抹成 NULL。
+
+        实机事故：全量重导把 25 行 `result` 抹成 NULL，而 `result_src` 还是
+        `duel_code` —— 库里留下自相矛盾的脏状态（有来源、没结论）。
+        根因是 `result` 与 `result_src` 两列 CASE 判据不对称：result_src 的
+        else 分支是 `COALESCE(excluded, matches)`（新值为空保留旧值），
+        result 的 else 是裸 `excluded.result`（新值为空就吃 NULL）。
+        """
+        self.st.init_schema()
+        self.st.upsert_match(mk('m1', '2026-10-10 22:38:49.000',
+                                result='Win', result_src='duel_code',
+                                result_note='对手已投降'))
+        # 同一局重解析：end_messages 没认领到 → 判不出（result/src 都是 NULL）
+        row = mk('m1', '2026-10-10 22:38:49.000', result=None)
+        row['result_src'] = None
+        self.st.upsert_match(row)
+        got = self.st.get_match('m1')
+        # 旧结论必须完整保留（值 + 来源，成组移动）
+        self.assertEqual(got['result'], 'Win')
+        self.assertEqual(got['result_src'], 'duel_code')
+        self.assertEqual(got['result_note'], '对手已投降')
+
+    def test_automatic_result_still_refreshes_on_new_conclusion(self):
+        """自动来源的旧结论**能被新解析刷新**（winbit 真值优先，2026-09-18 口径）。
+
+        与上一条是同一处 CASE 的两面：只挡「新值为空」，不挡「新值有结论」。
+        """
+        self.st.init_schema()
+        self.st.upsert_match(mk('m1', '2026-10-10 22:38:49.000',
+                                result='Win', result_src='duel_code'))
+        self.st.upsert_match(mk('m1', '2026-10-10 22:38:49.000',
+                                result='Lose', result_src='winbit'))
+        got = self.st.get_match('m1')
+        self.assertEqual(got['result'], 'Lose')
+        self.assertEqual(got['result_src'], 'winbit')
+
+    def test_manual_src_with_null_result_is_not_stuck(self):
+        """`src='manual'` 但 `result=NULL` 的脏行**允许被填上**（原来永远卡死）。
+
+        库里实有一行（`rec:record_20260918_194446`）。判据与
+        `apply_record_meta` 的 `manual` 同口径：**人工 + 有值**才保护。
+        """
+        self.st.init_schema()
+        self.st.upsert_match(mk('m1', '2026-09-18 19:44:46.000',
+                                result='Win', result_src='duel_code'))
+        with self.st._open() as conn:
+            conn.execute("UPDATE matches SET result = NULL,"
+                         " result_src = 'manual' WHERE match_id = 'm1'")
+        self.st.upsert_match(mk('m1', '2026-09-18 19:44:46.000',
+                                result='Lose', result_src='winbit'))
+        got = self.st.get_match('m1')
+        self.assertEqual(got['result'], 'Lose')
+        self.assertEqual(got['result_src'], 'winbit')
 
     def test_set_result_if_null_by_record(self):
         """结算码提前直写：**只补空** —— 已有值（含人工值）一律不动。"""

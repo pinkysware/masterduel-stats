@@ -516,39 +516,70 @@ def _build_insert_sql():
     （人工修复不许被自动解析冲掉，2026-09-18 用户口径；2026-10-01 起保护圈
     从『= manual』扩成『不在自动来源集合』—— API 补录的 src 同样不许冲）。
 
-    ``my_deck_name`` / ``my_deck_name_src`` / ``my_deck_id`` / ``deck_source``
+    ``my_deck_name`` / `my_deck_name_src` / `my_deck_id` / `deck_source`
     四列**成组**处理（2026-10-01 事故，见 :data:`AUTO_MY_DECK_NAME_SRCS`）：
     旧名字非空且（新名字为空或旧来源是人工侧）→ 整组保持旧值。
+    ★ 2026-10-18：**NULL-src 不再算人工侧**（snapshot 路径本来就不写 src，
+    把它当人工值保护会把采集器的第一版输出钉死，归一/修正永远进不来）——
+    详见 `_deck_keep` 处的注释。
     """
     _auto_result = ', '.join("'%s'" % s for s in AUTO_RESULT_SRCS)
     _auto_deck = ', '.join("'%s'" % s for s in AUTO_MY_DECK_NAME_SRCS)
+    #: result 组的保护判据（`result` / `result_src` 两列共用，保证成组移动）：
+    #: 旧值是**人工结论**（src 非空且不在自动集合）时才顶住。
+    #: ★ 2026-10-18：加 `matches.result IS NOT NULL` —— 旧值为空时没有什么
+    #: 可保护的（那 1 行 `src='manual'` 但 result=NULL 的脏行就是被这条卡住，
+    #: 永远填不上；与 `apply_record_meta` 的 `manual` 判据同口径）。
+    #: ⚠️ 新值为空的保护**不在这条判据里**，而在两个 CASE 的
+    #: `COALESCE(excluded.…, matches.…)` —— 「保留旧值」对 result 也要生效
+    #: （原来只有 result_src 有，result 是裸 `excluded.result`，见下方注释）。
+    _result_keep = ("matches.result IS NOT NULL"
+                    " AND matches.result_src IS NOT NULL"
+                    " AND matches.result_src NOT IN (%s)" % _auto_result)
     #: my_deck 组的保护判据（四列共用同一条件，保证成组移动）：
     #: 旧名字非空 且（新名字为空 或 旧来源不是已知自动来源）。
     #: ⚠️ 与 result 刻意**不对称**：胜负有「winbit 真值优先」的自动纠正流
     #: （apply_record_meta），NULL-src 旧值要允许被覆盖；名字没有更真的
     #: 自动源（同一 duel.json 重解码结果不变），库里有值就该顶住——
     #: 09-28 把 48 行 K9vs 统一成 K9VS 的手改就是这么被冲回去的。
+    #: ★ 2026-10-18：NULL-src **不再享受保护**（与 `AUTO_RESULT_SRCS` 口径对齐）。
+    #: 实机起因：神艺局库里 14 行 `my_deck_name='狱神神艺'`（自组名、src=NULL），
+    #: 加了「自组名→显示名」归一后重解析**改不动**这些行 —— 手坑汇总里
+    #: 「狱神神艺」和「神艺」分成两桶。NULL-src 的语义是「没有人工介入」
+    #: （snapshot 路径本来就不写 src），把它当人工值保护等于把采集器的
+    #: 第一版输出钉死，归一 / 修正永远进不来。
+    #: ⚠️ 只放开 NULL-src；`manual` / `manual-fix-*` 等人工来源照旧顶住。
     _deck_keep = ("matches.my_deck_name IS NOT NULL"
                   " AND (excluded.my_deck_name IS NULL"
-                  "      OR matches.my_deck_name_src IS NULL"
-                  "      OR matches.my_deck_name_src NOT IN (%s))" % _auto_deck)
+                  "      OR (matches.my_deck_name_src IS NOT NULL"
+                  "          AND matches.my_deck_name_src NOT IN (%s)))" % _auto_deck)
     sets = []
     for f in MATCH_FIELDS:
         if f == 'match_id':
             continue
         if f == 'result':
-            sets.append("result = CASE WHEN matches.result IS NOT NULL"
-                        " AND matches.result_src IS NOT NULL"
-                        " AND matches.result_src NOT IN (%s)"
-                        " THEN matches.result ELSE excluded.result END"
-                        % _auto_result)
+            #: ★ 2026-10-18 修「重解析把 result 抹成 NULL」：
+            #: 旧行 result='Win'/src='duel_code' 遇上「新解析判不出结果」
+            #: （end_messages 没认领到该局 → result=NULL/src=NULL）时，
+            #: 原判据只看「旧 src 是否人工」，else 分支直接吃 NULL ——
+            #: 而 result_src 那列的 else 是 `COALESCE(excluded, matches)`，
+            #: **新 src 为空时保留旧 src**。两列判据不对称，于是库里留下
+            #: 自相矛盾的脏状态：`result_src='duel_code'` 但 `result=NULL`
+            #: （实机 25 行，全量重导时一次性爆发）。
+            #: 修法 = 两列判据对齐 + **新值为空一律保留旧值**：
+            #:   * 旧值是人工结论（src 非自动）→ 顶住，新值再真也不覆盖；
+            #:   * 旧值是自动结论、新值判不出 → 保留旧值（不许抹）；
+            #:   * 旧值是自动结论、新值有结论 → 按新值刷新（winbit 真值优先）。
+            #: ⚠️ 「保留旧值」必须 result / result_src **成组**，否则又是不对称。
+            sets.append("result = CASE WHEN %s"
+                        " THEN matches.result"
+                        " ELSE COALESCE(excluded.result, matches.result) END"
+                        % _result_keep)
         elif f == 'result_src':
-            sets.append("result_src = CASE WHEN matches.result IS NOT NULL"
-                        " AND matches.result_src IS NOT NULL"
-                        " AND matches.result_src NOT IN (%s)"
+            sets.append("result_src = CASE WHEN %s"
                         " THEN matches.result_src"
                         " ELSE COALESCE(excluded.result_src, matches.result_src)"
-                        " END" % _auto_result)
+                        " END" % _result_keep)
         elif f == 'my_deck_name':
             sets.append('my_deck_name = CASE WHEN %s'
                         ' THEN matches.my_deck_name'
