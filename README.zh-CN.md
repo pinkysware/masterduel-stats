@@ -43,10 +43,16 @@
 
 | 附件 | 体积 | 需要什么 |
 |---|---|---|
-| `masterduel-stats-Setup-1.0.7.exe` | ~130 MB | **一键安装（可选）** —— 双击装完即可用；数据默认跟程序放在一起，装在 `Program Files` 时自动改存 `%LOCALAPPDATA%\MasterDuelStats` |
-| `masterduel-stats-v1.0.7-win64-full.zip` | ~194 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `MDStats.exe` |
-| `masterduel-stats-v1.0.7-win64-lite.zip` | ~5 MB | 需先装 Python 3.13；首次运行 `MDStats.exe` 会自动安装依赖 |
+| `masterduel-stats-Setup-1.0.8.exe` | ~29 MB | **一键安装（推荐）** —— 双击装完即可用；数据默认跟程序放在一起，装在 `Program Files` 时自动改存 `%LOCALAPPDATA%\MasterDuelStats` |
+| `masterduel-stats-v1.0.8-win64-full.zip` | ~39 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `MDStats.exe` |
+| `masterduel-stats-v1.0.8-patch-win64.zip` | **~0.7 MB** | **老用户升级用**（便携版）—— 只含程序代码，解压覆盖到原目录即可；**不会动你的对局数据** |
+| `masterduel-stats-v1.0.8-win64-lite.zip` | ~6 MB | 需先装 Python 3.13；首次运行 `MDStats.exe` 会自动安装依赖 |
 | Source code (zip / tar.gz) | 自动 | 源码包，GitHub 对每个 tag 自动附带 |
+
+**从旧版升级（便携版）**：下 `patch.zip`（不到 1MB），
+**先完全退出程序与采集器**（托盘图标右键 → 退出），
+再把包里 `master-duel-stats` 的内容解压覆盖到原目录。对局数据在 `data/` 里，
+补丁包不会碰。安装版直接重下新的 `Setup` 覆盖安装即可。
 
 **关于游戏对局数据的位置**：安装版默认**跟着程序走**（`<安装目录>\data`），
 整个文件夹拷到别的电脑就能接着用。如果装在 `Program Files` 这类没有写权限的地方，
