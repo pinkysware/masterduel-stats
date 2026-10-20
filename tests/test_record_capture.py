@@ -271,6 +271,75 @@ class TestFakeMemCapture(unittest.TestCase):
         self.assertEqual(rc.find_controller(self.proc, None, 'tbl', ti),
                          (None, None))
 
+    def test_logbase_size_over_cap_returns_none(self):
+        """★ BUG-B3-03：垃圾 `_size`（2^31-1）不许拿去分配 68 GB。"""
+        obj = self._build_controller()
+        lb_obj = int.from_bytes(self.mem.load(obj + 0x10, 8), 'little')
+        self.mem.put_i32(lb_obj, 0x18, 0x7FFFFFFF)   # _size 被垃圾值撑爆
+        self.assertIsNone(rc.read_state(self.proc, None, obj))
+
+
+class TestFindControllerBudget(unittest.TestCase):
+    """★ BUG-B3-02：扫描必须有界（私有堆 + 墙钟预算）。"""
+
+    class _Region(object):
+        def __init__(self, name):
+            self.base = name
+            self.name = name
+
+    class _ScanProc(ObjProc):
+        """真 ObjProc（list_fields 要读字段表）+ 记录 scan 入参。"""
+
+        def __init__(self, mem, hits=()):
+            super(TestFindControllerBudget._ScanProc, self).__init__(mem)
+            self.calls = []
+            self._hits = list(hits)
+            self.regions = [TestFindControllerBudget._Region('REGION-A'),
+                            TestFindControllerBudget._Region('REGION-B')]
+
+        def private_regions(self):
+            return list(self.regions)
+
+        def scan(self, pattern, max_hits=None, chunk=None, regions=None,
+                 deadline=None):
+            self.calls.append({'regions': regions, 'deadline': deadline})
+            return iter(self._hits)
+
+    def setUp(self):
+        self.mem = FakeMem()
+        self.ti = build_named_typeinfo(self.mem, 'DuelLogController',
+                                       [('m_Host', 0x10)])
+
+    def test_scan_is_limited_to_private_heap_with_deadline(self):
+        proc = self._ScanProc(self.mem)
+        self.assertEqual(rc.find_controller(proc, None, 'tbl', self.ti),
+                         (None, None))
+        self.assertEqual(len(proc.calls), 1)
+        call = proc.calls[0]
+        self.assertEqual([r.base for r in call['regions']],
+                         ['REGION-A', 'REGION-B'])
+        self.assertIsNotNone(call['deadline'], '没有墙钟预算 —— 会卡死采集器')
+
+    def test_last_region_is_moved_to_front(self):
+        """上次命中的区域前置，预算耗尽前一定覆盖它（与 end_message 同款）。"""
+        proc = self._ScanProc(self.mem)
+        rc.find_controller(proc, None, 'tbl', self.ti,
+                           last_region=proc.regions[1])
+        self.assertEqual([r.base for r in proc.calls[0]['regions']],
+                         ['REGION-B', 'REGION-A'])
+
+    def test_falls_back_to_full_scan_without_private_regions(self):
+        """假进程没实现 private_regions -> regions=None（scan 自己回退全扫）。"""
+
+        class _Plain(ObjProc):
+            def scan(self, pattern, max_hits=None, regions=None, deadline=None):
+                self.seen = regions
+                return iter(())
+
+        proc = _Plain(self.mem)
+        rc.find_controller(proc, None, 'tbl', self.ti)
+        self.assertIsNone(proc.seen)
+
 
 class TestSameSourceSizes(unittest.TestCase):
     """KNOWN_SIZES 与 duel_record.ARRAY_SIZES 同源（契约 §2.2，漂移即红）。"""
@@ -280,6 +349,28 @@ class TestSameSourceSizes(unittest.TestCase):
             if k in rc.KNOWN_SIZES:
                 self.assertEqual(rc.KNOWN_SIZES[k], v,
                                  '尺寸漂移：%s' % k)
+
+class TestManifestAtomic(unittest.TestCase):
+    """★ BUG-B8-10：manifest 走原子写。"""
+
+    def test_dump_manifest_overwrites_and_writes_tmp_first(self):
+        tmp = tempfile.mkdtemp(prefix='recman_')
+        self.addCleanup(shutil.rmtree, tmp, True)
+        rc._dump_manifest(tmp, {'a': 1})
+        p = os.path.join(tmp, 'manifest.json')
+        self.assertTrue(os.path.exists(p))
+        rc._dump_manifest(tmp, {'a': 2})
+        with open(p, encoding='utf-8') as f:
+            self.assertEqual(json.load(f), {'a': 2})
+        self.assertEqual([n for n in os.listdir(tmp) if n.endswith('.tmp')], [])
+
+    def test_dump_manifest_failure_is_loud(self):
+        tmp = tempfile.mkdtemp(prefix='recman2_')
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with self.assertRaises(OSError):
+            rc._dump_manifest(os.path.join(tmp, 'no-such-dir'), {'a': 1})
+
+
 
 
 if __name__ == '__main__':

@@ -1596,10 +1596,27 @@ class MoveTest(unittest.TestCase):
         """边缘按下仍然是**缩放**，不会被移动抢走。"""
         app, win = self._win()
         moved = []
+        resized = []
         win._move_starter = lambda: moved.append(1) or True
+        # 让缩放「成功」，才能验 _resizing 被置位 —— 无头环境里
+        # startSystemResize 返回 False（见 BUG-B5-07 的失败复位）
+        win._resize_starter = lambda edges: resized.append(edges) or True
         win.mousePressEvent(_mouse('press', (2, win.height() // 2), (500, 300)))
-        self.assertEqual(moved, [])
+        self.assertEqual(moved, [], '边缘不许被移动抢走')
+        self.assertTrue(resized, '边缘必须走缩放路径')
         self.assertTrue(win._resizing)
+        win.hide()
+
+    def test_begin_resize_failure_resets_flag(self):
+        """★ BUG-B5-07：缩放启动**失败**必须复位 `_resizing`。
+
+        否则 `mousePressEvent` 已 `accept()` 吃掉事件、`_resizing` 又卡在 True
+        → 那个角落成死区；且 `resizeEvent` 会把布局引起的 resize 记成用户尺寸。
+        """
+        app, win = self._win()
+        win._resize_starter = lambda edges: False       # 启动失败
+        win.mousePressEvent(_mouse('press', (2, win.height() // 2), (500, 300)))
+        self.assertFalse(win._resizing, '失败路径不复位就成死区')
         win.hide()
 
 
@@ -1802,6 +1819,10 @@ class SizeLimitTest(unittest.TestCase):
         calls = []
         original = win._relayout_columns
         win._relayout_columns = lambda: (calls.append(1), original())[1]
+        # ★ BUG-B5-07 之后 `_resizing` 不再被失败路径卡住，所以这里必须
+        # **显式**进入缩放手势态（否则 resize 走「非手势立刻重排」分支，
+        # 20 次全同步执行 —— 那就不是限流测试了）。
+        win._resizing = True
         for i in range(20):
             win.resize(win.width() + i, win.height())
         self.assertEqual(calls, [], '手势期间不该同步重排（要限流）')

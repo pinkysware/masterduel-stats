@@ -30,6 +30,8 @@ from .il2cpp import (MetadataHeader, find_all_metadata_mirrors, list_fields,
 from .il2cpp_obj import MIN_ADDR, class_name_of, list_items, read_string
 from .process import SafeProcess, find_pids_by_name
 
+from core import paths
+
 #: 视图控制器类（礼盒数据挂在它的 dataList 上）
 VC_CLASS = 'PresentBoxViewController'
 VC_NS = 'YgomGame.Menu'
@@ -39,8 +41,10 @@ LIST_CLASS = 'List`1'
 #: 宝石的 (itemCategory, itemID)（实测 67/67 条都是）
 CAT_GEM, ITEM_GEM = 1, 1
 
-#: 默认缓存路径（读成功才写；看板下次启动先显示上次结果）
-CACHE_PATH = os.path.join('data', 'present_box_cache.json')
+#: 默认缓存路径（读成功才写；看板下次启动先显示上次结果）。
+#: ★ BUG-B3-04：必须走 `paths.data_path` —— 裸相对路径按**进程 CWD** 解析，
+#:   安装版（Program Files）会写到只读的安装目录、静默失效。
+CACHE_PATH = paths.data_path('present_box_cache.json')
 
 #: 元素读取的字段白名单（缺哪个都直接失败，不猜）
 _REQUIRED_FIELDS = ('pID', 'itemCategory', 'itemID', 'quantity',
@@ -194,25 +198,40 @@ def pick_instance(proc: SafeProcess, mirror, vc_ti: int,
         items = list_items(proc, mirror, lst)
         if items is None:
             continue
-        if items and (items[0] < MIN_ADDR
+        if items and (not items[0] or items[0] < MIN_ADDR
                       or class_name_of(proc, items[0]) != DATA_CLASS):
             continue
         return hit
     return 0
 
 
+def _read_i32(proc: SafeProcess, addr: int) -> int:
+    """读一个 i32；短读抛 ValueError（由 :func:`read_element` 统一兜住）。"""
+    raw = proc.read(addr, 4)
+    if not raw or len(raw) < 4:
+        raise ValueError('i32 短读 addr=0x%X' % addr)
+    return struct.unpack('<i', raw)[0]
+
+
 def read_element(proc: SafeProcess, obj: int, fields: Dict[str, int]) -> Optional[dict]:
-    """读一条礼盒条目（Data 对象）。缺字段 / 读炸 → None（调用方跳过该条）。"""
+    """读一条礼盒条目（Data 对象）。缺字段 / 读炸 -> None（调用方跳过该条）。
+
+    ★ BUG-B3-15：这三个 i32 原来用**一次** ``struct.unpack('<iii', …, 12)``
+    读出来，隐含「itemCategory / itemID / quantity 在对象里紧挨着、顺序固定」。
+    字段重排或中间插了新字段时，``quantity`` 会静默变成另一个 int（比如
+    ``isPeriod``），礼盒数量直接算错且没有任何校验。现在各按**自己的偏移**读。
+    """
     try:
         missing = [n for n in _REQUIRED_FIELDS if n not in fields]
         if missing:
             return None
-        cat, item_id, qty = struct.unpack(
-            '<iii', proc.read(obj + fields['itemCategory'], 12))
+        cat = _read_i32(proc, obj + fields['itemCategory'])
+        item_id = _read_i32(proc, obj + fields['itemID'])
+        qty = _read_i32(proc, obj + fields['quantity'])
         msg = read_string(proc, proc.read_ptr(obj + fields['message']), 160)
         lim = read_string(proc, proc.read_ptr(obj + fields['limitDate']), 60)
         # pID 在 i32 段的最前面，一起读（校验对象确实是礼盒条目形状）
-        pid = struct.unpack('<i', proc.read(obj + fields['pID'], 4))[0]
+        pid = _read_i32(proc, obj + fields['pID'])
     except Exception:
         return None
     return {'pID': pid, 'category': cat, 'item_id': item_id, 'quantity': qty,
@@ -270,6 +289,31 @@ def read_items(proc: SafeProcess, mirror, stbl: bytes,
     return rows, vc_ti, 'ok'
 
 
+def _candidate_game_dirs() -> List[str]:
+    """游戏目录候选 —— 与 `end_message.default_game_dir()` 同一口径。
+
+    ★ BUG-B3-05：这里原先写死本机 `D:/steam/...` 绝对路径，`MD_GAME_DIR` 对它完全无效
+    （换盘 / 换 Steam 库的用户永远读不到卡表镜像）。现在只走那一份口径。
+    """
+    from .end_message import default_game_dir
+    return [default_game_dir()]
+
+
+def game_metadata_missing_reason() -> str:
+    """`find_game_metadata` 找不到镜像时，**真实原因**是「目录不对」还是「游戏没就绪」。
+
+    用户提示语要能区分两者 —— 否则目录配错的人会一直等「游戏加载完」。
+    """
+    from .il2cpp import default_metadata_path
+    dirs = _candidate_game_dirs()
+    exist = [d for d in dirs if os.path.exists(default_metadata_path(d))]
+    if not exist:
+        return ('没找到游戏的卡表文件（%s）—— 请设置环境变量 MD_GAME_DIR '
+                '指向 Master Duel 安装目录' % '、'.join(
+                    default_metadata_path(d) for d in dirs))
+    return '没找到游戏内存里的卡表镜像（游戏还没加载完？）'
+
+
 def find_game_metadata(proc: SafeProcess):
     """游戏进程 -> (header, mirror, stbl)；找不到镜像返回 None。"""
     from .il2cpp import default_metadata_path
@@ -287,11 +331,6 @@ def find_game_metadata(proc: SafeProcess):
     return None
 
 
-def _candidate_game_dirs() -> List[str]:
-    """Steam 库里的游戏目录候选（与 tmp/read_engine_live.py 同源；以后可做成设置）。"""
-    return [r"D:\steam\steamapps\common\Yu-Gi-Oh!  Master Duel"]
-
-
 def read_present_box_live(known_vc_ti: int = 0) -> Tuple[Optional[List[dict]], int, str]:
     """看板按钮调的一步式入口（自己开进程自己关）。
 
@@ -305,7 +344,7 @@ def read_present_box_live(known_vc_ti: int = 0) -> Tuple[Optional[List[dict]], i
     with SafeProcess(pids[0]) as proc:
         found = find_game_metadata(proc)
         if not found:
-            return None, known_vc_ti, '没找到游戏内存里的卡表镜像（游戏还没加载完？）'
+            return None, known_vc_ti, game_metadata_missing_reason()
         _, mirror, stbl = found
         rows, vc_ti, state = read_items(proc, mirror, stbl, known_vc_ti)
     if state == 'no_instance':

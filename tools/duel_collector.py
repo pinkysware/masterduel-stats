@@ -63,6 +63,8 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from core import duel_record
+from core import modes as _M
+from core import paths
 from core.app_service import DuelSessionTracker, EV_DUEL_END, EV_DUEL_START
 from core.memread import record_capture as rc
 from core.memread.end_message import (EndMessageReader, arbitrate_result,
@@ -144,22 +146,25 @@ EM_WB_DRY_TRIES = 4
 #: 快路径读 Engine 的 blob 大小（与 capture_duel_mode 同口径）
 ENGINE_BLOB = 0x140
 #: pid 文件（双开检测 + 启动自愈的 game pid 变化判据）
-PID_PATH = os.path.join(PROJ, 'data', 'archive', 'duel_collector.pid')
+#: ★ BUG-B8-01（2026-10-18）：改走 `paths.data_path` —— 安装版（Program Files）
+#:   的 `<PROJ>/data` 不可写，原来会「pid 写不进 + 记录零采」；
+#:   且与 `ui/collector_ctl.PID_PATH`（走 data_path）不是同一份，双开检测失效。
+PID_PATH = paths.data_path('archive', 'duel_collector.pid')
 #: 采集器进程的镜像名 —— ⚠️ Windows 会**复用 pid**，双开检测必须校验它。
 #: 2026-10-08 事故：只看 OpenProcess 成不成功，被 svchost 骗过 -> 整场零记录。
 COLLECTOR_EXES = ('python.exe', 'pythonw.exe')
-#: 默认记录根目录
-DEFAULT_RECORDS = os.path.join(PROJ, 'data', 'archive', 'duel_records')
-#: 默认 end_messages.jsonl
-DEFAULT_EM_PATH = os.path.join(PROJ, 'data', 'archive', 'end_messages.jsonl')
-#: --emit-state 的单文件输出（M7 实时帧；覆盖写、不 append）
-EMIT_STATE_PATH = os.path.join(PROJ, 'data', 'archive', 'duel_state.json')
+#: 默认记录根目录（BUG-B8-01：走 `paths.data_path`，别写 `PROJ/data`）
+DEFAULT_RECORDS = paths.data_path('archive', 'duel_records')
+#: 默认 end_messages.jsonl（同上）
+DEFAULT_EM_PATH = paths.data_path('archive', 'end_messages.jsonl')
+#: --emit-state 的单文件输出（M7 实时帧；覆盖写、不 append）（同上）
+EMIT_STATE_PATH = paths.data_path('archive', 'duel_state.json')
 #: ★ 心跳文件（每拍覆盖写）—— 看板据此显示「采集器在不在跑」。
 #: ⚠️ **别用 pid 文件判**：它只在启动时写、只在优雅退出时删，被 kill 的实例会留下
 #:    stale 文件（实测 09-21 那份留到了次日）。心跳是「时间戳新鲜度」，自杀/被杀
 #:    都会自然变旧，判据稳。见 `core/ui_state.collector_status()`。
-HEARTBEAT_PATH = os.path.join(PROJ, 'data', 'archive',
-                              'collector_heartbeat.json')
+#:    （BUG-B8-01：走 `paths.data_path`，理由见 PID_PATH 的注释）
+HEARTBEAT_PATH = paths.data_path('archive', 'collector_heartbeat.json')
 
 ENGINE_NS, ENGINE_NAME = 'YgomGame.Duel', 'Engine'
 ENGINE_FIELD_MODE = 'gameMode'
@@ -211,10 +216,6 @@ class Hooks(object):
         return None
 
     def snapshot_deck(self):
-        return None
-
-    def snapshot_peak_deck(self):
-        """巅峰 own-deck（DeckEdit 编辑实例；Runtime 才有真实现）。"""
         return None
 
     def read_duel_settings(self):
@@ -270,14 +271,21 @@ class Hooks(object):
         而是走 DeckEdit 编辑实例（deck_name='闪刀姬'、55 张，识别=Sky Striker）。
         便宜路径：MyDeckWatcher 同款（实例缓存 + 重扫节流）。
         """
-        if self.sp is None or self.mirror is None or self.tbl is None:
+        # ★ BUG-B8-05：基类 `Hooks` 没有 `sp` / `mirror` / `tbl`（只有 Runtime 有）
+        #   —— 原来直接 `self.sp` 会让自定义 Hooks 子类在巅峰局抛 AttributeError，
+        #   整局不采集。用 getattr 兜底，与 `read_duel_settings` 那几个「没接就
+        #   给 None」的方法同语义。
+        sp = getattr(self, 'sp', None)
+        mirror = getattr(self, 'mirror', None)
+        tbl = getattr(self, 'tbl', None)
+        if sp is None or mirror is None or tbl is None:
             return None
         try:
-            if self._peak_watch is None:
+            if getattr(self, '_peak_watch', None) is None:
                 from core.memread.my_deck_watch import (DeckEditReader,
                                                         MyDeckWatcher)
                 self._peak_watch = MyDeckWatcher(
-                    DeckEditReader(self.sp, self.mirror, self.tbl))
+                    DeckEditReader(sp, mirror, tbl))
             return self._peak_watch.poll()
         except Exception:
             return None
@@ -348,6 +356,10 @@ class _OpenRecord(object):
         self.last_size = None
         self.last_write_ts = 0.0
         self.finalized = False
+        #: ★ BUG-B8-06：掉线收口后刚接回来那一拍为 True ——
+        #: `_track_record` 据此认回**自己这条目录**（它已是 state=final，
+        #: 三条件复用看不到它）。认过一次就复位。
+        self.resume_ok = False
 
 
 class DuelCollector(object):
@@ -387,14 +399,32 @@ class DuelCollector(object):
         self._last_scan_ts = None
         self._em_seen = set()
         self._em_pending = None          # 文案已就绪、等胜负位的那条 EM
+        #: ★ BUG-B8-02：EM **落盘失败**的待写队列（`[(dir, rec, why), ...]`）。
+        #:   磁盘满 / 权限抖动时 append 会抛 —— 原来签名先记进 `_em_seen`、记录
+        #:   直接丢掉，这一局的胜负**永久没写进 end_messages.jsonl**，而且下次
+        #:   重抓会被签名判成 duplicate。现在：失败进队列，每拍重试，写成功
+        #:   才记签名并补跑 import。
+        self._em_backlog = []
+        #: ★ BUG-B8-06：**掉线收口**（`in_duel` 连续读不到超时）之后对局其实还在打
+        #:   时，把那一局的 `_OpenRecord` 留在这里当「续采锚点」。下一次
+        #:   `in_duel=True` 且 tracker 仍认为在局中 -> 原目录接回来继续采。
+        #:   旧行为：收口就把 open_rec 清掉且标 final，后半局再也采不到；
+        #:   `pvpFinished` 到来时 `_finish_record` 发现 open_rec 是 None ->
+        #:   直接 return，**整局收局被丢弃**（数据只到掉线那一刻）。
+        self._resume_rec = None
         self._duel_before = None         # 本局开局时的双方信息（含局前段位）
         self._peak_base = None           # 开局那拍的巅峰结算对（上一局的，当指纹）
-        self._peak_probe = None          # 巅峰积分挂起等待（结算对出现为止）
+        self._peak_probes = []           # 巅峰积分挂起队列（结算对出现为止）
         self._last_finish_ts = None      # 本进程最近一次收局（残影判据②用）
         self._last_seen_size = None      # 上一拍扫描观测的 size（残影判据①用）
         self._pending_reuse = None       # 首见时已判定的复用目录（P1-1 复用优先）
-        self._rank_probe = None          # 收局段位探测（§5.7 两拍法）
-        self._rank_base_pending = None   # 基线读不到时的挂起重试（Bug 1）
+        #: ★ BUG-B8-20（2026-10-20）：段位 / 巅峰的挂起从**单槽位**改成**列表**。
+        #:   旧行为：连打两局时，第二局收局会直接把第一局还没等到结果的挂起
+        #:   覆盖掉 —— 第一局的段位 / 巅峰积分**静默丢失**（不留日志、库里那行
+        #:   永远空着）。现在按目录排队，每拍逐个推进；`_poll_rank_probe` 等
+        #:   逐条处理，谁的窗口到期谁自己落盘。
+        self._rank_probes = []           # 收局段位探测队列（§5.7 两拍法）
+        self._rank_base_pendings = []    # 基线读不到时的挂起重试队列（Bug 1）
         self._lobby_check_at = None      # 大厅装备卡组的上次节流识别（九轮①）
         self._lobby_pending_fp = None    # 大厅识别两拍防抖的候选指纹（09-28）
         self._lobby_pending_deck = None  # 候选内容（name, ids）
@@ -404,6 +434,46 @@ class DuelCollector(object):
         self._deck_confirm = None             # 第一局确认（九轮③）：收局后窗口内
         self.identify_my_deck = identify_by_cards   # 可注入（单测打桩）
         self.remnant_window = remnant_window
+
+    # ---- 旧单槽位 API 的**兼容层**（★ BUG-B8-20） -------------------
+    #: 三个挂起内部已改成队列（连打两局不再互相覆盖），但旧代码 / 单测仍在按
+    #: 「单槽位」读写这些名字。用一个只读/清空的兼容视图把它们接上 ——
+    #: 读 = 队列里唯一那条（有多条时给第一条），写 None = 清空队列。
+    #: ⚠️ 新代码请直接用队列（`_rank_probes` / `_rank_base_pendings` /
+    #: `_peak_probes`），别在业务逻辑里再用这几个属性。
+    @property
+    def _rank_probe(self):
+        return self._rank_probes[0] if self._rank_probes else None
+
+    @_rank_probe.setter
+    def _rank_probe(self, value):
+        self._rank_probes = [] if value is None else [value]
+
+    @property
+    def _rank_base_pending(self):
+        return self._rank_base_pendings[0] if self._rank_base_pendings else None
+
+    @_rank_base_pending.setter
+    def _rank_base_pending(self, value):
+        self._rank_base_pendings = [] if value is None else [value]
+
+    @property
+    def _peak_probe(self):
+        return self._peak_probes[0] if self._peak_probes else None
+
+    @_peak_probe.setter
+    def _peak_probe(self, value):
+        self._peak_probes = [] if value is None else [value]
+
+    #: 旧方法名的转发（★ BUG-B8-20：实现已改成队列版，这里只给老调用方留路）
+    def _poll_rank_base(self, now):
+        return self._poll_rank_bases(now)
+
+    def _poll_rank_probe(self, now):
+        return self._poll_rank_probes(now)
+
+    def _poll_peak_probe(self, now):
+        return self._poll_peak_probes(now)
 
     # ---- EM 去重与重启播种（终审 P3-1） ------------------------------
     def seed_em(self, records):
@@ -610,13 +680,59 @@ class DuelCollector(object):
         if note:
             base = rec.get('result_note')
             rec['result_note'] = ('%s；%s' % (base, note)) if base else note
-        self._em_seen.add(p['sig'])
-        self.hooks.append_em(rec)
+        #: ★ BUG-B8-02（先写盘、**后**记签名）：原来第一句就是
+        #: `_em_seen.add(sig)`，紧接着 `append_em()` —— append 一抛（磁盘满 /
+        #: 权限 / 杀软锁文件），记录就没了，而签名已进集合：这一局的胜负
+        #: **永久丢失**（下次重抓被判 duplicate），`_reimport_after_em` 也被
+        #: 异常跳过（import 拿不到 winbits）。现在：写失败进 backlog，
+        #: 写成功才记签名。
+        if not self._write_em(rec, p['sig'], why, tries):
+            self._em_backlog.append((p.get('dir'), rec, p['sig'], why, tries))
+            self.log('end_message 落盘失败（%s）：已排队重试（队列 %d 条）'
+                     % (why, len(self._em_backlog)))
+            return None, 'append-failed'
+        return rec, why
+
+    def _write_em(self, rec, sig, why, tries):
+        """把一条 EM 写进 `end_messages.jsonl`；成功返回 True（且记签名）。
+
+        ★ BUG-B8-02：`append_em` 可能抛（磁盘满 / 权限 / 文件被锁）。
+        这里吞异常返回 False —— 由 :meth:`_flush_em_backlog` 每拍重试。
+        """
+        try:
+            self.hooks.append_em(rec)
+        except Exception as e:                            # noqa: BLE001
+            self.log('end_message 写盘异常：%r' % (e,))
+            return False
+        self._em_seen.add(sig)
         self.log('end_message 落盘（%s / %d 次尝试）：winbits=%s mem_result=%s '
                  '文案=%r duel_code=%s'
                  % (why, tries, rec.get('winbits'), rec.get('mem_result'),
-                    (rec.get('texts') or {}).get('messageText'), p.get('code')))
-        return rec, why
+                    (rec.get('texts') or {}).get('messageText'), rec.get('code')))
+        return True
+
+    def _flush_em_backlog(self, now=None):
+        """重试 EM 待写队列（每拍一次）；写成的补跑一次 import。
+
+        ★ BUG-B8-02：队列元素是 ``(dir, rec, sig, why, tries)``。
+        写成功后立刻补跑 import（「EM 后补跑」那条路），否则晚到的胜负位
+        赶不上收局那一刻的 import（用户看到 `result` 空）。
+        """
+        if not self._em_backlog:
+            return []
+        lines = []
+        keep = []
+        for item in self._em_backlog:
+            dir_path, rec, sig, why, tries = item
+            if not self._write_em(rec, sig, why, tries):
+                keep.append(item)
+                continue
+            lines.append('end_message 补写成功（%s）' % why)
+            lines += self._reimport_after_em(dir_path, why)
+        self._em_backlog = keep
+        if keep:
+            self.log('end_message 队列仍有 %d 条待重试' % len(keep))
+        return lines
 
     def _poll_em_pending(self, now):
         """每拍推进 EM 抓取；这一步真的落盘时返回日志行（并补跑一次 import）。"""
@@ -655,14 +771,23 @@ class DuelCollector(object):
         lines = []
         #: ⚠️ 两条是 `elif`：挂起重试那一拍**读到基线就只开机、不判变化** ——
         #: 同拍再推一步会让「基线」和「局后」读的是同一个瞬间（两拍法的意义没了）。
-        if self._rank_base_pending is not None:
-            lines += self._poll_rank_base(now)       # 段位基线：读不到时挂起重试
-        elif self._rank_probe is not None:
-            lines += self._poll_rank_probe(now)      # 段位探测：每拍推进一步
-        if self._peak_probe is not None:
-            lines += self._poll_peak_probe(now)      # 巅峰积分：等本局结算对出现
+        #: ⚠️ 两条是 `elif` 语义（与 B8-20 之前的单槽位版一致）：挂起重试那一拍
+        #: 「读到基线就只开机、不判变化」—— 同拍再推一步会让「基线」和「局后」
+        #: 读的是同一个瞬间（两拍法的意义就没了）。改成队列后仍保留这个语义：
+        #: 只要有挂起在这一拍**成功开机**，本拍就不推进探测。
+        started_base = False
+        if self._rank_base_pendings:
+            n0 = len(self._rank_base_pendings)
+            lines += self._poll_rank_bases(now)      # 段位基线：读不到时挂起重试
+            started_base = len(self._rank_base_pendings) < n0
+        if self._rank_probes and not started_base:
+            lines += self._poll_rank_probes(now)     # 段位探测：每拍推进一步
+        if self._peak_probes:
+            lines += self._poll_peak_probes(now)     # 巅峰积分：等本局结算对出现
         if self._em_pending is not None:
             lines += self._poll_em_pending(now)      # EM 胜负位补读：每拍推进
+        if self._em_backlog:
+            lines += self._flush_em_backlog(now)     # B8-02：落盘失败的 EM 重试
         # 编辑界面的卡组（用户 2026-09-16 口径）：读一次就一直沿用，
         # **换牌了**（卡表指纹变）才重新识别。便宜路径优先见 my_deck_watch。
         try:
@@ -688,10 +813,19 @@ class DuelCollector(object):
                 if self._none_since is None:
                     self._none_since = now
                 elif now - self._none_since >= self.disconnect_timeout:
+                    # ★ BUG-B8-06：收口但**留续采锚点** —— 超时多半是内存定位
+                    # 短暂失效（长加载 / 掉线重连），对局可能还在打。恢复后接回来。
                     lines += self._close_current(
-                        ts, 'disconnect-or-unknown', now)
+                        ts, 'disconnect-or-unknown', now, keep_resume=True)
             return lines
         self._none_since = None
+        # ★ BUG-B8-06：掉线收口后读到「还在对局」= 把那一局接回来继续采。
+        # 只有 tracker 仍认为在局中（它没收到 instance-gone）才接 —— 期间真开了
+        # 新局的话 tracker 会先发 DUEL_START，那时锚点作废（见 _start_record）。
+        if (in_duel and self._resume_rec is not None
+                and self.open_rec is None
+                and self.tracker.open is not None):
+            lines += self._resume_disconnected(now)
         # 终审 Q3 前提：game_mode 取「**最后一次非空观测**」——duel_start 那一拍有
         # 可能读到瞬时 None，冻在那里会让「3/19 才可信」的快照判定误判（并且
         # 与 tracker 侧 `game_modes[-1]` 的语义也不一致）。
@@ -707,6 +841,17 @@ class DuelCollector(object):
                                       finished=finished)
         for ev in events:
             if ev.kind == EV_DUEL_START:
+                #: ★ 2026-10-20（用户口径「单人模式直接忽略不要留数据」）：
+                #: **solo 局一律不建目录**。旧行为是照常采集、只在 import 侧
+                #: 才筛掉（`process()` 跳过 state != final 之外不看模式，
+                #: solo 行根本进不了库）—— 结果磁盘上每次打单人都留下 3~4 个
+                #: record 目录，用户看着「明明有目录、库里却没有」，还得手工清。
+                #: 实测：19 个 solo 目录散在 5 个日期，库里 0 行。
+                #: 模式**读不到（None）时不跳** —— 那一拍可能只是瞬时未就位，
+                #: 宁可多采一局也不要漏一局（漏了不可恢复，多采了 import 会筛）。
+                if game_mode is not None and _M.group(game_mode) == 'solo':
+                    lines.append('单人模式（mode=9）不采集，不建目录')
+                    continue
                 lines += self._start_record(ts, ev, game_mode, now)
                 lines.append('对局开始 %s（mode=%s）' % (ts, game_mode))
             elif ev.kind == EV_DUEL_END:
@@ -726,6 +871,9 @@ class DuelCollector(object):
         ★ 顺手收口**上一局遗留的 EM 挂起**（2026-09-18 实锤，见 `_close_stale_em`）。
         """
         lines = self._close_stale_em(now)
+        # ★ BUG-B8-06：真开了新局 -> 掉线收口留下的续采锚点作废
+        # （那一局已经结束了，再接回来会把两局并进一个目录）。
+        self._resume_rec = None
         self.cache.invalidate()
         self._hunt_started = time.time() if now is None else now
         self._last_scan_ts = None
@@ -804,16 +952,30 @@ class DuelCollector(object):
         if self._em_pending is not None:
             self._em_pending = None
             had.append('EM')
-        if self._rank_base_pending is not None:
-            self._rank_base_pending = None
+        if self._rank_base_pendings:
+            self._rank_base_pendings = []
             had.append('段位基线')
-        if self._rank_probe is not None:
-            self._rank_probe = None
+        if self._rank_probes:
+            self._rank_probes = []
             had.append('段位探测')
         if self._deck_snapshot_pending:
             self._deck_snapshot_pending = False
             self._deck_pending_at = None
             had.append('卡组快照重试')
+        #: ★ BUG-B8-07（2026-10-19 审查点名）：**巅峰积分挂起必须一起作废**。
+        #:   旧代码只清了 EM / 段位 / 快照，漏了 `_peak_probe` —— 用户重启游戏
+        #:   后这个挂起会跨进程存活，结算对一出现就把**上一局**的积分写进
+        #:   旧目录并补库（新进程里 `DuelResult` 一开始装的是上一局的残留对）。
+        if self._peak_probes:
+            self._peak_probes = []
+            had.append('巅峰积分')
+        if self._peak_base is not None:
+            self._peak_base = None
+        #: ★ BUG-B8-06：游戏进程都没了，续采锚点必然指不回原进程的控制器；
+        #: 留着只会在**下一局**开局时把两局并进同一个目录。
+        if self._resume_rec is not None:
+            self._resume_rec = None
+            had.append('掉线续采锚点')
         if not had:
             return []
         return ['游戏退出：作废旧局挂起（%s）' % ' / '.join(had)]
@@ -894,6 +1056,14 @@ class DuelCollector(object):
             # 命中即复用 —— 残影判据不参与（宁可多并、不可静默覆盖）。
             # 这是「中途重启接管半局」的唯一通道，必须在残影之前。
             reuse = self._probe_reuse(obj, size)
+            if reuse is None and getattr(rec, 'resume_ok', False):
+                # ★ BUG-B8-06：续采这一拍。收口时目录 manifest 已经被写成
+                # `state=final`，三条件复用（只认 state=open）**看不到自己**
+                # —— 不特判就会走下面的「控制器换新实例」→ 又收口、新局另起，
+                # 后半局照样落进另一条目录。
+                # 判据：目录里记的 instance 与当前控制器一致 = 同一局。
+                reuse = self._own_dir_if_same_instance(rec, obj)
+                rec.resume_ok = False          # 只认一次（读错也别死循环）
             if reuse is None:
                 why = self._is_remnant(size, now, prev_size)
                 if why:
@@ -937,6 +1107,24 @@ class DuelCollector(object):
                 rec.last_size = size
                 lines.append('logbase=%d 落盘（state=open）' % size)
         return lines
+
+    def _own_dir_if_same_instance(self, rec, obj):
+        """续采专用：当前控制器是否就是 `rec` 那个目录的同一局。
+
+        ★ BUG-B8-06。返回目录名（= 认回自己）或 None（实例对不上 = 真新局）。
+        """
+        if rec is None or not rec.dir_path:
+            return None
+        name = os.path.basename(rec.dir_path)
+        man = self.hooks.load_reuse_manifest(name) or {}
+        old_inst = rc._norm_instance(man.get('instance'))
+        try:
+            cur = rc._norm_instance(self.hooks.read_instance(obj))
+        except Exception:                                # noqa: BLE001
+            cur = None
+        if old_inst is None or cur is None or old_inst != cur:
+            return None
+        return name
 
     def _probe_reuse(self, obj, size):
         """三条件复用探测（契约 §1.3；hooks.scan_records 是文件系统扫描，便宜）。"""
@@ -990,13 +1178,32 @@ class DuelCollector(object):
         return lines
 
     def _finish_record(self, ts, now):
-        """pvpFinished：最后一笔全量抓 -> final -> EM -> import（顺序固定）。"""
+        """pvpFinished：最后一笔全量抓 -> final -> EM -> import（顺序固定）。
+
+        ★ BUG-B8-02 第二 half：整段包 try/finally，**`self.open_rec = None` 放 finally**。
+        原来⑥之后才置 None，中间任何一步抛异常（EM 写盘、段位探测、快照）都会让
+        这一局的 `_OpenRecord` 留在 `open_rec` 上、而 `finalized` 已是 True ——
+        下一拍 `_track_record` 又走 `_write(..., 'open', ...)`，把磁盘上已经
+        写成 `state=final` 的 manifest **翻回 open**（终局化被抹掉，
+        `--finalize-stale` / 体检都会把它当未收口）。
+        """
         lines = []
         rec = self.open_rec
         if rec is None or rec.finalized:
             return lines
         rec.finalized = True
         self._last_finish_ts = now
+        try:
+            lines += self._finish_record_steps(rec, now)
+        finally:
+            # 无论哪一步炸了，这一局都必须离开 open_rec —— 否则会被当成
+            # 「还在打」继续往同一个目录写 open（见 docstring）。
+            self.open_rec = None
+        return lines
+
+    def _finish_record_steps(self, rec, now):
+        """收局六步（顺序固定）。异常由 :meth:`_finish_record` 的 finally 兜底。"""
+        lines = []
         # ① 收局兜底补扫（缓存失效时结算画面再扫一次，审查 §四.1(b)）；
         # 补扫结果比已落盘还小 = 旧局残影，不覆盖（审查 P3-1，与 P1-1 判据同源）
         ti = self.hooks.controller_ti()
@@ -1024,10 +1231,16 @@ class DuelCollector(object):
                 self.hooks.finalize(rec.dir_path, 'finish-no-data')
                 lines.append('读不到控制器了，按现状标 final')
         # ③ DuelEndMessage（秒级抓：结算后约 2 分钟名字字段被清）
-        em = self.capture_end_message(now, rec.dir_path)
-        if em:
-            lines.append('end_message：winbits=%s mem_result=%s'
-                         % (em.get('winbits'), em.get('mem_result')))
+        #: ★ BUG-B8-02：③⑤⑥ **各自独立 try** —— 任何一步抛异常都不许
+        #: 「跳过 import」（④）或连累后面的挂起。原来整段裸着，EM 写盘一抛
+        #: 异常就直奔 finally：这一局**根本不入库**（记录躺在磁盘上）。
+        try:
+            em = self.capture_end_message(now, rec.dir_path)
+            if em:
+                lines.append('end_message：winbits=%s mem_result=%s'
+                             % (em.get('winbits'), em.get('mem_result')))
+        except Exception as e:                            # noqa: BLE001
+            self.log('EM 抓取失败（不阻塞入库）：%r' % e)
         # ④ import 增量入库（失败降级，绝不阻塞采集）
         if rec.dir_path is not None:
             fn = self.importer or self.hooks.import_record
@@ -1037,15 +1250,31 @@ class DuelCollector(object):
             except Exception as e:
                 self.log('import 失败（不阻塞采集，事后手动 import 可补）：%r' % e)
         # ⑤ 段位（内存，只读）：当场读一次 + 后续拍等 exp 变化（§5.7 两拍法）
-        lines += self._start_rank_probe(now, rec)
+        try:
+            lines += self._start_rank_probe(now, rec)
+        except Exception as e:                            # noqa: BLE001
+            self.log('段位探测失败（不阻塞）：%r' % e)
         # ⑥ 巅峰积分（2026-09-28）：只挂巅峰局，等结算对出现（便宜路径重试）
-        lines += self._start_peak_probe(now, rec)
-        self._start_deck_confirm(now, rec)     # 九轮③：第一局确认窗口
-        self.open_rec = None
+        try:
+            lines += self._start_peak_probe(now, rec)
+        except Exception as e:                            # noqa: BLE001
+            self.log('巅峰积分挂起失败（不阻塞）：%r' % e)
+        try:
+            self._start_deck_confirm(now, rec)     # 九轮③：第一局确认窗口
+        except Exception as e:                            # noqa: BLE001
+            self.log('第一局确认窗口开启失败（不阻塞）：%r' % e)
         return lines
 
-    def _close_current(self, ts, reason, now):
-        """instance-gone / 掉线超时：最后一次 open 落盘标 final（note 记原因）。"""
+    def _close_current(self, ts, reason, now, keep_resume=False):
+        """instance-gone / 掉线超时：最后一次 open 落盘标 final（note 记原因）。
+
+        :param keep_resume: ★ BUG-B8-06 —— **掉线超时**这条路径传 True：把这一局
+            的 `_OpenRecord` 存进 :attr:`_resume_rec`。理由：`in_duel` 连续读不到
+            只要够久（默认 120s）就收口，但这时对局**很可能还在打**（内存定位
+            短暂失效 / 一次长加载）。旧行为是收口即终局，后半局永久不采、
+            `pvpFinished` 到达时 `open_rec is None` → 整局收局被丢弃。
+            现在：下一次读到 `in_duel=True` 就把原目录接回来继续采。
+        """
         rec = self.open_rec
         self.open_rec = None
         self._hunt_started = None
@@ -1053,6 +1282,10 @@ class DuelCollector(object):
         self.cache.invalidate()
         if rec is None:
             return []            # 审查 P3-7：没开过局就别打误导日志
+        if keep_resume and rec.dir_path is not None and not rec.finalized:
+            # 续采锚点：finalized 仍为 True（收口是真的），但保留目录与
+            # first_seen / 快照，恢复时把它接回来。
+            self._resume_rec = rec
         if rec.dir_path is None or rec.finalized:
             return []
         lines = []
@@ -1119,6 +1352,37 @@ class DuelCollector(object):
         lines.append('对局收口（%s）：%s 已标 final'
                      % (reason, os.path.basename(rec.dir_path)))
         return lines
+
+    def _resume_disconnected(self, now):
+        """★ BUG-B8-06：掉线收口后**对局仍在进行** -> 把原目录接回来继续采。
+
+        为什么要做：`in_duel` 连续 None 超时（默认 120s）就收口，而这 120s
+        完全可能是内存定位瞬断（长加载 / 掉线重连 / attach 抖动）—— 对局
+        其实还在打。旧行为收口即终局：后半局的数据一律不采，`pvpFinished`
+        到来时 `open_rec is None`，`_finish_record` 直接 return →
+        **整局收局被丢弃**（记录目录停在掉线那一刻、库里 result 空）。
+
+        接回来的语义：
+        * 目录 / first_seen / 快照 / game_mode 全部沿用（同一局，不劈成两局）；
+        * `finalized` 复位成 False —— 收口时写进 manifest 的 `state=final`
+          会被下一笔全量落盘覆盖回 `open`（`_write` 同目录覆盖）。这是**有意**
+          的：manifest 的 state 描述的是「采集是否还在进行」，恢复采集就该是 open；
+        * 缓存已作废（`_close_current` 里 invalidate），下一拍照常重找控制器。
+        """
+        rec = self._resume_rec
+        self._resume_rec = None
+        if rec is None or rec.dir_path is None:
+            return []
+        rec.finalized = False
+        rec.last_size = None          # 让下一笔全量落盘一定发生（manifest 翻回 open）
+        #: 下一拍 `_track_record` 据此认回这条目录（见 `_own_dir_if_same_instance`）
+        rec.resume_ok = True
+        self.open_rec = rec
+        self._hunt_started = now
+        self._last_scan_ts = None
+        self._hunt_overdue_logged = False
+        return ['掉线收口后对局仍在进行 -> 续采原目录 %s'
+                % os.path.basename(rec.dir_path)]
 
     def _close_rank_gap(self, rec, now):
         """收口探测距「本局最后一次活动」多少秒；判不出给 None（= 放行校准）。
@@ -1280,10 +1544,8 @@ class DuelCollector(object):
                       encoding='utf-8') as f:
                 data = json.load(f) or {}
             meta = data.get('meta') or {}
-            summ = data.get('summary') or {}
-            ids = (summ.get('revealed') or {}).get('p0') or []
         except Exception:
-            meta, summ, ids, data = {}, {}, [], None
+            meta, data = {}, None
         if not data or data.get('state') != 'final' or not meta:
             if now >= p['deadline']:
                 self._deck_confirm = None
@@ -1358,14 +1620,17 @@ class DuelCollector(object):
             return []                    # 没建目录（早退局）没处落盘
         base = self.hooks.read_my_rank()
         if not base:
-            self._rank_base_pending = {
+            #: ★ BUG-B8-20：**入队**而不是覆盖槽位 —— 连打两局时两局的基线
+            #: 重试窗口各自独立（旧代码会把第一局整条丢掉）。
+            self._rank_base_pendings.append({
                 'dir': rec.dir_path, 'at': now,
-                'deadline': now + self.rank_base_wait, 'tries': 1}
+                'deadline': now + self.rank_base_wait, 'tries': 1})
             self.log('段位读不到（profile 里没有 rank/rate）—— 挂起 %.0fs 每拍重试'
-                     % self.rank_base_wait)
+                     '（队列 %d 条）' % (self.rank_base_wait,
+                                        len(self._rank_base_pendings)))
             return []
-        #: 本局基线到手 —— 上一局那个还没等到基线的挂起作废（它的窗口归零）
-        self._rank_base_pending = None
+        #: 本局基线到手 —— 之前那些还没等到基线的挂起**保留**（各自窗口自己管），
+        #: 旧口径「作废上一局」正是 B8-20 丢数据的根因。
         return self._begin_rank_probe(base, rec.dir_path, now)
 
     def _begin_rank_probe(self, base, dir_path, now, waited=0.0):
@@ -1376,11 +1641,14 @@ class DuelCollector(object):
                 rank_state.init_from(base.get('rank'), base.get('rate'))
         except Exception:
             pass
-        self._rank_probe = {
+        #: ★ BUG-B8-20：入队（同目录已有条目则替换 —— 重入幂等）。
+        self._rank_probes = [q for q in self._rank_probes
+                             if q.get('dir') != dir_path]
+        self._rank_probes.append({
             'dir': dir_path, 'base': base, 'base_at': now,
             'before': (self._duel_before or {}).get('my_rank'),
             'before_opp': (self._duel_before or {}).get('opp_rank'),
-            'deadline': now + self.rank_wait, 'reads': 1}
+            'deadline': now + self.rank_wait, 'reads': 1})
         # ★ 多账号（2026-10-03）：收局盖章 —— profile 的 name/pcode 本来
         #   就在这份 base 里（以前只取 rank/rate）。storage 只补空，幂等。
         try:
@@ -1408,15 +1676,18 @@ class DuelCollector(object):
         """
         if rec.dir_path is None:
             return []                    # 没建目录（早退局）没处落盘
-        from core import modes as M
-        if M.group(rec.game_mode) != 'peak':
+        if _M.group(rec.game_mode) != 'peak':
             return []
         cur = self._read_peak_checked()
         if cur:
             return self._settle_peak(cur, rec.dir_path, now, waited=0.0)
-        self._peak_probe = {'dir': rec.dir_path, 'at': now,
-                            'deadline': now + self.peak_wait, 'tries': 1}
-        self.log('巅峰积分：结算对还没出现，挂起 %.0fs 每拍重试' % self.peak_wait)
+        #: ★ BUG-B8-20：入队（同目录已有条目则替换 —— 重入幂等）。
+        self._peak_probes = [q for q in self._peak_probes
+                             if q.get('dir') != rec.dir_path]
+        self._peak_probes.append({'dir': rec.dir_path, 'at': now,
+                                  'deadline': now + self.peak_wait, 'tries': 1})
+        self.log('巅峰积分：结算对还没出现，挂起 %.0fs 每拍重试（队列 %d 条）'
+                 % (self.peak_wait, len(self._peak_probes)))
         return []
 
     def _read_peak_checked(self):
@@ -1431,19 +1702,32 @@ class DuelCollector(object):
             return None
         return cur
 
-    def _poll_peak_probe(self, now):
-        """推进巅峰积分等待；落盘那一刻返回日志行（其余帧返回空）。"""
-        p = self._peak_probe
-        cur = self._read_peak_checked()
-        if cur:
-            self._peak_probe = None
-            return self._settle_peak(cur, p['dir'], now, waited=now - p['at'])
-        p['tries'] += 1
-        if now < p['deadline']:
+    def _poll_peak_probes(self, now):
+        """推进巅峰积分等待队列；落盘那一刻返回日志行（其余帧返回空）。
+
+        ★ BUG-B8-20：逐条推进（原来单槽位）。⚠️ 结算对是**全局**的，
+        一次读取喂给整队；链条校验（新对 before == 基线 after）对每条各自成立
+        才收 —— 排在前面的那条先拿到它。
+        """
+        if not self._peak_probes:
             return []
-        self._peak_probe = None
-        return ['巅峰积分：放弃（%.0fs 内没等到本局结算对；快退/掉线局多半没有）'
-                % self.peak_wait]
+        cur = self._read_peak_checked()
+        lines, keep = [], []
+        for p in self._peak_probes:
+            if cur:
+                lines += self._settle_peak(cur, p['dir'], now,
+                                           waited=now - p['at'])
+                continue
+            p['tries'] += 1
+            if now < p['deadline']:
+                keep.append(p)
+                continue
+            lines.append('巅峰积分：放弃（%s，%.0fs 内没等到本局结算对；'
+                         '快退/掉线局多半没有）'
+                         % (os.path.basename(p.get('dir') or '?'),
+                            self.peak_wait))
+        self._peak_probes = keep
+        return lines
 
     def _settle_peak(self, cur, dir_path, now, waited=0.0):
         """落盘 `peak_rate.json` + 顺手补进库（只补空；失败不阻塞）。"""
@@ -1470,47 +1754,59 @@ class DuelCollector(object):
             lines.append(got)
         return lines
 
-    def _poll_rank_base(self, now):
-        """挂起窗口内每拍重试读基线；读到就照常走两拍法，超时放弃（日志可见）。"""
-        p = self._rank_base_pending
-        base = self.hooks.read_my_rank()
-        if base:
-            self._rank_base_pending = None
-            return self._begin_rank_probe(base, p['dir'], now,
-                                          waited=now - p['at'])
-        p['tries'] += 1
-        if now < p['deadline']:
-            return []
-        self._rank_base_pending = None
-        self.log('段位探测放弃：%.0fs 内 %d 次都没读到 profile（本局不记段位）'
-                 % (self.rank_base_wait, p['tries']))
-        return ['段位：放弃（%.0fs 内读不到 profile，本局不记段位）'
-                % self.rank_base_wait]
+    def _poll_rank_bases(self, now):
+        """挂起窗口内每拍重试读基线；读到就照常走两拍法，超时放弃（日志可见）。
 
-    def _poll_rank_probe(self, now):
-        """推进段位探测；落盘那一刻返回日志行（其余帧返回空）。"""
-        p = self._rank_probe
-        cur = self.hooks.read_my_rank()
-        if cur:
-            p['reads'] += 1
-        #: ★ 2026-09-18 八轮（用户口供：自己投降的输局不加 exp）——
-        #: 哨兵从单一 `exp` 扩成 exp/rank/rate **任一变化**：输局不加 exp，
-        #: 但掉段时 rank/rate 会变，同样说明「结算已写进 ClientWork」。
-        settled = bool(cur) and (cur.get('exp') != p['base'].get('exp')
-                                 or cur.get('rank') != p['base'].get('rank')
-                                 or cur.get('rate') != p['base'].get('rate')
-                                 # ★ 升段/掉段局结算写得快：基线那拍可能**已经是局后值**
-                                 #   （实测 2026-09-19 00:21 升段局：基线就是 6-5）——
-                                 #   两拍完全等值会被判成 timeout -> 只补空 -> 推断的错值
-                                 #   留在行上、界面不显示升段箭头。与「局前段位」（duel_start
-                                 #   读的 ClientWork.Duel.rank）比：不同 = 结算已落，也算 settled。
-                                 or (p.get('before') is not None
-                                    and (cur.get('rank'), cur.get('rate'))
-                                    != (p['before'].get('rank'),
-                                        p['before'].get('rate'))))
-        if not (settled or now >= p['deadline']):
+        ★ BUG-B8-20：**逐条**处理队列里的每个挂起（原来只有一个槽位，连打两局
+        时前一局会被覆盖）。profile 是一次读取喂给整队 —— 它是全局状态，
+        不是每局各一份。
+        """
+        if not self._rank_base_pendings:
             return []
-        self._rank_probe = None
+        base = self.hooks.read_my_rank()
+        lines, keep = [], []
+        for p in self._rank_base_pendings:
+            if base:
+                lines += self._begin_rank_probe(base, p['dir'], now,
+                                                waited=now - p['at'])
+                continue
+            p['tries'] += 1
+            if now < p['deadline']:
+                keep.append(p)
+                continue
+            self.log('段位探测放弃（%s）：%.0fs 内 %d 次都没读到 profile'
+                     '（本局不记段位）'
+                     % (os.path.basename(p.get('dir') or '?'),
+                        self.rank_base_wait, p['tries']))
+            lines.append('段位：放弃（%s，%.0fs 内读不到 profile，本局不记段位）'
+                         % (os.path.basename(p.get('dir') or '?'),
+                            self.rank_base_wait))
+        self._rank_base_pendings = keep
+        return lines
+
+    def _poll_rank_probes(self, now):
+        """推进段位探测队列；落盘那一刻返回日志行（其余帧返回空）。
+
+        ★ BUG-B8-20：**逐条**推进（原来单槽位，连打两局时前一局被覆盖）。
+        profile 是一次读取喂给整队 —— 它是全局状态，不是每局各一份。
+        """
+        if not self._rank_probes:
+            return []
+        cur = self.hooks.read_my_rank()
+        lines, keep = [], []
+        for p in self._rank_probes:
+            if cur:
+                p['reads'] += 1
+            settled = _rank_settled(p, cur)
+            if not (settled or now >= p['deadline']):
+                keep.append(p)
+                continue
+            lines += self._settle_rank(p, cur, now, settled)
+        self._rank_probes = keep
+        return lines
+
+    def _settle_rank(self, p, cur, now, settled):
+        """一条段位探测落盘 + 补库 + 复核（B8-20 拆出来的单条处理）。"""
         data = {'before': p.get('before'), 'before_opp': p.get('before_opp'),
                 'base': p['base'], 'after': cur,
                 'base_at': p['base_at'], 'settled_at': now if settled else None,
@@ -1565,6 +1861,31 @@ class DuelCollector(object):
             self.log('段位复核失败（不阻塞）：%r' % e)
         return lines
 
+
+
+
+def _rank_settled(p, cur):
+    """两拍法的「结算已写进 ClientWork」判据（**纯函数**，B8-20 抽出来复用）。
+
+    ★ 2026-09-18 八轮（用户口供：自己投降的输局不加 exp）——
+    哨兵从单一 `exp` 扩成 exp/rank/rate **任一变化**：输局不加 exp，
+    但掉段时 rank/rate 会变，同样说明「结算已写进 ClientWork」。
+    """
+    if not cur:
+        return False
+    base = p.get('base') or {}
+    return bool(cur.get('exp') != base.get('exp')
+                or cur.get('rank') != base.get('rank')
+                or cur.get('rate') != base.get('rate')
+                # ★ 升段/掉段局结算写得快：基线那拍可能**已经是局后值**
+                #   （实测 2026-09-19 00:21 升段局：基线就是 6-5）——
+                #   两拍完全等值会被判成 timeout -> 只补空 -> 推断的错值
+                #   留在行上、界面不显示升段箭头。与「局前段位」（duel_start
+                #   读的 ClientWork.Duel.rank）比：不同 = 结算已落，也算 settled。
+                or (p.get('before') is not None
+                    and (cur.get('rank'), cur.get('rate'))
+                    != (p['before'].get('rank'),
+                        p['before'].get('rate'))))
 
 def _rank_label(rec):
     """段位 dict -> `'5-2'`；读不到给 `'—'`（别编）。"""
@@ -2262,7 +2583,18 @@ def make_logger(path):
                 f.write(line + '\n')
         except OSError:
             pass
-        print(line, flush=True)
+        # ⚠️ 控制台编码兜底（BUG-B8-16）：cp936（中文 Windows 的 cmd / 重定向到
+        #    管道）里 `print` 一条带 emoji / 生僻符号的日志会抛 UnicodeEncodeError
+        #    —— 采集器就那样被一条日志打死。退化成「编码不可表示就替换」，
+        #    文件日志（utf-8）不受影响。
+        try:
+            print(line, flush=True)
+        except UnicodeEncodeError:
+            enc = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+            print(line.encode(enc, 'replace').decode(enc, 'replace'),
+                  flush=True)
+        except Exception:                                # noqa: BLE001
+            pass                                  # 控制台没了（GUI/管道断开）也别炸
     return log
 
 
@@ -2276,9 +2608,9 @@ def main(argv=None):
                     help='跑多久（0 = 常驻直到 Ctrl-C）')
     ap.add_argument('--note', default='', help='写进 manifest 的备注')
     ap.add_argument('--records-dir', default=DEFAULT_RECORDS)
-    ap.add_argument('--log', default=os.path.join(
-        PROJ, 'data', 'archive', 'duel_collector.log'),
-        help='落盘日志（默认 data/archive/duel_collector.log）')
+    ap.add_argument('--log', default=paths.data_path(
+        'archive', 'duel_collector.log'),
+        help='落盘日志（默认 DATA_DIR/archive/duel_collector.log）')
     ap.add_argument('--emit-state', action='store_true',
                     help='给 M7 的实时帧：每拍覆盖写 %s（默认关）'
                          % EMIT_STATE_PATH)
@@ -2314,9 +2646,17 @@ def main(argv=None):
         log('（建库失败，不阻塞采集：%r）' % e)
 
     game_pids = find_pids_by_name('masterduel.exe')
-    self_heal(args.records_dir, game_pids, prev, log)
+    #: ★ BUG-B8-12（2026-10-19 审查点名）：**pid 文件必须在这里就写**。
+    #:   原来写在 `self_heal()` 之后 —— 而 self_heal 要扫全部 record 目录、
+    #:   逐个 decode + import，「刚收口的那几局补入库」实测能跑**数十秒**。
+    #:   这个窗口里用户再点一次启动器：第二个实例读到的是**上一轮的旧 pid 文件**
+    #:   （或干脆没有），双开检测直接放行 → 两个采集器同时跑 →
+    #:   两个进程都往同一个 SQLite 写（`database is locked`）+ 两套 watcher
+    #:   抢同一个控制器（目录互相覆盖）。
+    #:   写 pid 之前已经做过双开检测（上面那块），所以这里写是安全的。
     write_pid_file(game_pids[0] if game_pids else None)
     write_heartbeat(state='idle', game_pid=game_pids[0] if game_pids else None)
+    self_heal(args.records_dir, game_pids, prev, log)
 
     rt = Runtime(default_game_dir(), log)
     rt.records_dir = args.records_dir

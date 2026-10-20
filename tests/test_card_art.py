@@ -52,6 +52,72 @@ class KonamiIdTest(unittest.TestCase):
         self.assertIsNone(card_art.konami_by_en('Not A Real Card xyz'))
 
 
+class YgocdbFallbackTest(unittest.TestCase):
+    """★ BUG-B2A-09：完整卡表不在（干净 clone / lite 包）时走**精简卡表**。
+
+    `card_art._load()` 靠 `card_names.ygocdb()` 建索引，而那份
+    13MB 原始卡表是 **gitignore** 的 —— 回落链路坏了要等
+    用户报「图全空」才会发现（本机有完整包，所以看不到）。
+    """
+
+    def setUp(self):
+        #: 把完整卡表路径指向不存在的地方 -> `ygocdb()` 退回
+        #: `data/card_index.json`（精简卡表，随发布仓库带）。
+        from core import card_names
+        self._cn = card_names
+        self._old_path = card_names.YGOCDB_PATH
+        self._old_index = card_names.CARD_INDEX_PATH
+        self._old_loaded = card_art._LOADED
+        self._old_konami = dict(card_art._KONAMI)
+        self._old_en = dict(card_art._EN)
+        self._old_en_sq = dict(card_art._EN_SQUEEZED)
+        card_names.YGOCDB_PATH = os.path.join(self.tmp(), 'no-such-cards.json')
+        card_names.clear_ygocdb_cache()
+        self._reset_art_index()
+
+    def tearDown(self):
+        self._cn.YGOCDB_PATH = self._old_path
+        self._cn.CARD_INDEX_PATH = self._old_index
+        self._cn.clear_ygocdb_cache()
+        card_art._LOADED = self._old_loaded
+        card_art._KONAMI.clear()
+        card_art._KONAMI.update(self._old_konami)
+        card_art._EN.clear()
+        card_art._EN.update(self._old_en)
+        card_art._EN_SQUEEZED.clear()
+        card_art._EN_SQUEEZED.update(self._old_en_sq)
+
+    @staticmethod
+    def _reset_art_index():
+        """清掉 card_art 的**三张索引** + `_LOADED`（下次调用重建）。"""
+        card_art._LOADED = False
+        card_art._KONAMI.clear()
+        card_art._EN.clear()
+        card_art._EN_SQUEEZED.clear()
+
+    def tmp(self):
+        if not hasattr(self, '_tmp'):
+            self._tmp = tempfile.mkdtemp(prefix='no-ygocdb-')
+            self.addCleanup(shutil.rmtree, self._tmp, True)
+        return self._tmp
+
+    def test_falls_back_to_card_index(self):
+        """完整包不在 -> `konami_id(12950)` 仍能拿到（走精简卡表）。"""
+        self.assertEqual(card_art.konami_id('12950'), '14558127')
+
+    def test_english_index_also_works_on_fallback(self):
+        """英文名那张索引同样靠得住（禁限表走这条）。"""
+        self.assertEqual(card_art.konami_by_en('Abyss Dweller'), '21044178')
+
+    def test_no_index_at_all_degrades_quietly(self):
+        """两份卡表都没了 -> 返回 None，**不抛**（界面正常开，卡图留空）。"""
+        self._cn.CARD_INDEX_PATH = os.path.join(self.tmp(), 'no-index.json')
+        self._cn.clear_ygocdb_cache()
+        self._reset_art_index()
+        self.assertIsNone(card_art.konami_id('12950'))
+        self.assertIsNone(card_art.konami_by_en('Abyss Dweller'))
+
+
 class CacheTest(unittest.TestCase):
     """缓存行为 —— 网络一律打桩。"""
 

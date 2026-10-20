@@ -140,6 +140,11 @@ DICT_ENTRY_KEY = 0x08
 DICT_ENTRY_VAL = 0x0C
 #: 多读几个 entry 的余量：entries 里有 free slot 时 count 会小于占位数
 DICT_EXTRA = 4
+#: 单本字典的条目数上限（★ BUG-B3-07：原来 count 没有上限，半死对象/垃圾 _count
+#: 会变成 GB 级分配 —— `try_read` 只兜 MemoryReadError/OSError，兜不住 MemoryError）。
+#: 一局对局的两张表不可能上万条；`duel_log._list_parts` 的上限是 20 万（那里是
+#: 动作流数组），这里按「一张卡表」的口径取 2 万。
+DICT_MAX_COUNT = 20000
 
 
 class CardTableOffsets(NamedTuple):
@@ -184,6 +189,8 @@ def _read_dict_int_int(proc: SafeProcess, addr: int) -> Dict[int, int]:
     count = struct.unpack_from('<i', raw_head, 8)[0]
     if not entries or count <= 0:
         return out
+    if count > DICT_MAX_COUNT:
+        return out                  # ★ BUG-B3-07：垃圾 count，别拿去分配
     blob = proc.try_read(entries + ARRAY_DATA,
                          DICT_ENTRY_STRIDE * (count + DICT_EXTRA))
     if not blob:
@@ -313,7 +320,13 @@ class PublicCardReader(TypeInfoReader):
             cards = PublicCardReader(proc, mirror).read(ti, eng)
 
     不在对局（``Engine`` 实例为空 / ``threadWork`` 为空，比如主界面、
-    回放暂停在加载点）时返回空列表，不抛异常。
+    回放暂停在加载点）时返回空列表。
+
+    ⚠️ **「实例空」不抛，但两种「读失败」会抛**（BUG-B3-16：原文只写「不抛异常」）：
+    ① 白名单字段名查不到 → ``_offset`` 抛 ``ValueError``（偏移不猜，故意的）；
+    ② :meth:`read_ced` 里读 ``ced`` 对象头的 ``read_ptr`` 没包 try，页不在时抛
+    ``MemoryReadError``。上层（`app_service._track_public` / 采集器）都包了 try，
+    这里保持「读失败就抛」让**原因**可见，不静默吞成空列表。
     """
 
     #: 只按这些**字段名**取偏移 —— 白名单之外的字段一概不碰。

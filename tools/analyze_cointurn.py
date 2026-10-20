@@ -19,7 +19,17 @@ RESULT = re.compile(r"result=(\w+)")
 duels = []
 cur = None
 
-for raw in open(EV, encoding="utf-8"):
+# ★ BUG-B9A-15：输入文件不在时给一句人话，别把
+#   FileNotFoundError 堆栈直接甩给用户。
+#   （这个文件由 `tools/live_follow.py` 产出。）
+if not os.path.isfile(EV):
+    raise SystemExit('找不到：%s\n先跑一次 tools/live_follow.py 采'
+                     '一段日志再回来。' % EV)
+
+with open(EV, encoding="utf-8") as _f:
+    _lines = _f.readlines()
+
+for raw in _lines:
     raw = raw.strip()
     if not raw:
         continue

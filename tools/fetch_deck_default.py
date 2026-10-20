@@ -28,14 +28,22 @@ import argparse
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
-#: 卡绘 CDN（`!art` = 纯卡绘 256²）
-ART_URL = 'https://cdn.233.momobako.com/ygopro/pics/%s.jpg!art'
+#: 卡绘 CDN（**纯卡绘**、无框无效果文）—— 按 **Konami 密码**寻址。
+#:
+#: ★ BUG-B9A-19（2026-10-19）：原来是
+#:   `https://cdn.233.momobako.com/ygopro/pics/%s.jpg!art`，该 CDN **已 404**（与
+#:   BUG-B2A-01 同源，本机实测连老卡都拿不到）。现走 ygoprodeck 的
+#:   `cards_cropped`（与 `core/card_art.CROPPED_URL` 同一族：去框纯卡绘）。
+#:   ⚠️ 别换成 `cards/<konami>.jpg` —— 那是**整张卡**（带框带文本），
+#:   与站内其它卡组图风格不搭（AGENTS.md 铁律 7）。
+ART_URL = 'https://images.ygoprodeck.com/images/cards_cropped/%s.jpg'
 #: 我们自己的卡表快照（`cid` = 游戏内 id，`id` = Konami 密码）
 CARDS_JSON = os.path.join(PROJ, 'ygocdb.com.cards', 'cards.json')
 OUT = os.path.join(PROJ, 'data', 'deck_images_custom', '_default.webp')
@@ -54,22 +62,49 @@ def konami_id(cid: str) -> str:
 
 def fetch(url: str) -> bytes:
     req = urllib.request.Request(url, headers={'User-Agent': 'masterduel-tools'})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read()
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        #: 404 给专门文案 —— 否则下面 `loadFromData` 只会报
+        #: 「下载到的不是图片」，看不出是地址失效（BUG-B9A-19）。
+        if exc.code == 404:
+            raise SystemExit('卡绘不存在（HTTP 404）：%s\n'
+                             '这说明 CDN 地址又失效了 —— '
+                             '先核对 ART_URL。' % url)
+        raise SystemExit('下载失败（HTTP %s）：%s' % (exc.code, url))
 
 
 def save_art(raw: bytes, out: str, side: int = SIDE) -> None:
-    """缩到 `side`×`side` 存 webp（用 Qt，不引 Pillow）。"""
+    """缩到 `side`×`side` 存 webp（用 Qt，不引 Pillow）。
+
+    ★ 落盘走 `core.atomic`（先写临时文件再 `os.replace`）—— `_default.webp` 是
+    进版本库的**缺图兜底**，写一半崩了就会让所有没图的卡组都变成一块白板。
+    """
+    import tempfile
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QImage
+    from core import atomic
 
     img = QImage()
     if not img.loadFromData(raw):
         raise SystemExit('下载到的不是图片（前 40 字节：%r）' % raw[:40])
     img = img.scaled(side, side, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    if not img.save(out, 'WEBP'):
-        raise SystemExit('存 webp 失败：%s' % out)
+    fd, tmp = tempfile.mkstemp(suffix='.webp', prefix='_default-')
+    os.close(fd)
+    try:
+        if not img.save(tmp, 'WEBP'):
+            raise SystemExit('存 webp 失败：%s' % out)
+        with open(tmp, 'rb') as f:
+            data = f.read()
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    if not atomic.write_bytes(out, data):
+        raise SystemExit('写入失败：%s（原文件未改动）' % out)
 
 
 def show(out: str) -> None:

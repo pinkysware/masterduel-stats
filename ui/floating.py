@@ -76,6 +76,7 @@ from PySide6.QtGui import (QAction, QColor, QFont, QFontMetrics, QIcon,
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QScrollArea,
                                QSizePolicy, QSystemTrayIcon, QVBoxLayout, QWidget)
 
+from core import paths
 from core.ui_state import UiSnapshot
 from ui import theme, widgets
 from ui.deck_banner import CONFIRM_KEY, DeckConfirmBanner  # 卡组确认提示条（2026-09-22）
@@ -116,8 +117,13 @@ from ui.i18n import tr
 #: 先/后列的**硬币图标**（2026-09-15 用户要求）：正面 = 先攻、背面 = 后攻。
 #: 素材 = 游戏内解包的 `duelcointoss` 图标 64²（坐标见 docs/素材解包说明.md），
 #: 复制进仓库 `data/coin_icons/`；读不到时行内回退成文字 先/后
-COIN_FRONT = 'data/coin_icons/coin_front.png'
-COIN_BACK = 'data/coin_icons/coin_back.png'
+#:
+#: ★ BUG-B5-10：原来是**裸相对路径**（按进程 CWD 解析）—— 从别的目录启动
+#:   （资源管理器里双击 .py、`python <abs>/tools/duel_ui.py`）就读不到，
+#:   而读不到时**静默退回文字**，没人会发现。改走 `paths.asset_path`
+#:   （随包只读素材，不跟 DATA_DIR）。
+COIN_FRONT = paths.asset_path('coin_icons', 'coin_front.png')
+COIN_BACK = paths.asset_path('coin_icons', 'coin_back.png')
 COIN_SIZE = 18                          # 圆形硬币显示边长（槽位 COL_ORDER=28）
 
 #: 徽章内部尺寸（槽位宽由下面 `badge_slot()` 按字体实测出来）
@@ -279,7 +285,10 @@ def opp_name_width(rows) -> int:
     fm = body_fm()
     need = 0
     for r in (rows or []):
-        deck = (r or {}).get('opp_deck') or ''
+        # ★ BUG-B5-14：未标注但有 M5 建议的行，那一格显示的是 `suggest_name`
+        #   （`OppDeckCell` 的 deck_text = suggest）—— 只按 `opp_deck` 算宽，
+        #   建议名比列宽长就被 elide 成 `…`（2026-10-05 用户口径「贴着字右边」）。
+        deck = (r or {}).get('opp_deck') or (r or {}).get('suggest_name') or ''
         if deck:
             need = max(need, fm.horizontalAdvance(str(deck)))
     if not need:
@@ -369,6 +378,31 @@ def column_widths(avail_w: int, opp_name_w: Optional[int] = None,
     #: 拉宽窗口时它照旧跟着长（2026-10-14 口径：名字要多少给多少）。
     left = int(avail_w) - sum(fixed) - gaps
     return fixed + (max(COL_OPP, left),)
+
+
+def pos_on_screen(win, pos) -> bool:
+    """保存的窗口位置还**在屏幕上**吗（换显示器 / 改分辨率后要能拉回来）。
+
+    ★ BUG-B5-15：原来是 `pos.x() >= -50 and pos.y() >= -50` ——
+    **只挡左上负坐标**。换了显示器、或把副屏拔掉之后，窗口可以停在
+    「屏幕外右侧 / 下方」（x/y 都是很大的正数），用户会以为程序没启动。
+    现在按「窗口矩形与任一屏幕至少重叠 60×60」判。
+
+    :param win: 用来取自身尺寸的 widget（`self`）
+    :param pos: QSettings 里读回来的 `QPoint`
+    """
+    from PySide6.QtCore import QPoint, QRect
+    from PySide6.QtGui import QGuiApplication
+    if not isinstance(pos, QPoint):
+        return False
+    w, h = win.width(), win.height()
+    if w <= 0 or h <= 0:
+        w, h = max(60, win.minimumWidth()), max(60, win.minimumHeight())
+    rect = QRect(pos, QPoint(pos.x() + w, pos.y() + h))
+    for screen in QGuiApplication.screens():
+        if rect.intersects(screen.availableGeometry()):
+            return True
+    return False
 
 
 def max_window_width(names) -> int:
@@ -1363,8 +1397,15 @@ class MatchRow(QWidget):
         #    表头每列 51px、行里还是 26px，于是整行相对表头左移 25px（用户：「全都没有对齐」）。
         # 我方卡组格（用户 2026-09-16）：图 + 名字列；**未知时名字列直接写行内提示**
         # （「打开卡组编辑获取卡组」）—— 不再有独立提示条，也**不开选择器**。
+        # ★ BUG-B5-13：「已知」要按**卡组名**判，不能按有没有图 ——
+        #   卡组已知但图缺失（自定义图还没放 / 首跑图没抓完）时，
+        #   旧代码 `bool(my_deck_img)` 会把这一格画成「未知」：
+        #   半透明兜底图 + 琥珀 `!` + tooltip「打开卡组编辑界面」，
+        #   用户明明已经识别到卡组却被提示去编辑界面。
+        #   （对手那格用的是数据层的 `opp_known`，同口径。）
+        _my_deck = row.get('my_deck') or ''
         self.my_deck_cell = MyDeckCell(
-            row.get('my_deck_img'), bool(row.get('my_deck_img')))
+            row.get('my_deck_img'), bool(_my_deck))
         self.thumb = self.my_deck_cell.thumb        # 兼容旧引用
         # 09-28：点行内我方卡组格 → 弹选择器修正该局（app 侧接）
         self.my_deck_cell.clicked.connect(
@@ -1515,11 +1556,11 @@ class FloatingWindow(QWidget):
         #: 上一次设过的光标 —— **只在真的变了才 setCursor**
         #: （每帧都设一遍光标，Windows 上会把箭头也闪出来）
         self._cursor_shape = None
-        #: 拖完 400ms 才落盘（拖动中每个 resizeEvent 都写 QSettings 太浪费）
-        self._save_timer = QTimer(self)
-        self._save_timer.setSingleShot(True)
-        self._save_timer.setInterval(400)
-        self._save_timer.timeout.connect(self.save_size)
+        # ★ BUG-B5-15：原来这里有个 `_save_timer`（400ms 单次 + timeout→save_size），
+        #   但**全项目没有任何地方 start() 它**（grep 确认）—— 尺寸实际由
+        #   `_end_resize()`（松手时）落盘，`resizeEvent` 里的限流重排用的是
+        #   `_resize_timer`。死定时器留着容易让人以为「拖动中会自动存」，
+        #   已删。要恢复节流落盘就把 `_end_resize` 改成起这个定时器。
         self.setMinimumSize(window_width(), theme.FLOAT_H)
         self._resize_to(window_width(), theme.FLOAT_H)
         self.setWindowTitle(tr('Master Duel 战绩'))
@@ -1836,9 +1877,17 @@ class FloatingWindow(QWidget):
         self._resizing = True
         starter = self._resize_starter or self._system_resize
         try:
-            return bool(starter(edges))
+            ok = bool(starter(edges))
         except Exception:
-            return False
+            ok = False
+        # ★ BUG-B5-07：失败路径**必须复位** `_resizing`（`begin_move` 有，这里漏了）。
+        #   而 `mousePressEvent` 是「先 begin_resize 再无条件 `ev.accept(); return`」——
+        #   即边缘点击失败时事件已被吃掉，`_resizing` 又卡在 True，
+        #   那个角落就成了**死区**（点什么都没反应）。
+        #   且 `resizeEvent` 会把布局引起的 resize 记成「用户尺寸」。
+        if not ok:
+            self._resizing = False
+        return ok
 
     def _system_resize(self, edges) -> bool:
         handle = self.windowHandle()
@@ -1883,13 +1932,25 @@ class FloatingWindow(QWidget):
 
     def contextMenuEvent(self, ev):                             # noqa: N802
         """右键菜单 = **托盘右键同款**（2026-10-03 用户口径）：
-        显示/隐藏悬浮窗 + 设置… + 看板… + 退出。"""
+        显示/隐藏悬浮窗 + 设置… + 看板… + 退出。
+
+        ★ BUG-B5-06：`remember=False` —— 右键是**临时菜单**，
+        不许覆盖托盘那份 `_act_*` 引用（否则托盘文案不再同步）。
+        """
         menu = QMenu(self)
-        self._fill_menu(menu)
+        self._fill_menu(menu, remember=False)
         menu.exec(ev.globalPos())
 
-    def _fill_menu(self, menu):
-        """托盘 / 悬浮窗右键**共用**的菜单项（同一条实现，别写两份）。"""
+    def _fill_menu(self, menu, remember: bool = True):
+        """托盘 / 悬浮窗右键**共用**的菜单项（同一条实现，别写两份）。
+
+        ★ BUG-B5-06：`remember` 参数 —— 只有**建托盘**时才记 `_act_*` 引用。
+        原来每次右键都新建菜单并覆盖 `_act_settings/_act_dash/_act_quit`，
+        于是 `_sync_tray_text()`（showEvent/hideEvent 都调）从此改的是
+        **右键临时菜单**的动作文案 —— 托盘菜单的「显示/隐藏悬浮窗」
+        不再跟着变，一直停在建托盘那一刻的文案。
+        另外每次右键 `QMenu(self)` 有父对象、不会被回收，点 N 次攒 N 个菜单。
+        """
         act_toggle = QAction(tr('显示悬浮窗') if self.isHidden()
                              else tr('隐藏悬浮窗'), menu)
         act_toggle.triggered.connect(self._toggle_visible)
@@ -1904,10 +1965,11 @@ class FloatingWindow(QWidget):
         act_quit = QAction(tr('退出'), menu)
         act_quit.triggered.connect(self.quit_requested.emit)
         menu.addAction(act_quit)
-        # ★ 记下引用 —— 切语言原地重译时刷文案（2026-10-05）
-        self._act_settings = act_settings
-        self._act_dash = act_dash
-        self._act_quit = act_quit
+        if remember:
+            # ★ 记下引用 —— 切语言原地重译时刷文案（2026-10-05）
+            self._act_settings = act_settings
+            self._act_dash = act_dash
+            self._act_quit = act_quit
         return act_toggle
 
     # --------------------------------------------------- 托盘（常驻入口）
@@ -2137,7 +2199,8 @@ class FloatingWindow(QWidget):
 
     def _restore_pos(self) -> None:
         pos = self._settings().value('float/pos')
-        if isinstance(pos, QPoint) and pos.x() >= -50 and pos.y() >= -50:
+        # ★ BUG-B5-15：改判「还在屏幕上」（原来只挡左上负坐标）
+        if pos_on_screen(self, pos):
             self.move(pos)
         else:                                        # 首次：右上角内侧
             screen = self.screen().availableGeometry()

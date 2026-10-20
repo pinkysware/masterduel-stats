@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
+import time
 from typing import Iterator, Optional
 
 def _default_log_dir() -> str:
@@ -60,9 +60,6 @@ def _default_log_dir() -> str:
 DEFAULT_LOG_DIR = _default_log_dir()
 DEFAULT_MAIN = 'log.log'
 DEFAULT_OLD = 'log.old.log'
-
-# 日志行格式：[2026-09-10 21:25:08.464] [info]  [Module.name] message
-RE_LOG_LINE = re.compile(r'^\[[\d\-]+ [\d:.]+\]\s+\[')
 
 
 class LogTailer:
@@ -104,6 +101,8 @@ class LogTailer:
         self._last_mtime: dict[str, float] = {}
         # 本次进程内是否真正从 old 读过内容（用于防重复继承）
         self._old_ever_read: bool = False
+        #: ★ BUG-B2A-06：游标文件损坏时的说明（正常读完为 None）；工具可以打出来
+        self.state_error: Optional[str] = None
 
         self._load_state()
         self._bootstrap()
@@ -122,9 +121,30 @@ class LogTailer:
                     'inode': st.get('inode'),
                     'head_sig': st.get('head_sig'),
                 }
-        except Exception:
-            # 游标损坏不该让工具起不来，退化成重新 bootstrap
+        except Exception as e:                              # noqa: BLE001
+            # ★ BUG-B2A-06：游标损坏不该让工具起不来，但**也不能静默** ——
+            #   原来悄悄 `_files = {}`，于是 `start_from='beginning'`（历史回补）
+            #   的语义被换成「按本次调用重新判 start_from」，用户以为补全了、
+            #   实际只读到最近一点。现在：
+            #   ① 把坏文件改名备份（`<path>.broken-<ts>`，不覆盖任何东西）；
+            #   ② 记一行 `state_error`（调用方/工具可以打出来）。
+            self.state_error = '游标损坏（%s）：%s' % (type(e).__name__, e)
+            self._backup_bad_state()
             self._files = {}
+
+    def _backup_bad_state(self) -> None:
+        """把损坏的游标文件改名留档（`.broken-<时间戳>`）—— 绝不删。
+
+        改名失败也不抛（文件名冲突 / 权限）：游标本就是可再生的缓存，
+        但**留一份**便于事后查「为什么回补窗口变小了」。
+        """
+        if not self.state_path:
+            return
+        try:
+            stamp = time.strftime('%Y%m%d_%H%M%S')
+            os.replace(self.state_path, '%s.broken-%s' % (self.state_path, stamp))
+        except OSError:
+            pass
 
     def save_state(self) -> None:
         if not self.state_path:
@@ -335,8 +355,14 @@ class LogTailer:
         if not os.path.exists(path):
             return ''
         size = os.path.getsize(path)
+        # ★ 首次见到的文件按 `start_from` 给默认偏移（BUG-B2A-12）：
+        #   原来固定 offset=0，于是 `_bootstrap()` 时文件还不存在、运行中
+        #   才出现的场景下，`start_from='end'` 也会把**整份历史**当新内容吐出来。
+        #    `beginning` / `saved`（游标丢了）仍从 0 读 —— 那正是「补历史」的语义。
+        first_offset = size if self.start_from == 'end' else 0
         st = self._files.setdefault(
-            path, {'offset': 0, 'size': size, 'inode': self._file_key(path)})
+            path, {'offset': first_offset, 'size': size,
+                   'inode': self._file_key(path)})
         if st.get('head_sig') is None:
             # 从磁盘游标恢复时 head_sig 为空，先补采样一次，
             # 否则首次同尺寸比对会失真。

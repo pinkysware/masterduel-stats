@@ -6,9 +6,11 @@
 * Rookie 只有 Tier 1-2；Bronze~Master 各 Tier 1-5；**Tier 越高数字越小**。
 * 升一小段所需连胜：**黄金及以下 3、白金/钻石 4、大师 5**（**与掉段线无关**）。
 * 低段（黄金及以下）：**输掉不减「还剩几胜」、也不会掉段**。
-* **钻石/大师：连输 3 把掉一小段**（用户 2026-09-20 实测修正：钻石 4 连输 2 把后
+* **白金/钻石/大师：连输 3 把掉一小段**（用户 2026-09-20 实测修正：钻石 4 连输 2 把后
   第 3 把提示「输了就掉段」，实际掉段 → 连输 **3** 把；大师同）。
-  白金仍是连输 **5** 把（用户同轮口径：「只改钻石大师」）。
+  ★ 2026-10-19 更正：**白金也是 3**。此处原写「白金仍是连输 5 把（只改钻石大师）」
+  是 09-20 那轮的旧口径，已作废 —— 用户原话：「白金段是在还有 4 胜到下一段的
+  状态时连输 3 把掉段。」
 * **跨大段不会掉**（大师五不管输几把都不会掉到钻石一）——最低小段（Tier 5）
   触发掉段线时保持原位。
 * 升段/掉段后「还剩几胜」重新从**满额**算（白金/钻石 4、大师 5）。
@@ -49,20 +51,22 @@ def streak_needed(rank) -> int:
 #: 段位编号：钻石 = 6（`core.ranks.RANK_NAMES`）
 RANK_DIAMOND = 6
 
-#: 钻石 / 大师的掉段线 —— **连输 3 把**（2026-09-20 用户实测修正）。
-#: 用户原话：「我在钻石4连输2把，第三把提示我输了就掉段，所以是连输3把掉段。
-#: 大师段也是连输3把掉段。」
+#: **掉段线（白金 / 钻石 / 大师统一）= 连输 3 把**。
+#: 2026-09-20 用户实测：「钻石4连输2把，第三把提示我输了就掉段」；大师同理。
+#: ★ 2026-10-19 用户更正：**白金也是 3**（旧值 5 已作废）—— 原话「白金段是在
+#:   还有 4 胜到下一段的状态时连输 3 把掉段」。
+#: （曾另有一个 `DEMOTE_LINE_PLATINUM = 3`，与本案同值；2026-10-19 合并成一个。）
 DEMOTE_LINE_HIGH = 3
-
-#: 白金段的掉段线 —— 保持 2026-09-18 口述的 5 把（用户本轮口径：「只改钻石大师」）
-DEMOTE_LINE_PLATINUM = 5
 
 
 def demote_line(rank, rate=None):
-    """连输多少把会掉一小段：**钻石/大师 3**、白金 5；低段（黄金及以下）不掉 → None。
+    """连输多少把会掉一小段：**白金/钻石/大师都是 3**；低段（黄金及以下）不掉 → None。
 
-    ⚠️ 与 `streak_needed`（升段所需连胜）**不是同一个数**：钻石升段要 4 连胜、
+    ⚠️ 与 `streak_needed`（升段所需连胜）**不是同一个数**：白金/钻石升段要 4 连胜、
     掉段只要 3 连败（用户 2026-09-20 实测确认，别再"对齐"成同一个值）。
+
+    ★ 2026-10-19 更正：白金掉段线**也是 3**（原来是 5，口径作废）。
+      用户原话：「白金段是在还有 4 胜到下一段的状态时连输 3 把掉段。」
 
     ★ 09-28 用户确认（v3.1）：**大师段会掉段，但大师 I（rate 1，段内顶）与
     大师 V（rate 5，最低小段，跨大段保护）不掉** —— 大师 II/III/IV 连输 3 掉一段。
@@ -75,7 +79,7 @@ def demote_line(rank, rate=None):
     if r >= RANK_DIAMOND:
         return DEMOTE_LINE_HIGH
     if r >= RANK_PLATINUM:
-        return DEMOTE_LINE_PLATINUM
+        return DEMOTE_LINE_HIGH
     return None
 
 
@@ -100,9 +104,11 @@ def _audit_save(new_state):
     if old_v == new_v:
         return
     import traceback
-    log = os.path.join(os.path.dirname(   # core/ -> 项目根，两级
-        os.path.dirname(os.path.abspath(__file__))),
-        'data', 'archive', 'rank_state_audit.log')
+    # ★ BUG-B2A-05（2026-10-18）：改走 `paths.data_path('archive', ...)`。
+    #   原来硬拼 `PROJ/data/archive/` —— 安装版（Program Files）那里不可写，
+    #   `open` 抛 OSError 被调用处的 `except: pass` 吞掉，审计日志一条都不写；
+    #   而它正是 09-27 / 10-05 两次「段位被无日志改掉」事故的取证手段。
+    log = paths.data_path('archive', 'rank_state_audit.log')
     stamp = time.strftime('%Y-%m-%d %H:%M:%S')
     with io.open(log, 'a', encoding='utf-8', newline='') as f:
         f.write('%s  %s -> %s  (src=%s)\n' % (stamp, old_v, new_v,
@@ -193,7 +199,11 @@ def next_state(state, result):
         else:
             lose_streak += 1
             line = demote_line(rank, rate)
-            if line is not None and lose_streak >= 3:
+            # ★ BUG-B2A-02（2026-10-18）：原来硬编码 `>= 3`，而 `demote_line()`
+            #   白金返回 **5**、钻石/大师返回 3、黄金以下返回 None。
+            #   结果白金连输 3 把就掉段（用户口径是 5 把），
+            #   且因为钻石/大师恰好也是 3，这个错从未被发现。
+            if line is not None and lose_streak >= line:
                 lose_streak = 0
                 if rate + 1 <= RATE_MAX:   # 跨大段保护：最低小段（Tier 5）不掉
                     rate = rate + 1

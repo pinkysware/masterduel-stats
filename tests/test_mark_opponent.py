@@ -330,6 +330,61 @@ class TestInteractiveBranches(Base):
                 mo.cmd_interactive(self.st, None, None)
         self.assertIn('回车 = 跳过', buf.getvalue())
 
+class TestUnifiedIndexLimit(Base):
+    """★ BUG-B9A-05 / B9A-06：`--list` / `--set` / `--clear` / `--guess` **共用一个 limit**。"""
+
+    def setUp(self):
+        super().setUp()
+        for i in range(25):
+            self.st.upsert_match(mk('e%07d' % i,
+                                    '2026-09-%02d 10:00:00.000' % (i + 1)))
+
+    def test_default_limit_is_one_constant(self):
+        self.assertEqual(mo.DEFAULT_LIST_LIMIT, 20)
+
+    def test_set_uses_list_limit(self):
+        """`--list 3` 显示的第 1 条 = `--set 1` 绑的那一条（两边同一份列表）。"""
+        rc, out = self.run_cli('--list', '5')
+        newest = self.st.get_unmarked_matches(5)[0]['match_id']
+        self.assertIn(newest[:8], out)
+        rc, out = self.run_cli('--list', '5', '--set', '1', '烙印')
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.st.get_match(newest)['opp_deck_name'], '烙印')
+
+    def test_set_beyond_list_limit_is_rejected(self):
+        """超出屏幕上看到的范围 → **必须报多余**，不能默默作用到看不见的行。
+
+        旧行为：`--set 60` 会在 1000 条里找，看不见也照绑。
+        现在：列表只有 `--list` 那么长，越界就报错。
+        """
+        rc, out = self.run_cli('--set', '60', '烙印')      # 默认 20 条
+        self.assertEqual(rc, 1, out)
+        self.assertIn('越界', out)
+
+    def test_clear_uses_same_limit_as_marked_list(self):
+        """`--list --marked` 显示的第 1 条 = `--clear 1` 撤的那一条。"""
+        rows = self.st.get_unmarked_matches(5)
+        for r in rows[:2]:
+            self.run_cli('--set', '1', '烙印')
+        marked = self.st.get_marked_matches(mo.DEFAULT_LIST_LIMIT)
+        self.assertEqual(len(marked), 2)
+        target = marked[0]['match_id']
+        rc, out = self.run_cli('--set', '1', '--clear')
+        self.assertEqual(rc, 0, out)
+        self.assertIsNone(self.st.get_match(target)['opp_deck_id'])
+
+    def test_guess_uses_list_limit_for_index(self):
+        """`--guess N` 的序号也跟 `--list` 同一份列表。"""
+        rows = self.st.get_unmarked_matches(mo.DEFAULT_LIST_LIMIT)
+        with mock.patch.object(mo, 'match_any_by_token',
+                               wraps=mo.match_any_by_token) as spy:
+            mo.match_any_by_token(self.st, '1')
+            args, kwargs = spy.call_args
+            self.assertEqual(kwargs.get('limit', mo.DEFAULT_LIST_LIMIT),
+                             mo.DEFAULT_LIST_LIMIT)
+
+
+
 
 if __name__ == '__main__':
     unittest.main()

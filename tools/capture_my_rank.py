@@ -49,11 +49,15 @@ if PROJ not in sys.path:
 from core.memread.il2cpp import (MetadataHeader, default_metadata_path,   # noqa: E402
                                  find_all_metadata_mirrors, read_string_table)
 from core.memread.process import SafeProcess, find_pids_by_name          # noqa: E402
+from core.memread.end_message import default_game_dir                # noqa: E402
 from core.memread.rank import read_profile, read_my_rank                 # noqa: E402
 from core.ranks import numeral_text, rank_label                          # noqa: E402
 
 #: 游戏安装目录（要改就改这里）
-GAME_DIR = r'D:\steam\steamapps\common\Yu-Gi-Oh!  Master Duel'
+# ★ BUG-B9A-14：游戏目录不再写死 `D:\steam\...` —— 改走
+#   `end_message.default_game_dir()`（认 `MD_GAME_DIR` 环境变量 + 常见盘位探测），
+#   换盘 / 换 Steam 库也能用。原来三份工具各抄一份路径。
+GAME_DIR = default_game_dir()
 
 
 def label_of(rec) -> str:

@@ -316,227 +316,6 @@ class NewDecksDialog(QDialog):
                 for name, cb, edit in self.rows if cb.isChecked()]
 
 
-class CloseDialog(QDialog):
-    """「点击关闭后」—— 参考图那种：**两个单选项 + 「不再提示」+ 取消/确认**。
-
-    ⚠️ 2026-09-15 用户实测「× 点了没用」+「你的文字太啰嗦」：
-    原来用 `QMessageBox`，两个按钮**本身就是动作**（点了立刻执行、没有确认），
-    文案又是两行长句；现在改成：默认选「退出主程序」，确认才执行，
-    下面一个「不再提示」勾选（勾了就落库、以后直接照此执行）。
-
-    ⚠️ **无边框 + 自绘暗色标题**（用户 2026-09-15 点头）：Windows 原生标题栏是**白的**，
-    和我们整套暗色主题不搭 → 改成 `FramelessWindowHint` + 半透明圆角 + 自己画标题行
-    （标题居中 + 右上 ×），并且**可以拖着走**（按在非控件区域即可）。Esc 仍然 = 取消。
-    """
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(tr('关闭悬浮窗'))
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setStyleSheet(theme.qss())
-        self.setFixedWidth(300)          # 用户 2026-09-15：「把关闭悬浮窗的 ui 做小」
-        self._drag_from = None
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(theme.S_MD, theme.S_MD, theme.S_MD, theme.S_MD)
-        lay.setSpacing(theme.S_SM)
-
-        # ---- 自绘标题行：标题居中 + 右上 ×（左边补等宽留白，标题才是真居中）
-        head = QHBoxLayout()
-        head.setSpacing(0)
-        title = widgets.label(tr('点击关闭后'), 'body', Qt.AlignCenter)
-        title.setFont(widgets.font(theme.F_BODY, QFont.Weight.Medium))
-        self.btn_close = WindowButton('close')
-        self.btn_close.setToolTip(tr('取消'))
-        self.btn_close.clicked.connect(self.reject)
-        pad = QWidget()
-        pad.setFixedWidth(self.btn_close.width())
-        head.addWidget(pad)
-        head.addStretch(1)
-        head.addWidget(title)
-        head.addStretch(1)
-        head.addWidget(self.btn_close)
-        lay.addLayout(head)
-
-        row = QHBoxLayout()
-        row.setSpacing(theme.S_MD)
-        self.rb_tray = widgets.DotRadio(tr('隐藏到任务栏托盘'))
-        self.rb_quit = widgets.DotRadio(tr('退出主程序'))
-        self.rb_quit.setChecked(True)          # 参考图里默认选「退出」
-        grp = QButtonGroup(self)
-        grp.addButton(self.rb_tray)
-        grp.addButton(self.rb_quit)
-        row.addWidget(self.rb_tray)
-        row.addStretch(1)
-        row.addWidget(self.rb_quit)
-        lay.addLayout(row)
-
-        self.cb_remember = widgets.TickBox(tr('不再提示 · 之后直接按此执行'))
-        lay.addWidget(self.cb_remember)
-
-        # ⚠️ 不用 `QDialogButtonBox`：它会按平台习惯重排（Windows 是 [确认][取消]），
-        # 而参考图是 **[取消][确认]** —— 这里自己排，顺序说了算。
-        foot = QHBoxLayout()
-        foot.addStretch(1)
-        self.btn_cancel = QPushButton(tr('取消'))
-        self.btn_cancel.setFixedWidth(72)
-        self.btn_cancel.clicked.connect(self.reject)
-        foot.addWidget(self.btn_cancel)
-        self.btn_ok = QPushButton(tr('确认'))
-        self.btn_ok.setFixedWidth(72)
-        self.btn_ok.setDefault(True)
-        self.btn_ok.clicked.connect(self.accept)
-        foot.addWidget(self.btn_ok)
-        lay.addLayout(foot)
-
-    # ------------------------------------------------------- 自绘外观/拖动
-    def paintEvent(self, ev):                                   # noqa: N802
-        """圆角暗色底 + 发丝描边（无边框窗得自己画，和悬浮窗/面板同一套）。"""
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        path = QPainterPath()
-        path.addRoundedRect(0.5, 0.5, self.width() - 1.0, self.height() - 1.0,
-                            theme.R_LG, theme.R_LG)
-        p.fillPath(path, QColor(theme.CANVAS))
-        p.setPen(QPen(QColor(255, 255, 255, 36), 1))
-        p.drawPath(path)
-
-    def mousePressEvent(self, ev):                              # noqa: N802
-        """按在非控件区域可以**拖走**这个对话框（无边框窗的标配）。"""
-        if ev.button() == Qt.LeftButton:
-            self._drag_from = (ev.globalPosition().toPoint()
-                               - self.frameGeometry().topLeft())
-            ev.accept()
-            return
-        super().mousePressEvent(ev)
-
-    def mouseMoveEvent(self, ev):                               # noqa: N802
-        if self._drag_from is not None and ev.buttons() & Qt.LeftButton:
-            self.move(ev.globalPosition().toPoint() - self._drag_from)
-            ev.accept()
-            return
-        super().mouseMoveEvent(ev)
-
-    def mouseReleaseEvent(self, ev):                            # noqa: N802
-        self._drag_from = None
-        super().mouseReleaseEvent(ev)
-
-    def choice(self) -> str:
-        """选的是哪个动作（`tray` / `quit`）。"""
-        return 'quit' if self.rb_quit.isChecked() else 'tray'
-
-    def remember(self) -> bool:
-        return bool(self.cb_remember.isChecked())
-
-
-def new_deck_names(meta_names, csv_path):
-    """meta 清单里**不在覆盖表**的卡组名（= 设置页要请你补中文名的那批）。
-
-    ⚠️ 覆盖表的匹配靠**站内英文名**那一列（`data/deck_name_cn.csv` 的「站内英文名」）；
-    「隐藏=Y」的行也算已收录（用户主动并掉/隐藏的，不再问）。
-    """
-    from core import deck_csv
-    try:
-        header, rows = deck_csv.read(csv_path)
-    except Exception:
-        return sorted({n for n in meta_names if n})
-    idx = deck_csv.index_map(header)
-    known = {deck_csv.get(r, idx, '站内英文名') for r in rows}
-    return sorted({n for n in meta_names if n and n not in known})
-
-
-class NewDecksDialog(QDialog):
-    """新卡组勾选 + 填中文名（用户 2026-09-15 选的做法「乙」）。
-
-    每一行 = [图] [站内英文名] [中文名输入框] [勾选框]；确认后
-    **写进 `data/deck_name_cn.csv`**（站内英文名 + 中文名 + 备注），再跑
-    `fetch_meta_decks.py --cn-only` 把表贴进库。
-    """
-
-    def __init__(self, names, images, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(tr('新卡组'))
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setStyleSheet(theme.qss())
-        self.setFixedWidth(460)
-        self.rows = []                       # [(name, 勾选框, 输入框)]
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(theme.S_MD, theme.S_MD, theme.S_MD, theme.S_MD)
-        lay.setSpacing(theme.S_SM)
-        head = QHBoxLayout()
-        head.addWidget(widgets.label(tr('这些卡组不在覆盖表里 —— 勾上并填中文名'),
-                                     'label'))
-        head.addStretch(1)
-        self.btn_close = WindowButton('close')
-        self.btn_close.clicked.connect(self.reject)
-        head.addWidget(self.btn_close)
-        lay.addLayout(head)
-
-        host = QWidget()
-        box = QVBoxLayout(host)
-        box.setContentsMargins(0, 0, 0, 0)
-        box.setSpacing(theme.S_XS)
-        for name in names:
-            row = QWidget()
-            rl = QHBoxLayout(row)
-            rl.setContentsMargins(0, 0, 0, 0)
-            rl.setSpacing(theme.S_XS)
-            img = ''
-            try:
-                img = images.resolve(name)
-            except Exception:
-                pass
-            rl.addWidget(widgets.thumb_label(img, theme.THUMB))
-            lab = widgets.label(name, 'body')
-            lab.setFixedWidth(200)
-            rl.addWidget(lab)
-            edit = QLineEdit()
-            edit.setPlaceholderText(tr('中文名（可留空）'))
-            rl.addWidget(edit, 1)
-            cb = widgets.TickBox('')
-            cb.setChecked(True)              # 默认全勾：新上的基本都是要收的
-            rl.addWidget(cb)
-            box.addWidget(row)
-            self.rows.append((name, cb, edit))
-        area = QScrollArea()
-        area.setWidgetResizable(True)
-        area.setWidget(host)
-        area.setFixedHeight(min(len(names), 8) * 34 + 12)
-        lay.addWidget(area)
-
-        foot = QHBoxLayout()
-        foot.addStretch(1)
-        btn_cancel = QPushButton(tr('取消'))
-        btn_cancel.clicked.connect(self.reject)
-        foot.addWidget(btn_cancel)
-        btn_ok = QPushButton(tr('加入覆盖表'))
-        btn_ok.setDefault(True)
-        btn_ok.clicked.connect(self.accept)
-        foot.addWidget(btn_ok)
-        lay.addLayout(foot)
-
-    def paintEvent(self, ev):                                   # noqa: N802
-        """圆角暗色底 + 发丝描边（🔴 无边框窗不画就是**整块透明** ——
-        2026-10-03 用户实拍：「获取新卡组名」跑完后的确认弹窗字叠字；
-        09-21 在 FetchDecksDialog 修过同一个坑，这里两份定义一起补）。"""
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        path = QPainterPath()
-        path.addRoundedRect(0.5, 0.5, self.width() - 1.0, self.height() - 1.0,
-                            theme.R_LG, theme.R_LG)
-        p.fillPath(path, QColor(theme.CANVAS))
-        p.setPen(QPen(QColor(255, 255, 255, 36), 1))
-        p.drawPath(path)
-
-    def picked(self):
-        """勾上并填了名字的：[(站内英文名, 中文名)]。"""
-        return [(name, edit.text().strip())
-                for name, cb, edit in self.rows if cb.isChecked()]
-
-
 class SettingsDialog(QDialog):
     """设置：开机自启 / 显示语言 / **当窗口关闭时** / 调试模式（demo 战绩）。"""
 
@@ -572,8 +351,9 @@ class SettingsDialog(QDialog):
         form.addRow(tr('开机自启'), self.cb_auto)
 
         self.cb_lang = QComboBox()
-        for key, name in LANGS:
-            self.cb_lang.addItem(name, key)
+        # 单一来源在 ui.theme（本文件不再建第二份）—— 2026-10-19 修掉这里的 NameError
+        for key in theme.LANGS:
+            self.cb_lang.addItem(theme.LANG_NAMES.get(key, key), key)
         cur = str(settings().value('ui/lang', 'cn'))
         idx = self.cb_lang.findData(cur)
         self.cb_lang.setCurrentIndex(idx if idx >= 0 else 0)
@@ -582,7 +362,7 @@ class SettingsDialog(QDialog):
 
         # ---- 当窗口关闭时（2026-09-15 用户定：参考图里那个下拉）
         self.cb_close = QComboBox()
-        for key, name in CLOSE_ACTIONS:
+        for key, name in theme.CLOSE_ACTIONS:
             self.cb_close.addItem(tr(name), key)
         cur_close, _explicit = close_action()
         idx = self.cb_close.findData(cur_close)
@@ -1187,6 +967,14 @@ class MasterDuelUiApp(object):
             #: 列少了 -> 窗口下限/上限都重算（否则留一圈空白，见用户 2026-10-17）
             _fl.invalidate_width_cache()
             win.setMinimumWidth(_fl.window_width())
+            # ★ BUG-B5-09：注释写「下限/上限都重算」，原来却只有 setMinimumWidth
+            #   —— 上限是构造时注入的 `_max_width`，没人再算，于是藏掉三列后
+            #   窗口仍能拖到「五列都显示时」的宽度，右侧一大片留白。
+            #   `max_window_width()` 本身**就是**按 `float_hidden_cols()` 算的，
+            #   只是缺这一句调用。
+            _set_max = getattr(win, 'set_max_width', None)
+            if callable(_set_max):
+                _set_max(_fl.max_window_width(self.deck_name_pool()))
             win._last_layout = None          # 强制重排（别被缓存骗过去）
             win._relayout_columns()
         except Exception:                                # noqa: BLE001
@@ -1407,32 +1195,40 @@ class MasterDuelUiApp(object):
         ⚠️ **窗口只发信号、这里才写文件**（M7 纪律：UI 层不直接落数据）。
         口径：`ui_state.export_rows()` 复用战绩页那条路，所以**导出 = 预览里那批**
         （同一个月份 + 模式筛选）。
+
+        ★ BUG-B5-04：失败/成功都改用 `QMessageBox` —— 原来用 `print()`，
+        而安装版是 `pythonw` 起进程（**没有控制台**，`sys.stdout` 是 `None`），
+        四条分支要么 `AttributeError` 要么什么也看不见，对用户都是**静默**。
         """
-        from PySide6.QtWidgets import QFileDialog
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
         from core import ui_state
 
+        _parent = getattr(self, '_dash_win', None) or self.win
         try:
             rows = ui_state.export_rows(self.storage, mode_group=mode_group,
                                         month=month)
         except Exception as exc:                             # noqa: BLE001
-            print('[导出] 取数失败：%r' % exc)
+            QMessageBox.warning(_parent, tr('导出失败'),
+                                tr('取数失败：%s') % exc)
             return
         if not rows:
-            print('[导出] 当前筛选下没有对局，未生成文件')
+            QMessageBox.information(_parent, tr('没有可导出的对局'),
+                                    tr('当前筛选下没有对局，未生成文件。'))
             return
         default = os.path.join(PROJ, ui_state.export_default_name(fmt))
         filt = ('CSV (*.csv)' if fmt == 'csv' else 'JSON (*.json)')
         path, _sel = QFileDialog.getSaveFileName(
-            getattr(self, '_dash_win', None) or self.win, tr('导出对局记录'),
-            default, filt)
+            _parent, tr('导出对局记录'), default, filt)
         if not path:
             return
         try:
             ui_state.write_export(path, rows, fmt=fmt)
         except Exception as exc:                             # noqa: BLE001
-            print('[导出] 写盘失败：%r' % exc)
+            QMessageBox.warning(_parent, tr('导出失败'),
+                                tr('写盘失败：%s') % exc)
             return
-        print('[导出] %d 局 -> %s' % (len(rows), path))
+        QMessageBox.information(_parent, tr('导出完成'),
+                                tr('%d 局已导出到：\n%s') % (len(rows), path))
 
     def dashboard_export_loader(self):
         """导出页的**预览**数据（D4c）—— 收 ``(month, mode_group)``。
@@ -1560,7 +1356,10 @@ class MasterDuelUiApp(object):
                 if line.strip():
                     self._fetch_buf.append(line.strip())
                     log_line(line.strip())
-            dlg.fetch_status.setText(self._fetch_buf[-1][:80])
+            # ★ BUG-B5-15：可能只收到空白行（缓冲凑不满一行）——
+            #   原来 `[-1]` 会 IndexError，弹窗卡在「正在抓取」不动。
+            if self._fetch_buf:
+                dlg.fetch_status.setText(self._fetch_buf[-1][:80])
 
         def on_done(code, _status):
             dlg.btn_fetch.setEnabled(True)
@@ -1736,14 +1535,23 @@ def acquire_single_instance_lock() -> Optional[QLockFile]:
 
 def main(db_path: Optional[str] = None, interval_ms: int = 2000,
          argv=None, demo: bool = False) -> int:
-    """入口：起应用 + 抢单实例锁 + 跑主循环。"""
-    app = MasterDuelUiApp([sys.argv[0]] if argv is None else argv,
-                          db_path=db_path, interval_ms=interval_ms, demo=demo)
+    """入口：起应用 + 抢单实例锁 + 跑主循环。
+
+    ★ BUG-B5-02：单实例锁必须**在构造之前**抢。
+    原来顺序是「先 `MasterDuelUiApp(...)` 再抢锁」—— 而构造函数里全是副作用：
+    `_make_storage()`（建库 + `init_schema`）、`ensure_meta_decks()`
+    （跑数据迁移，并在 meta_decks 为空时**起一个联网抓榜单的子进程**）、
+    `_build_floating()`（`tray.show()`，第二个托盘图标会真的出现）。
+    全新安装时双击两次 = 两个 `fetch_meta_decks.py` 并发写库写图。
+    `restart_ui()` 的 5 秒宽限够新进程等锁，提前抢不会破坏「重启界面」。
+    """
     lock = acquire_single_instance_lock()
     if lock is None:
         QMessageBox.information(None, tr('已经在跑了'),
                                 tr('悬浮窗已经在运行（看屏幕右上角）。'))
         return 1
+    app = MasterDuelUiApp([sys.argv[0]] if argv is None else argv,
+                          db_path=db_path, interval_ms=interval_ms, demo=demo)
     app._lock = lock                     # 持住，别被回收
     return app.run()
 

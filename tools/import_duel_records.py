@@ -60,11 +60,17 @@ DEFAULT_DUEL_MODES = paths.data_path('archive', 'duel_modes.jsonl')
 # ---------------------------------------------------------------- 外部数据源
 
 def load_end_messages(path=DEFAULT_END_MESSAGES):
-    """end_messages.jsonl -> [{captured_at(datetime), ...原始字段}]（按时间序）。"""
+    """end_messages.jsonl -> [{captured_at(datetime), ...原始字段}]（按时间序）。
+
+    ★ BUG-B8-09：`errors='replace'`。jsonl 是**边写边读**的，采集器正好写到
+    半行时可能读到被截断的多字节字符 —— `UnicodeDecodeError` 会让
+    `process()` 整批中断（且后续每局都在同一条坏行上重失败）。替换成 U+FFFD
+    后那行 JSON 解析失败被跳过，其余正常。真库当前无此现象（机制可复现）。
+    """
     out = []
     if not os.path.exists(path):
         return out
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, 'r', encoding='utf-8', errors='replace') as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -81,11 +87,14 @@ def load_end_messages(path=DEFAULT_END_MESSAGES):
 
 
 def load_duel_modes(path=DEFAULT_DUEL_MODES):
-    """duel_modes.jsonl -> [{start, end, game_mode}]（采样会话粒度，兜底源）。"""
+    """duel_modes.jsonl -> [{start, end, game_mode}]（采样会话粒度，兜底源）。
+
+    ★ BUG-B8-09：同 `load_end_messages` —— 半写入的多字节字符用 `replace`。
+    """
     out = []
     if not os.path.exists(path):
         return out
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, 'r', encoding='utf-8', errors='replace') as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -220,6 +229,23 @@ def _meta_display(storage, key):
     return None
 
 
+def _duration_sec(started_at, ended_at):
+    """两个定宽时刻文本 -> 整数秒；任一缺失 / 解析失败 / 负数 -> None。
+
+    ★ BUG-B8-17：record 来源没有日志的 `Game ended`，但「开始」与
+    「`capture.last_saved_at`（≈ 结束）」都在手上 —— 时长可以算。
+    """
+    if not started_at or not ended_at:
+        return None
+    try:
+        a = _dt.strptime(str(started_at)[:19], '%Y-%m-%d %H:%M:%S')
+        b = _dt.strptime(str(ended_at)[:19], '%Y-%m-%d %H:%M:%S')
+    except (TypeError, ValueError):
+        return None
+    sec = int((b - a).total_seconds())
+    return sec if sec >= 0 else None
+
+
 def process(records_dir=DEFAULT_RECORDS, storage=None, apply=False,
             em_path=DEFAULT_END_MESSAGES, dm_path=DEFAULT_DUEL_MODES,
             only=None):
@@ -258,7 +284,11 @@ def process(records_dir=DEFAULT_RECORDS, storage=None, apply=False,
     claims = pair_end_messages(duel_metas, entries) if entries else {}
     report = {'broken': broken, 'duels': [], 'new_rows': 0, 'merged': 0,
               'skipped_open': 0, 'skipped_open_dirs': [], 'written_json': 0,
-              'unknown_card_ids': []}
+              'unknown_card_ids': [],
+              #: ★ BUG-B8-11：逐局异常（一个坏目录不再拖垮整批）
+              'failed': [],
+              #: ★ BUG-B8-08：被吸收的同局兄弟行数（晚出现的第二个目录）
+              'absorbed': 0}
     if only is not None and not groups:
         report['duels'].append({'record_id': only, 'action': 'not-found'})
     storage = storage or Storage()
@@ -269,195 +299,240 @@ def process(records_dir=DEFAULT_RECORDS, storage=None, apply=False,
         rid = main['name']
         item = {'record_id': rid, 'merged_from': [], 'state': main['state']}
 
-        if main['state'] != 'final':
-            item['action'] = 'skipped-open'
-            report['skipped_open'] += 1
-            report['skipped_open_dirs'].append(rid)   # P1-1：看得见才收得了口
-            report['duels'].append(item)
-            continue
+        try:
+            if main['state'] != 'final':
+                item['action'] = 'skipped-open'
+                report['skipped_open'] += 1
+                report['skipped_open_dirs'].append(rid)   # P1-1：看得见才收得了口
+                report['duels'].append(item)
+                continue
 
-        duel = duel_record.decode_record(main)
-        duel['merged_from'] = sorted(s['name'] for s in g if s['name'] != rid)
-        item['merged_from'] = duel['merged_from']
-        # M4：卡表里查不到的卡 id（P1-2：必须出现在常驻路径的日志里）
-        item['unknown_card_ids'] = list(
-            duel['summary'].get('unknown_card_ids') or [])
-        unknown_all.update(item['unknown_card_ids'])
+            duel = duel_record.decode_record(main)
+            duel['merged_from'] = sorted(s['name'] for s in g if s['name'] != rid)
+            item['merged_from'] = duel['merged_from']
+            # M4：卡表里查不到的卡 id（P1-2：必须出现在常驻路径的日志里）
+            item['unknown_card_ids'] = list(
+                duel['summary'].get('unknown_card_ids') or [])
+            unknown_all.update(item['unknown_card_ids'])
 
-        meta_updates = {}
-        sources = duel['meta'].setdefault('sources', {})
+            meta_updates = {}
+            sources = duel['meta'].setdefault('sources', {})
 
-        # -- game_mode：manifest 快照（decode 已填）> duel_modes 兜底
-        if duel['meta'].get('game_mode') is None:
-            mode, src = game_mode_from_duel_modes(
-                main['first_seen'], main['last_saved'], modes)
-            if mode is not None:
-                meta_updates['game_mode'] = mode
-                sources['duel_modes'] = src
+            # -- game_mode：manifest 快照（decode 已填）> duel_modes 兜底
+            if duel['meta'].get('game_mode') is None:
+                mode, src = game_mode_from_duel_modes(
+                    main['first_seen'], main['last_saved'], modes)
+                if mode is not None:
+                    meta_updates['game_mode'] = mode
+                    sources['duel_modes'] = src
 
-        # -- 与既有 log/api 行并档（防战绩翻倍）
-        # ⚠️ 该局已有自己的 record 行（match_id='rec:'+rid）时**绝不并档**：
-        # 这是重跑 import 的幂等前提。实机教训（09-14）：重跑回填时宽窗把
-        # 重打局拽进了 30 分钟内另一局（第一次尝试）的 log 行，旧 Win 被
-        # 新 Lose 覆盖。
-        own = storage.get_match('rec:' + rid)
-        if own is not None:
-            pair, stage = None, 'own-record-row'
-            # 沿用自己行里已入库的时间锚——否则 to_row 出行 started_at=None，
-            # upsert 会走 skipped-no-time，幂等更新（如回填 opp_player_name）
-            # 根本不会发生。
-            duel['meta']['started_at'] = own['started_at']
-            duel['meta']['started_at_src'] = own.get('started_at_src') or 'own-row'
-        else:
-            pair, stage = storage.find_record_pair(
-                duel_record.fmt_dt(main['first_seen']))
-        if pair:
-            item['pair'] = {'match_id': pair['match_id'], 'stage': stage}
-            meta_updates['started_at'] = pair['started_at']
-            meta_updates['started_at_src'] = 'log'
-            meta_updates['ended_at'] = pair.get('ended_at')
-            meta_updates['duration_sec'] = pair.get('duration_sec')
-            sources['log'] = pair['match_id']
-        else:
-            item['pair'] = {'stage': stage}
-            if own is None and duel['meta'].get('started_at') is None:
-                # 采集侧近似（first_seen ≈ 开局，watcher 口径）
-                meta_updates['started_at'] = duel_record.fmt_dt(main['first_seen'])
-                meta_updates['started_at_src'] = 'first_seen_approx'
-
-        # -- 结束时刻（★ 2026-09-17：record 行也补上）
-        # 为什么必需：切轮判据比的是「上一局**结束** → 本局**开局**」——
-        # 只比两个开局会被**超长对局**骗（上一局打了 110 分钟，下一局开局
-        # 看上去就"隔了 115 分钟"，其实只歇了 5 分钟）。
-        # record 来源（内存采集）没有日志的 ``Game ended`` 行，所以拿
-        # **记录目录自己的采集区间**当锚：`capture.last_saved_at` = 最后一次
-        # 落盘时刻 ≈ 对局结束（实测 16:16:02 开局 / 16:17:16 落盘）。
-        # ⚠️ 只补**空**的（有日志 ended_at 时上面已填、更准）；
-        # ⚠️ 不会撞「掉线判据」：那条要 `game_mode IS NULL`，而 record 行的
-        #    game_mode 必有值（采集时从内存读的）。
-        cap = duel.get('capture') or {}
-        if (meta_updates.get('ended_at') or duel['meta'].get('ended_at')) is None:
-            saved = cap.get('last_saved_at')
-            if saved and not cap.get('approx'):
-                meta_updates['ended_at'] = saved
-                meta_updates.setdefault('duration_sec', None)
-                sources['capture'] = saved
-
-        # -- end_messages 认领 → winbits / result / 文案备注
-        em = claims.get(rid)
-        if em is not None:
-            sources['end_messages'] = em.get('captured_at')
-            item['end_message'] = em.get('captured_at')
-            if em.get('winbits'):
-                meta_updates['winbits'] = em['winbits']     # 证据照记
-            text = (em.get('texts') or {}).get('messageText')
-            #: 🔴 2026-10-03：**三判据投票仲裁**（投降局 winbit 可能是上一局
-            #: 残留——记录 20261003_193726 自己投降却被记胜）。文案+结算码
-            #: 两票一致时压过陈旧的 winbit；平票维持 winbit > duel_code。
-            r, src_, note = arbitrate_result(em.get('winbits'),
-                                             em.get('duel_code'), text)
-            if r:
-                meta_updates['result'] = r.capitalize()
-                meta_updates['result_src'] = src_
-            if note:
-                meta_updates['result_note'] = note
-            if text:
-                meta_updates['result_note'] = (
-                    '%s%s' % (text, '；' + note if note else ''))
-
-        # -- 我方卡组兜底（2026-09-16 用户口径）：编辑界面读过一次的「当前卡组」，
-        #    该局自己没读到牌时沿用。**活动局同样要填** —— 用户澄清「天梯已经能自动拿，
-        #    这套就是给活动对局用的」，且实机核实过：骰子拉力的活动卡组位 `DRDeck`
-        #    里就是他自组的那套（41 主 + 15 额外，与编辑界面读到的卡一致）。
-        #    ⚠️ 只在该局**没读到自己的牌**、且**本局不早于记录时刻**时才补（别改写历史局）。
-        if not (meta_updates.get('my_deck_name') or duel['meta'].get('my_deck_name')):
-            cur = _current_my_deck()
-            # ★ 09-28：`current-deck` 兜底只对**天梯（mode=3）**生效 ——
-            #   天梯/巅峰是两个独立的卡组槽位（现场枚举 ClientWork 实锤），
-            #   巅峰局的「当前卡组」（=天梯那份）不是当局实际用的牌，兜了必错标。
-            gm = (duel['meta'].get('game_mode')
-                  or meta_updates.get('game_mode'))
-            if cur and gm == 19:      # 只禁巅峰（09-28 双槽位实锤）；
-                cur = None            # 活动局(21/DRDeck)维持 09-16 口径照兜
-            started = meta_updates.get('started_at') or duel['meta'].get('started_at')
-            fresh = (not cur) or not cur.get('at') or not started \
-                or str(started) >= str(cur['at'])
-            # ★ 2026-09-22 实测事故：`my_deck.json` 残留上一场的卡组名（用户换了
-            #   卡组但没进编辑界面 / 大厅识别还没纠正），这场局就被 `current-deck`
-            #   兜底**错标**。兜底只对「识别时刻之后不久」的局可信 ——
-            #   状态文件太旧就不许再兜（宁可留空，别标错）。
-            stale = False
-            if cur and cur.get('at') and started:
-                try:
-                    import datetime as _dt
-                    at = _dt.datetime.strptime(str(cur['at'])[:19],
-                                               '%Y-%m-%d %H:%M:%S')
-                    st = _dt.datetime.strptime(str(started)[:19],
-                                               '%Y-%m-%d %H:%M:%S')
-                    stale = abs((st - at).total_seconds()) > MY_DECK_MAX_AGE_SEC
-                except (TypeError, ValueError):
-                    stale = False
-            if cur and fresh and not stale:
-                meta_updates['my_deck_name'] = (_meta_display(storage, cur['name'])
-                                                or cur['name'])
-                meta_updates['my_deck_name_src'] = 'current-deck'
-
-        # -- went_first：seat 判出后才能映射（不猜）
-        seat = duel['meta'].get('seat')
-        if seat is not None and duel['summary'].get('first_player') is not None:
-            duel['summary']['went_first'] = bool(
-                int(seat) == int(duel['summary']['first_player']))
-
-        # -- 手坑两列（2026-10-16）：seat 判出后映射（我/敌）；判不出两列 NULL
-        #    ⚠️ hand_trap_sides 返回 (None, None) = 判不出、( [], [] ) = 没用过。
-        ht_mine, ht_opp = duel_record.hand_trap_sides(
-            duel['summary'].get('hand_traps'), seat)
-        item['hand_traps'] = {
-            'my': len(ht_mine) if ht_mine is not None else None,
-            'opp': len(ht_opp) if ht_opp is not None else None}
-
-        # meta_updates 同步回内存 dict（write_duel_json 落盘 / to_row 出行都要用）
-        for k, v in meta_updates.items():
-            if v is not None:
-                duel['meta'][k] = v
-
-        item['meta_updates'] = {k: v for k, v in meta_updates.items()
-                                if k != 'sources'}
-        if not apply:
-            item['action'] = 'planned'
-            report['duels'].append(item)
-            continue
-
-        status = duel_record.write_duel_json(main['dir'], duel,
-                                             meta_updates=meta_updates)
-        item['json'] = status
-        item['action'] = 'applied'
-        if status != 'skipped':
-            report['written_json'] += 1
-
-        if pair:
-            actions = storage.apply_record_meta(
-                pair['match_id'],
-                record_dir=rid,
-                winbits=meta_updates.get('winbits'),
-                result=meta_updates.get('result'),
-                result_src=meta_updates.get('result_src'),
-                result_note=meta_updates.get('result_note'),
-                my_traps=ht_mine, opp_traps=ht_opp)
-            item['db'] = {'merged_into': pair['match_id'], 'actions': actions}
-            report['merged'] += 1
-        else:
-            row = duel_record.to_row(duel)
-            if not row.get('started_at'):
-                item['db'] = {'upsert': 'skipped-no-time'}
+            # -- 与既有 log/api 行并档（防战绩翻倍）
+            # ⚠️ 该局已有自己的 record 行（match_id='rec:'+rid）时**绝不并档**：
+            # 这是重跑 import 的幂等前提。实机教训（09-14）：重跑回填时宽窗把
+            # 重打局拽进了 30 分钟内另一局（第一次尝试）的 log 行，旧 Win 被
+            # 新 Lose 覆盖。
+            own = storage.get_match('rec:' + rid)
+            sibling = None
+            if own is None:
+                # ★ BUG-B8-08：**同局第二个目录晚出现**（第一次 import 时另一个
+                #   目录还没被扫到）→ 库里已有 `rec:<兄弟目录>` 一行。晚到的
+                #   这次会再建一行（战绩翻倍），而且全量重跑也修不掉（分组只看
+                #   单次扫描）。这里按 `record_dir` 把兄弟行认回来：
+                #   老行删掉、新主目录那条吸收它的身份（行数不翻倍）。
+                for sib in sorted(s['name'] for s in g if s['name'] != rid):
+                    got = storage.get_match('rec:' + sib)
+                    if got is not None:
+                        sibling = got
+                        break
+            if own is not None:
+                pair, stage = None, 'own-record-row'
+                # 沿用自己行里已入库的时间锚——否则 to_row 出行 started_at=None，
+                # upsert 会走 skipped-no-time，幂等更新（如回填 opp_player_name）
+                # 根本不会发生。
+                duel['meta']['started_at'] = own['started_at']
+                duel['meta']['started_at_src'] = own.get('started_at_src') or 'own-row'
             else:
-                existed = storage.get_match(row['match_id']) is not None
-                res = storage.upsert_match(row, judge_lack_end=False)
-                item['db'] = {'upsert': 'updated' if existed else res,
-                              'match_id': row['match_id']}
-                if res == 'written' and not existed:
-                    report['new_rows'] += 1
-        report['duels'].append(item)
+                pair, stage = storage.find_record_pair(
+                    duel_record.fmt_dt(main['first_seen']))
+            if pair:
+                item['pair'] = {'match_id': pair['match_id'], 'stage': stage}
+                meta_updates['started_at'] = pair['started_at']
+                meta_updates['started_at_src'] = 'log'
+                meta_updates['ended_at'] = pair.get('ended_at')
+                meta_updates['duration_sec'] = pair.get('duration_sec')
+                sources['log'] = pair['match_id']
+            else:
+                item['pair'] = {'stage': stage}
+                if own is None and duel['meta'].get('started_at') is None:
+                    # 采集侧近似（first_seen ≈ 开局，watcher 口径）
+                    meta_updates['started_at'] = duel_record.fmt_dt(main['first_seen'])
+                    meta_updates['started_at_src'] = 'first_seen_approx'
+
+            # -- 结束时刻（★ 2026-09-17：record 行也补上）
+            # 为什么必需：切轮判据比的是「上一局**结束** → 本局**开局**」——
+            # 只比两个开局会被**超长对局**骗（上一局打了 110 分钟，下一局开局
+            # 看上去就"隔了 115 分钟"，其实只歇了 5 分钟）。
+            # record 来源（内存采集）没有日志的 ``Game ended`` 行，所以拿
+            # **记录目录自己的采集区间**当锚：`capture.last_saved_at` = 最后一次
+            # 落盘时刻 ≈ 对局结束（实测 16:16:02 开局 / 16:17:16 落盘）。
+            # ⚠️ 只补**空**的（有日志 ended_at 时上面已填、更准）；
+            # ⚠️ 不会撞「掉线判据」：那条要 `game_mode IS NULL`，而 record 行的
+            #    game_mode 必有值（采集时从内存读的）。
+            cap = duel.get('capture') or {}
+            if (meta_updates.get('ended_at') or duel['meta'].get('ended_at')) is None:
+                saved = cap.get('last_saved_at')
+                if saved and not cap.get('approx'):
+                    meta_updates['ended_at'] = saved
+                    #: ★ BUG-B8-17（2026-10-20）：原来这里 `setdefault(..., None)`
+                    #: —— record 行的「时长」列**恒为 None**（数据其实都在：
+                    #: 开始时刻 + 上面这个结束时刻）。用户报「时长列总是空」。
+                    #: 现在真算：结束 - 开始，负数/解析失败就不写（别编）。
+                    dur = _duration_sec(
+                        meta_updates.get('started_at')
+                        or duel['meta'].get('started_at'),
+                        saved)
+                    if dur is not None:
+                        meta_updates['duration_sec'] = dur
+                    sources['capture'] = saved
+
+            # -- end_messages 认领 → winbits / result / 文案备注
+            em = claims.get(rid)
+            if em is not None:
+                sources['end_messages'] = em.get('captured_at')
+                item['end_message'] = em.get('captured_at')
+                if em.get('winbits'):
+                    meta_updates['winbits'] = em['winbits']     # 证据照记
+                text = (em.get('texts') or {}).get('messageText')
+                #: 🔴 2026-10-03：**三判据投票仲裁**（投降局 winbit 可能是上一局
+                #: 残留——记录 20261003_193726 自己投降却被记胜）。文案+结算码
+                #: 两票一致时压过陈旧的 winbit；平票维持 winbit > duel_code。
+                r, src_, note = arbitrate_result(em.get('winbits'),
+                                                 em.get('duel_code'), text)
+                if r:
+                    meta_updates['result'] = r.capitalize()
+                    meta_updates['result_src'] = src_
+                if note:
+                    meta_updates['result_note'] = note
+                if text:
+                    meta_updates['result_note'] = (
+                        '%s%s' % (text, '；' + note if note else ''))
+
+            # -- 我方卡组兜底（2026-09-16 用户口径）：编辑界面读过一次的「当前卡组」，
+            #    该局自己没读到牌时沿用。**活动局同样要填** —— 用户澄清「天梯已经能自动拿，
+            #    这套就是给活动对局用的」，且实机核实过：骰子拉力的活动卡组位 `DRDeck`
+            #    里就是他自组的那套（41 主 + 15 额外，与编辑界面读到的卡一致）。
+            #    ⚠️ 只在该局**没读到自己的牌**、且**本局不早于记录时刻**时才补（别改写历史局）。
+            if not (meta_updates.get('my_deck_name') or duel['meta'].get('my_deck_name')):
+                cur = _current_my_deck()
+                # ★ 09-28：`current-deck` 兜底只对**天梯（mode=3）**生效 ——
+                #   天梯/巅峰是两个独立的卡组槽位（现场枚举 ClientWork 实锤），
+                #   巅峰局的「当前卡组」（=天梯那份）不是当局实际用的牌，兜了必错标。
+                gm = (duel['meta'].get('game_mode')
+                      or meta_updates.get('game_mode'))
+                if cur and gm == 19:      # 只禁巅峰（09-28 双槽位实锤）；
+                    cur = None            # 活动局(21/DRDeck)维持 09-16 口径照兜
+                started = meta_updates.get('started_at') or duel['meta'].get('started_at')
+                fresh = (not cur) or not cur.get('at') or not started \
+                    or str(started) >= str(cur['at'])
+                # ★ 2026-09-22 实测事故：`my_deck.json` 残留上一场的卡组名（用户换了
+                #   卡组但没进编辑界面 / 大厅识别还没纠正），这场局就被 `current-deck`
+                #   兜底**错标**。兜底只对「识别时刻之后不久」的局可信 ——
+                #   状态文件太旧就不许再兜（宁可留空，别标错）。
+                stale = False
+                if cur and cur.get('at') and started:
+                    try:
+                        import datetime as _dt
+                        at = _dt.datetime.strptime(str(cur['at'])[:19],
+                                                   '%Y-%m-%d %H:%M:%S')
+                        st = _dt.datetime.strptime(str(started)[:19],
+                                                   '%Y-%m-%d %H:%M:%S')
+                        stale = abs((st - at).total_seconds()) > MY_DECK_MAX_AGE_SEC
+                    except (TypeError, ValueError):
+                        stale = False
+                if cur and fresh and not stale:
+                    meta_updates['my_deck_name'] = (_meta_display(storage, cur['name'])
+                                                    or cur['name'])
+                    meta_updates['my_deck_name_src'] = 'current-deck'
+
+            # -- went_first：seat 判出后才能映射（不猜）
+            seat = duel['meta'].get('seat')
+            if seat is not None and duel['summary'].get('first_player') is not None:
+                duel['summary']['went_first'] = bool(
+                    int(seat) == int(duel['summary']['first_player']))
+
+            # -- 手坑两列（2026-10-16）：seat 判出后映射（我/敌）；判不出两列 NULL
+            #    ⚠️ hand_trap_sides 返回 (None, None) = 判不出、( [], [] ) = 没用过。
+            ht_mine, ht_opp = duel_record.hand_trap_sides(
+                duel['summary'].get('hand_traps'), seat)
+            item['hand_traps'] = {
+                'my': len(ht_mine) if ht_mine is not None else None,
+                'opp': len(ht_opp) if ht_opp is not None else None}
+
+            # meta_updates 同步回内存 dict（write_duel_json 落盘 / to_row 出行都要用）
+            for k, v in meta_updates.items():
+                if v is not None:
+                    duel['meta'][k] = v
+
+            item['meta_updates'] = {k: v for k, v in meta_updates.items()
+                                    if k != 'sources'}
+            if not apply:
+                item['action'] = 'planned'
+                report['duels'].append(item)
+                continue
+
+            status = duel_record.write_duel_json(main['dir'], duel,
+                                                 meta_updates=meta_updates)
+            item['json'] = status
+            item['action'] = 'applied'
+            if status != 'skipped':
+                report['written_json'] += 1
+
+            if pair:
+                actions = storage.apply_record_meta(
+                    pair['match_id'],
+                    record_dir=rid,
+                    winbits=meta_updates.get('winbits'),
+                    result=meta_updates.get('result'),
+                    result_src=meta_updates.get('result_src'),
+                    result_note=meta_updates.get('result_note'),
+                    my_traps=ht_mine, opp_traps=ht_opp)
+                item['db'] = {'merged_into': pair['match_id'], 'actions': actions}
+                report['merged'] += 1
+            else:
+                row = duel_record.to_row(duel)
+                if not row.get('started_at'):
+                    item['db'] = {'upsert': 'skipped-no-time'}
+                else:
+                    if sibling is not None:
+                        # 兄弟行 → 本行：**先把人工标注搬过来**（只补空 ——
+                        # `opp_deck_id/name/note` 是 upsert 也不覆盖的列，
+                        # 直接删老行就把用户标过的对手卡组丢了），再删老行
+                        # （matches 无外键引用），否则两行同局共存（BUG-B8-08）。
+                        for k in ('opp_deck_id', 'opp_deck_name',
+                                  'opp_deck_note', 'account_name',
+                                  'account_pcode', 'game_mode', 'finish_type'):
+                            if row.get(k) is None and sibling.get(k) is not None:
+                                row[k] = sibling[k]
+                        storage.delete_match(match_id=sibling['match_id'])
+                        item['db'] = {'absorbed': sibling['match_id']}
+                        report['absorbed'] = report.get('absorbed', 0) + 1
+                    existed = storage.get_match(row['match_id']) is not None
+                    res = storage.upsert_match(row, judge_lack_end=False)
+                    item['db'] = dict(item.get('db') or {},
+                                      upsert='updated' if existed else res,
+                                      match_id=row['match_id'])
+                    if res == 'written' and not existed:
+                        report['new_rows'] += 1
+            report['duels'].append(item)
+        except Exception as e:                            # noqa: BLE001
+            # ★ BUG-B8-11：**逐局隔离** —— 一个坏目录（半写 manifest /
+            #   坏 bin / 意外形状）原来会让整批中断，后面所有局都不入库。
+            #   采集器增量 import 尤其致命（每局一条独立路径）。
+            item['action'] = 'failed'
+            item['error'] = '%s: %s' % (type(e).__name__, e)
+            report.setdefault('failed', []).append(
+                {'record_id': rid, 'error': item['error']})
+            report['duels'].append(item)
     report['unknown_card_ids'] = sorted(unknown_all)   # 跨局合并去重
     return report
 
@@ -507,8 +582,13 @@ def _print_report(report):
         print('   卡表可能过期 —— 跑 `python tools/build_card_names.py --check-update`：'
               '它会分类告诉你是「上游已收录（跑 --update 可解）」'
               '还是「上游也没有，需重出游戏卡表 card_data.json」')
-    print('小结：新建 %d 行 / 并档 %d 局 / duel.json 写 %d 份'
-          % (report['new_rows'], report['merged'], report['written_json']))
+    if report.get('failed'):
+        print('⚠️ 处理失败的局 %d 个（其余已正常入库）：' % len(report['failed']))
+        for f in report['failed']:
+            print('   %s -> %s' % (f['record_id'], f['error']))
+    print('小结：新建 %d 行 / 并档 %d 局 / 吸收同局重复 %d 行 / duel.json 写 %d 份'
+          % (report['new_rows'], report['merged'], report.get('absorbed', 0),
+             report['written_json']))
 
 
 # ------------------------------------------------- open 目录终局化（M6 P1-1）

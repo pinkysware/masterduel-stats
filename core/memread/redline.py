@@ -39,6 +39,13 @@ FORBIDDEN_APIS: Tuple[str, ...] = (
     'NtCreateThreadEx',
     'RtlCreateUserThread',
     'QueueUserAPC',
+    # ★ BUG-B3-12：能**改目标进程执行流**的另外几个入口 —— 它们和
+    #   CreateRemoteThread 是同一类风险（劫持一条已有线程去跑我们的代码），
+    #   只是不需要新起线程。SetThreadContext 尤其直接（改 RIP 就跳过去了）。
+    'SetThreadContext',
+    'NtQueueApcThread',
+    'SuspendThread',
+    'DebugActiveProcess',
     # 全局钩子（等价于把 DLL 塞进别的进程）
     'SetWindowsHookEx',
     'SetWinEventHook',
@@ -119,7 +126,14 @@ EXEMPT_FILES = frozenset({'redline.py', 'test_memread_guard.py'})
 #: 默认扫描的目录
 #: ⚠️ M7 起多了 `ui/` —— 界面层**本来不碰内存**，但扫描面收紧是零成本防御：
 #: 它和 core/ 在同一个进程里跑，谁也不能保证以后不被塞进不该有的东西。
-SCAN_DIRS: Tuple[str, ...] = ('core', 'tools', 'ui')
+#: ★ BUG-B3-12：再加 `build/` —— 打包/安装脚本也在这个仓库里、也参与发布产物，
+#: 而且它们是「以后可能顺手加一句诊断」的地方（仓库里没有 `packaging/`，
+#: 那个名字是审查报告里的旧称）。
+#: ⚠️ **`tmp/` 有意不扫**：它是 gitignore 的临时目录（588 个文件、扫描 0.6s），
+#: 里面是随手写的探针脚本、不进发布产物；把它纳入会让 guard 单测每次多跑
+#: 一个数量级，且探针里出现禁区字段名反而是**研究过程**而非产品违规。
+#: 真要查探针，手动跑 `scan_violations(PROJECT_ROOT, dirs=('tmp',))`。
+SCAN_DIRS: Tuple[str, ...] = ('core', 'tools', 'ui', 'build')
 
 
 def _iter_py_files(root: str, dirs=SCAN_DIRS):
@@ -161,12 +175,14 @@ def check_game_file_mode(path: str, mode: str) -> None:
     :raises ValueError: 模式不是 'rb'，或目标是受保护文件却用了别的模式
     """
     if mode not in ALLOWED_GAME_FILE_MODES:
+        #: ★ BUG-B3-12：原来这里后面还有一段
+        #: ``if '+' in mode or any(c in mode for c in 'wxa')`` —— 恒不可达
+        #: （白名单只剩 'rb'，走到这说明 mode 已经不在白名单里、上面就抛了）。
+        #: 已删除；保留这条注释是为了说明「为什么只有一个判断」。
         raise ValueError(
             '游戏文件只允许以 %s 打开，收到 mode=%r：%s'
             % (' / '.join(ALLOWED_GAME_FILE_MODES), mode, path)
         )
-    if '+' in mode or any(c in mode for c in 'wxa'):
-        raise ValueError('游戏文件禁止任何写入模式：%r' % mode)
 
 
 def is_protected_game_file(path: str) -> bool:

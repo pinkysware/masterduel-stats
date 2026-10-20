@@ -39,6 +39,8 @@ URL = 'https://www.masterduelmeta.com/api/v1/banlist-changes'
 #:    老禁卡在变更史里从未出现过）。
 CARDS_URL = 'https://www.masterduelmeta.com/api/v1/cards'
 CARDS_PAGE = 3000
+#: ★ BUG-B9A-02：连续多少页为空才认定翻到底（1 = 老行为，太脆）
+EMPTY_PAGES_STOP = 2
 UA = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
 #: 站内状态 -> 中文说法。**中文就这三个词，不带数字**（用户 2026-09-12 定）：
@@ -71,24 +73,48 @@ def fetch(retries=3, timeout=45):
     raise RuntimeError('抓取失败 %s：%s' % (URL, last))
 
 
-def fetch_current(retries=3, timeout=45):
+def fetch_current(retries=3, timeout=45, warn=None):
     """抓**当前禁限状态**（翻页拉 cards，只留 `banStatus` 非空的）。
 
     返回 ``[(英文卡名, 站内状态)]``。翻页只能用 `skip`（`start=` 坏）；
     偶发 SSL EOF 交给 `_get_json` 重试。
+
+    ★ BUG-B9A-02：**空页不再直接当结束**。这个 API 没有总数，站内数据更新中
+    也可能返回一个合法空数组 —— 旧写法 `if not rows: break` 会把后面的页
+    整段丢干净且**不响**（当前禁限表缺卡，界面照常显示一个更小的数字）。
+    现在：空页先**原地重试一次**，仍空则**跳过这一页继续往后**；
+    连续 :data:`EMPTY_PAGES_STOP` 页都空才认为到底，并告警。
     """
     out, skip = [], 0
+    empty_streak = 0
+    warned = []
     while skip < 30000:                    # 站内 1.4 万张，留足余量
         url = ('%s?fields=name,banStatus&limit=%d&skip=%d'
                % (CARDS_URL, CARDS_PAGE, skip))
         rows = _get_json(url, retries=retries, timeout=timeout)
         if not rows:
-            break
+            empty_streak += 1
+            if empty_streak < EMPTY_PAGES_STOP and skip:
+                #: 还有余量：有可能是瞬时空窗 —— 记一笔、跳一页继续试
+                msg = ('第 skip=%d 页为空（可能是瞬时空窗），继续往后翻' % skip)
+                warned.append(msg)
+                if warn:
+                    warn(msg)
+                skip += CARDS_PAGE
+                continue
+            break                          # 连续空页 = 真到底（首屏就空也算）
+        empty_streak = 0
         for c in rows:
             name, status = (c.get('name') or '').strip(), c.get('banStatus')
             if name and status:
                 out.append((name, status))
+        if len(rows) < CARDS_PAGE:
+            break                          # 页不满 = 最后一页（比「空页」可靠的判据）
         skip += len(rows)
+    if warned and warn is None:
+        #: 没有注入告警回调时，直接打一行到 stdout —— **不能静默**
+        for msg in warned:
+            print('  ⚠ %s' % msg)
     return out
 
 

@@ -903,12 +903,17 @@ class StatsScopeTest(unittest.TestCase):
     ]
 
     def test_month_window(self):
+        #: ★ BUG-B1-07：上界带毫秒 `.999`（与 `storage.day_range` 同口径）——
+        #: 定宽字符串比较下 `23:59:59.800` > `23:59:59`，原来月末最后一局会漏算
         self.assertEqual(ui_state.month_window('2026-09-18'),
-                         ('2026-09', '2026-09-01 00:00:00', '2026-09-30 23:59:59'))
+                         ('2026-09', '2026-09-01 00:00:00',
+                          '2026-09-30 23:59:59.999'))
         self.assertEqual(ui_state.month_window('2026-12-31')[2],
-                         '2026-12-31 23:59:59')
+                         '2026-12-31 23:59:59.999')
         self.assertEqual(ui_state.month_window('2024-02-10')[2],
-                         '2024-02-29 23:59:59')          # 闰年 2 月
+                         '2024-02-29 23:59:59.999')      # 闰年 2 月
+        self.assertEqual(ui_state.month_bounds('2026-09'),
+                         ('2026-09-01 00:00:00', '2026-09-30 23:59:59.999'))
 
     def test_overview_asks_for_the_month_window(self):
         st = FakeStorage(recent=self.ROWS)
@@ -1305,7 +1310,7 @@ class CrossMatrixTest(unittest.TestCase):
         self.assertEqual(d['month'], '2026-09')
         self.assertEqual(d['mode_group'], 'ranked')
         self.assertEqual(st.last_cross_since, '2026-09-01 00:00:00')
-        self.assertEqual(st.last_cross_until, '2026-09-30 23:59:59')
+        self.assertEqual(st.last_cross_until, '2026-09-30 23:59:59.999')
         self.assertEqual(st.last_mode_group, 'ranked')
 
     def test_rows_sorted_desc_and_same_display_name_merged(self):
@@ -1387,6 +1392,28 @@ class TierPageDataTest(_LangCnMixin, unittest.TestCase):
         self.assertIn('Maliss', [x['display']
                                   for x in d['sections'][3]['decks']])
         self.assertEqual(d['deck_total'], 5)       # 脏 tier / hidden deck_type 不计
+
+    def test_custom_entry_keeps_its_own_tier(self):
+        """★ BUG-B1-12：**自定义条目**（`source='custom'`）的分组以覆盖表为准。
+
+        站内条目没 power 就落 TRENDING（用户 2026-09-20 拍板）；
+        但自定义条目本来就没有站内 power，再按那条走就等于把手填的
+        `Tier2` / `Tier3` 全压成 Trending。
+        """
+        meta = [
+            {'name': 'MyCustomT2', 'name_cn': '自组T2', 'tier': 'Tier2',
+             'power': None, 'kind': 'deck_type', 'hidden': 0,
+             'source': 'custom'},
+            {'name': 'SiteNoPower', 'name_cn': '站内无power',
+             'tier': 'Tier2', 'power': None, 'kind': 'deck_type',
+             'hidden': 0, 'source': 'masterduelmeta'},
+        ]
+        d = ui_state.tier_page_data(FakeStorage(meta_decks=meta))
+        t2 = [x['display'] for x in d['sections'][1]['decks']]
+        trend = [x['display'] for x in d['sections'][3]['decks']]
+        self.assertIn('自组T2', t2)
+        self.assertNotIn('自组T2', trend)
+        self.assertIn('站内无power', trend)   # 站内条目口径不变
 
     def test_fail_returns_zero_shape(self):
         """库炸了不抛：四节照在、decks 全空。"""
@@ -1788,15 +1815,18 @@ class CollectorStatusTest(_LangCnMixin, unittest.TestCase):
     def setUp(self):
         super().setUp()
         self.d = tempfile.mkdtemp(prefix='hb-')
-        self.path = os.path.join(self.d, 'collector_heartbeat.json')
-        self._patch = mock.patch.object(ui_state, '_PROJ_ROOT', self.d)
+        # ★ BUG-B1-03：心跳改走 `paths.data_path('archive', ...)`，
+        #   所以这里 patch `paths.DATA_DIR`（原来 patch `ui_state._PROJ_ROOT`
+        #   对 `paths.data_path` 无效，会读到真库的心跳文件）。
+        from core import paths as _paths
+        self._patch = mock.patch.object(_paths, 'DATA_DIR', self.d)
         self._patch.start()
         self.addCleanup(self._patch.stop)
         import shutil
         self.addCleanup(shutil.rmtree, self.d, True)
-        os.makedirs(os.path.join(self.d, 'data', 'archive'), exist_ok=True)
-        self.real = os.path.join(self.d, 'data', 'archive',
+        self.real = os.path.join(self.d, 'archive',
                                  'collector_heartbeat.json')
+        os.makedirs(os.path.dirname(self.real), exist_ok=True)
 
     def _write(self, **kw):
         import json
@@ -2014,6 +2044,33 @@ class ExportTest(unittest.TestCase):
     def test_export_months_lists_all_then_real_months(self):
         ms = ui_state.export_months(self._St([]))
         self.assertEqual(ms[0], ('', '全部月份'))
+
+    def test_export_months_are_newest_first(self):
+        """\u2605 BUG-B6-12 / B1-12\uff1a\u6708\u4efd\u6e05\u5355\u8981**\u6700\u8fd1\u7684\u5728\u524d**\uff08\u4e0e docstring \u4e00\u81f4\uff09\u3002
+
+        \u6570\u636e\u5c42 `stats_page_data()['months']` \u662f**\u5347\u5e8f**\uff0c\u76f4\u63a5\u8f6c\u53d1\u5c31\u4e0e\u5951\u7ea6\u76f8\u53cd\u3002
+        """
+        st = self._St([self._row(started_at='2026-08-16 10:00:00'),
+                       self._row(match_id='m2',
+                                 started_at='2026-09-16 10:00:00')])
+        # `export_months` 取月份走 `stats_page_data`（桩里没有那些查询），
+        # 所以直接打桩那一层 —— 锁的是**排序**，不是取数。
+        real = ui_state.stats_page_data
+        ui_state.stats_page_data = lambda *a, **kw: {
+            'months': ['2026-08', '2026-09']}
+        self.addCleanup(setattr, ui_state, 'stats_page_data', real)
+        months = [m for m, _n in ui_state.export_months(st)]
+        self.assertEqual(months[0], '')
+        self.assertEqual(months[1:], ['2026-09', '2026-08'])
+
+    def test_export_rows_sort_across_years(self):
+        """\u2605 BUG-B1-12\uff1a\u8de8\u5e74\u65f6 `date` \u53ea\u6709 `MM-DD`\uff0c\u5b57\u7b26\u4e32\u6bd4\u8f83\u4f1a\u628a 12 \u6708\u6392\u5230\u6b21\u5e74 1 \u6708\u4e4b\u540e\u3002
+        """
+        rows = ui_state.export_rows(self._St([
+            self._row(match_id='dec', started_at='2026-12-30 10:00:00'),
+            self._row(match_id='jan', started_at='2027-01-02 10:00:00'),
+        ]))
+        self.assertEqual([r['match_id'] for r in rows], ['jan', 'dec'])
 
     def test_csv_row_count_matches(self):
         import csv as _csv

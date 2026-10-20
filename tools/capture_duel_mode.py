@@ -51,21 +51,24 @@ import sys
 import time
 from typing import NamedTuple, Optional
 
-from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
 
+from core import paths
+
 from core.storage import (GAME_MODE_NAMES, MODE_GROUP_NAMES, Storage,
                           mode_group)                      # noqa: E402
+from core.memread.end_message import default_game_dir            # noqa: E402
 from core.memread.il2cpp import (                          # noqa: E402
     MetadataHeader, default_metadata_path, find_all_metadata_mirrors,
-    find_singleton, find_typeinfo, list_fields, read_string_table)
+    find_typeinfo, list_fields, read_singleton_slot, read_string_table)
 from core.memread.process import SafeProcess, find_pids_by_name  # noqa: E402
 
 
-#: 游戏安装目录（要改就改这里）
-GAME_DIR = r'D:\steam\steamapps\common\Yu-Gi-Oh!  Master Duel'
+#: 游戏安装目录（`MD_GAME_DIR` 环境变量可覆盖 —— 与 `end_message.default_game_dir()`
+#: 同一口径。★ BUG-B8-15：原先写死本机 `D:/steam/...`）
+GAME_DIR = default_game_dir()
 
 #: 采样记录落盘位置（append-only）
 OUT_PATH = paths.data_path('archive', 'duel_modes.jsonl')
@@ -219,8 +222,10 @@ class DuelModeReader(object):
     按偏移读 int32/byte。**不碰禁区字段。**
     """
 
-    def __init__(self, game_dir=GAME_DIR):
-        self.game_dir = game_dir
+    def __init__(self, game_dir=None):
+        #: ⚠️ 默认值在**调用时**解析（不是 import 时）——否则进程起来后再设
+        #: `MD_GAME_DIR` 就不生效了。
+        self.game_dir = game_dir or default_game_dir()
         self._proc = None
         self._pid = None
         self._fields = None
@@ -288,7 +293,11 @@ class DuelModeReader(object):
         if self._proc is None:
             return Sample(None, None, None, None)
         try:
-            obj = find_singleton(self._proc, self._ti, slot=0x08)
+            obj, ok = read_singleton_slot(self._proc, self._ti, slot=0x08)
+            if not ok:
+                #: ★ BUG-B8-15b：「读失败」不能当成「实例消失」 —— 读失败 = 这一拍
+                #: 没读成（调用方应忽略），实例消失 = 真的不在对局。
+                return Sample(None, None, None, None)
             if not obj:
                 return Sample(False, None, None, None)
             blob = self._proc.read(obj, 0x140)
@@ -418,6 +427,9 @@ def cmd_apply(args):
         print('没有可写库的记录')
         return 0
     storage = Storage(args.db)
+    # ★ BUG-B8-18：`--apply` 没跑 `init_schema()` —— 新库上直接
+    #   `no such table: matches`。这里补上（幂等，老库只会 ALTER 补列）。
+    storage.init_schema()
     stat = merge_records(records, storage, dry_run=args.dry_run)
     for started, mode, note in stat['detail']:
         print('  %s  mode=%s(%s)  %s'
@@ -448,7 +460,15 @@ def main(argv=None):
     if args.apply:
         return cmd_apply(args)
     if args.samples <= 0:
-        args.samples = (int(args.minutes * 60 / args.interval)
+        # ★ BUG-B8-18：`--interval 0` 会 ZeroDivisionError。间隔必须为正；
+        #   给了 0/负数就走一个安全默认（5s，与 --interval 的默认值一致），
+        #   并在 stderr 说明，而不是抛栈。
+        interval = float(args.interval or 0)
+        if interval <= 0:
+            print('⚠️ --interval 必须 > 0，已按默认 5s 处理', file=sys.stderr)
+            interval = 5.0
+            args.interval = interval
+        args.samples = (int(args.minutes * 60 / interval)
                         if args.minutes > 0 else 1)
     return cmd_watch(args)
 

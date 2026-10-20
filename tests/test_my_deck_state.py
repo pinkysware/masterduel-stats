@@ -59,16 +59,32 @@ class TestStateFile(unittest.TestCase):
 
 
 class _StubReader(object):
-    """假 reader：`scan()` 全扫、`read_at()` 便宜读（可分别设返回值）。"""
+    """假 reader：`scan()` 全扫、`read_at()` 便宜读（可分别设返回值）。
 
-    def __init__(self, deck=None, addr=0x200000):
+    ``state`` 模拟三态口（``'ok' / 'error' / 'gone'``，见 BUG-B3-14）；
+    设成 None 时走**旧式单值口**（只实现 ``read_at`` 的 reader）。
+    """
+
+    def __init__(self, deck=None, addr=0x200000, state=None):
         self.deck, self.addr = deck, addr
+        self.state = state
         self.scans = 0
         self.reads = 0
 
     def scan(self):
         self.scans += 1
         return (self.deck, self.addr) if self.deck else (None, None)
+
+    def _resolved_state(self):
+        if self.state is not None:
+            return self.state
+        return 'ok' if self.deck is not None else 'gone'
+
+    def read_at_state(self, addr):
+        self.reads += 1
+        if self._resolved_state() == 'ok' and self.deck is None:
+            return None, 'error'
+        return self.deck, self._resolved_state()
 
     def read_at(self, addr):
         self.reads += 1
@@ -137,13 +153,44 @@ class TestWatcher(unittest.TestCase):
         reader = _StubReader(_deck([4007] * 41))
         w = self._watch(reader, rescan=120.0)
         w.poll(now=1000.0)
-        reader.deck = None                              # 实例没了
+        reader.state = 'gone'                           # 实例真的没了
+        reader.deck = None
         self.assertIsNone(w.poll(now=1002.0))
         self.assertIsNone(w.poll(now=1100.0))           # 还没到 120s
         self.assertEqual(reader.scans, 1)               # 只扫过最初那一次
+        reader.state = None
         reader.deck = _deck([4007] * 41)
         w.poll(now=1200.0)                              # 到点了 -> 再扫
         self.assertEqual(reader.scans, 2)
+
+    def test_transient_read_failure_keeps_instance(self):
+        """★ BUG-B3-14：一次瞬时读失败**不许**让实例地址作废（120s 盲区）。"""
+        reader = _StubReader(_deck([4007] * 41))
+        w = self._watch(reader, rescan=120.0)
+        self.assertEqual(w.poll(now=1000.0)['name'], 'Blue-Eyes')
+        inst = w._inst
+        reader.state = 'error'                          # 这一拍读失败
+        self.assertIsNone(w.poll(now=1002.0))
+        self.assertEqual(w._inst, inst, '读失败不该作废实例地址')
+        # 下一拍照旧走便宜路径，**不扫**；读好了就接着用
+        reader.state = None
+        self.assertIsNone(w.poll(now=1004.0))           # 同一套牌 -> 不重复识别
+        self.assertEqual(reader.scans, 1)
+        self.assertEqual(w._inst, inst)
+
+    def test_changed_cards_after_transient_failure_still_detected(self):
+        """瞬时失败后用户真换了牌 -> 下一拍必须能识别到（不是等 120s）。"""
+        reader = _StubReader(_deck([4007] * 41))
+        names = iter(['Blue-Eyes', 'Sky Striker'])
+        w = self._watch(reader, identify=lambda ids: next(names))
+        w.poll(now=1000.0)
+        reader.state = 'error'
+        self.assertIsNone(w.poll(now=1002.0))
+        reader.deck = _deck([4007] * 40 + [9999])
+        reader.state = None
+        got = w.poll(now=1004.0)
+        self.assertEqual(got['name'], 'Sky Striker')
+        self.assertEqual(reader.scans, 1)               # 一次全扫都没多花
 
 
 if __name__ == '__main__':

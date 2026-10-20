@@ -162,6 +162,54 @@ class TestNameLookup(unittest.TestCase):
                          'Some New Card', '查不到就显示英文，别显示空')
         self.assertEqual(fb.show_name(None, 'cn', self.rev), '?')
 
+class TestPagination(unittest.TestCase):
+    """★ BUG-B9A-02：空页不能当「已经到底」—— 偶发空页会静默少抓。"""
+
+    def setUp(self):
+        self._get = fb._get_json
+        self.calls = []
+
+    def tearDown(self):
+        fb._get_json = self._get
+
+    def _stub(self, pages):
+        def fake(url, retries=3, timeout=45):
+            skip = int(url.rsplit('skip=', 1)[1].split('&')[0])
+            self.calls.append(skip)
+            return pages.get(skip, [])
+        fb._get_json = fake
+
+    def test_empty_page_is_skipped_not_treated_as_end(self):
+        """第 2 页空、第 3 页有数据 → 第 3 页的卡也要拿到。"""
+        full = [{'name': 'A', 'banStatus': 'Forbidden'}] * fb.CARDS_PAGE
+        self._stub({0: full, fb.CARDS_PAGE: [],
+                    fb.CARDS_PAGE * 2: [{'name': 'B', 'banStatus': 'Limited 1'}]})
+        warns = []
+        out = fb.fetch_current(warn=warns.append)
+        self.assertIn(('B', 'Limited 1'), out, '空页后的页被整段丢了')
+        self.assertTrue(warns, '空页必须告警（不能静默）')
+
+    def test_two_consecutive_empty_pages_stop(self):
+        """连续两页空 = 真到底（不能无限往后跳）。"""
+        full = [{'name': 'A', 'banStatus': 'Forbidden'}] * fb.CARDS_PAGE
+        self._stub({0: full})
+        out = fb.fetch_current(warn=lambda m: None)
+        self.assertEqual(len(out), fb.CARDS_PAGE)
+        self.assertEqual(self.calls, [0, fb.CARDS_PAGE, fb.CARDS_PAGE * 2])
+
+    def test_short_last_page_stops(self):
+        """页不满 = 最后一页（比「空页」可靠的判据）。"""
+        self._stub({0: [{'name': 'A', 'banStatus': 'Forbidden'}]})
+        out = fb.fetch_current(warn=lambda m: None)
+        self.assertEqual(self.calls, [0])
+        self.assertEqual(out, [('A', 'Forbidden')])
+
+    def test_empty_first_page_returns_empty(self):
+        self._stub({})
+        self.assertEqual(fb.fetch_current(warn=lambda m: None), [])
+
+
+
 
 if __name__ == '__main__':
     unittest.main()

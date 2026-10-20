@@ -23,6 +23,7 @@ import struct
 import time
 from datetime import datetime
 
+from core import atomic
 from core.duel_record import MERGE_GAP_SEC, load_manifest, state_of
 from core.memread.duel_log import (CARD_NAME_SIZE, CHAIN_SIZE, ENTRY_SIZE,
                                    MULTI_HEADER_SIZE, PHASE_SIZE, TURN_SIZE)
@@ -39,6 +40,10 @@ UNKNOWN_STRIDE_MAX = 32
 MAX_ARRAY_BYTES = 8 << 20
 #: 未知 stride 数组的容量读取上限
 CAP_READ_LIMIT = 4096
+#: 找控制器那次全量扫描的墙钟预算（秒）—— 与 `end_message.SCAN_TIME_BUDGET_SEC`
+#: 同口径（09-26 事故：单次全量扫描实测 1-4 分钟）。采集器开局每 1s 会试一次，
+#: 没有这个预算就会把整个主循环卡死（BUG-B3-02）。
+SCAN_TIME_BUDGET_SEC = 10.0
 
 #: 各载荷数组的已知元素尺寸 —— **与 duel_log.py 同源**（数字只在那边钉死）
 KNOWN_SIZES = {
@@ -97,11 +102,42 @@ def array_capacity(proc, items):
         return 0
 
 
-def find_controller(proc, mirror, tbl, ti):
+def scan_regions(proc, last_region=None):
+    """扫描范围：**只扫私有堆**（C# 实例必在 GC 托管堆上）。
+
+    目标进程没实现 ``private_regions`` 时（单测假进程）返回 ``None`` =
+    由 :meth:`SafeProcess.scan` 自己回退全扫。
+
+    ``last_region`` 是上次命中的区域：把它挪到最前 —— 同一块几 MB 毫秒级扫完，
+    预算耗尽前一定能覆盖它（2026-10-01 的刀②，与 `end_message._candidates` 同款）。
+    """
+    private = getattr(proc, 'private_regions', None)
+    if private is None:
+        return None
+    try:
+        regions = private() or None
+    except Exception:                                        # noqa: BLE001
+        return None
+    if regions and last_region is not None:
+        regions = ([last_region]
+                   + [r for r in regions if r.base != last_region.base])
+    return regions
+
+
+def find_controller(proc, mirror, tbl, ti, *, last_region=None,
+                    budget_sec=None):
     """双重过滤找 DuelLogController 实例（自身类名 + m_Host 类名）。
 
     这是唯一需要全内存扫描的地方（控制器无静态单例）；调用方拿到结果后
     缓存进 :class:`ControllerCache`，对局中只做对象头校验 + 顺指针读。
+
+    ★ BUG-B3-02：扫描**必须有界** —— 采集器开局阶段每 1 秒就会试一次，
+    而无上限的全量扫描单次实测 1-4 分钟（09-26 事故）。这里照
+    ``end_message._candidates`` 的三件套：只扫私有堆 + 墙钟预算 + 上次命中的
+    区域前置。预算耗尽就返回 ``(None, None)``，调用方按「没找到」处理、下拍再试。
+
+    :param last_region: 上次命中的 :class:`MemoryRegion`（可 None）
+    :param budget_sec: 覆盖默认预算（秒）；测试可给 0 立即放弃
     """
     try:
         fl = {f.name: f.offset for f in list_fields(proc, ti, mirror=mirror)}
@@ -109,7 +145,11 @@ def find_controller(proc, mirror, tbl, ti):
         return None, None
     if 'm_Host' not in fl:
         return None, None
-    for hit in proc.scan(struct.pack('<Q', ti)):
+    budget = SCAN_TIME_BUDGET_SEC if budget_sec is None else float(budget_sec)
+    regions = scan_regions(proc, last_region)
+    deadline = time.monotonic() + budget
+    for hit in proc.scan(struct.pack('<Q', ti), regions=regions,
+                         deadline=deadline):
         try:
             if proc.read_ptr(hit) != ti:
                 continue
@@ -147,6 +187,8 @@ class ControllerCache(object):
     def __init__(self):
         self.obj = None
         self.fields = None
+        #: 上次命中所在的区域（下次扫描前置，省掉大半地址空间；B3-02 的刀②）
+        self.region = None
 
     def valid(self, proc, ti):
         if not self.obj:
@@ -156,12 +198,15 @@ class ControllerCache(object):
         except Exception:
             return False
 
-    def store(self, obj, fields):
+    def store(self, obj, fields, region=None):
         self.obj, self.fields = obj, fields
+        if region is not None:
+            self.region = region
 
     def invalidate(self):
         self.obj = None
         self.fields = None
+        self.region = None
 
 
 def read_state(proc, mirror, obj, fl=None):
@@ -176,6 +221,10 @@ def read_state(proc, mirror, obj, fl=None):
     size, items = list_meta(proc, mirror,
                             proc.read_ptr(obj + fl['m_LogBaseItemList']))
     if not size or not items:
+        return None
+    # ★ BUG-B3-03：logbase 也要有字节上限 —— 垃圾 _size（例如 2^31-1）会变成
+    #   一次 68 GB 的分配；payload 那边早有 MAX_ARRAY_BYTES，这里漏了。
+    if size * LOGBASE_ELEMENT > MAX_ARRAY_BYTES:
         return None
     raw = proc.read(items + ARRAY_DATA, size * LOGBASE_ELEMENT)
     entries = []
@@ -275,9 +324,16 @@ def write_record(out_dir, state_data, *, instance_hex, state, first_seen_at,
 
 
 def _dump_manifest(out_dir, man):
-    with open(os.path.join(out_dir, 'manifest.json'), 'w',
-              encoding='utf-8', newline='') as f:
-        json.dump(man, f, ensure_ascii=False, indent=1)
+    """写契约 v1 manifest（**原子写** —— ★ BUG-B8-10）。
+
+    `manifest.json` 是记录目录的索引：写坏 = 那局再也认不出来（采集器判
+    `state`、导入器判去重都靠它）。目录由调用方预建（`open()` 同语义）。
+    """
+    text = json.dumps(man, ensure_ascii=False, indent=1)
+    path = os.path.join(out_dir, 'manifest.json')
+    if not atomic.write_text(path, text):
+        #: 原来 `open('w')` 失败会抛 OSError —— 别让原子写把失败吞成静默
+        raise OSError('写 manifest 失败：%s（原文件未改动）' % path)
 
 
 # ------------------------------------------- 一局一目录：复用与终局化（纯函数）

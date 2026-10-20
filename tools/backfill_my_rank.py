@@ -36,10 +36,11 @@ import json
 import os
 import sys
 
-from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
+
+from core import paths
 
 from core.storage import Storage  # noqa: E402
 
@@ -93,6 +94,22 @@ def resolved_before(data):
     return None
 
 
+def needs_update(row, before) -> bool:
+    """这一行的段位列**要不要动**（BUG-B9A-13：两条路共用的唯一判据）。
+
+    原来 `apply_one` 与 `run` 各手抄一份 `if old is not None and
+    (before is None or old_before is not None)`，改一处漏一处。
+    现在抽成这一个纯函数：
+      * `my_rank_after` 已有 且（这局读不到局前 或 局前也已有）→ 不用动；
+      * 其余情况至少有一列可补 → 要动。
+    """
+    old = row.get('my_rank_after')
+    old_before = row.get('my_rank_before')
+    if old is not None and (before is None or old_before is not None):
+        return False
+    return True
+
+
 def apply_one(storage, records_dir, dir_name):
     """把**某个记录目录**的段位探测补进库 -> 说明文字；没得补给 ``None``。
 
@@ -120,9 +137,10 @@ def apply_one(storage, records_dir, dir_name):
     row = storage.find_by_record_dir(dir_name)
     if row is None:
         return None                       # 行还没入库：留给手跑 --apply
-    old, old_before = row.get('my_rank_after'), row.get('my_rank_before')
-    if old is not None and (before is None or old_before is not None):
+    if not needs_update(row, before):
         return None                       # 两边都有值：不用动（也不覆盖）
+    old = row.get('my_rank_after')
+    old_before = row.get('my_rank_before')
     acts = []
     if old is None:
         got_acts = storage.backfill_my_rank_after(row['match_id'], rank, rate)
@@ -159,7 +177,7 @@ def run(records_dir, storage, apply=False, dry_run=False):
             continue
         old = row.get('my_rank_after')
         old_before = row.get('my_rank_before')
-        if old is not None and (before is None or old_before is not None):
+        if not needs_update(row, before):
             stat['skipped_has_value'] += 1
             stat['detail'].append(
                 (name, '%s-%s' % (old, row.get('my_rate_after')), want,

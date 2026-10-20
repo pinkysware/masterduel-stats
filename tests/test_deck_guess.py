@@ -9,6 +9,7 @@
   5. 空参照 / 空卡表 / unknown id 的边界
 """
 
+import json
 import math
 import os
 import sys
@@ -517,6 +518,98 @@ class TestFieldCheck(unittest.TestCase):
         self.assertEqual(dg.FIELD_MISS_CUT, 2,
                          '全量回测实测：砍 2 最优（砍 3/4 不回归、砍 6 开始误伤）')
 
+
+    # ------------------------------------------------ 2026-10-20 天杯龙局
+    def test_full_coverage_dominant_not_cut(self):
+        """★ 天杯龙局（2026-10-20 实机）：全解释 + per 强度压倒 -> 不砍。
+
+        事故：露出 5 张（含本家 `哆啦哆啦`），`Tenpai Dragon` 命中 5/5、per 全
+        ≥40（per_hit −0.71），但 `Dragon` 在 ygocdb 里映射到 24 个泛用龙族
+        setcode，并入 `Tenpai`(426) 后凑出 25 个字段、一个都没露面 -> 砍 2
+        张 -> 输给只命中 4/5、per_hit −2.01 的 `Synchrons`。
+
+        判据：全解释（conf==1.0）**且** bayes/hits 优于所有「有竞争力的
+        非全解释候选」-> 豁免砍分。
+        """
+        #: 造两条：
+        #:   * `Mitsurugi Dragon`：命中 5/5、per 全 40（per_hit 接近 0 = 强）
+        #:   * `Filler Deck`：命中 4/5、per 只有 10（per_hit 很弱）
+        strong = {k: 40 for k in (1, 2, 3, 4, 5)}
+        weak = {1: 10, 2: 10, 3: 10, 4: 10}
+        idx = dg.build_index(ref({
+            'Mitsurugi Dragon': deck('Tier3', 5, strong),
+            'Filler Deck': deck('Trending', 9, weak),
+        }), GROUPS)
+        cands = dg.guess_deck([1, 2, 3, 4, 5], idx, GROUPS)
+        top = cands[0]
+        self.assertEqual(top['name'], 'Mitsurugi Dragon',
+                         '全解释且 per 更强 -> 该排第一（旧代码会被砍掉）')
+        self.assertEqual(top['field_miss'], [], '豁免后不该再标缺字段')
+        self.assertEqual(top['eff_hits'], top['hits'], '豁免后不砍')
+
+    def test_full_coverage_but_weak_still_cut(self):
+        """全解释但 per 强度**不占优** -> 仍然砍（防止大卡表混轴混进来）。"""
+        #: `Mitsurugi Dragon` 命中 5/5 但 per 全是 5（很弱）；
+        #: `Filler Deck` 命中 4/5 但 per 100（很强）
+        weak = {k: 5 for k in (1, 2, 3, 4, 5)}
+        strong = {1: 100, 2: 100, 3: 100, 4: 100}
+        idx = dg.build_index(ref({
+            'Mitsurugi Dragon': deck('Tier3', 5, weak),
+            'Filler Deck': deck('Trending', 9, strong),
+        }), GROUPS)
+        by = {c['name']: c for c in dg.guess_deck([1, 2, 3, 4, 5], idx, GROUPS)}
+        self.assertTrue(by['Mitsurugi Dragon']['field_miss'],
+                        'per 不占优 -> 不豁免，照常标缺字段')
+        self.assertEqual(by['Mitsurugi Dragon']['eff_hits'],
+                         5 - dg.FIELD_MISS_CUT)
+
+    def test_dominant_helper_compares_only_competitive(self):
+        """只跟 `conf >= TIER_TRUST_CONF` 的非全解释候选比 —— 低置信度垃圾
+        （只命中 1 张、per_hit 低到 −17）不许把门槛拉到永远不豁免。"""
+        cands = [
+            {'name': 'Full', 'hits': 5, 'confidence': 1.0, 'bayes': -3.5,
+             'field_miss': [426], 'eff_hits': 3},
+            {'name': 'Junk', 'hits': 1, 'confidence': 0.2, 'bayes': -17.4,
+             'field_miss': [], 'eff_hits': 1},
+            {'name': 'Rival', 'hits': 4, 'confidence': 0.8, 'bayes': -8.0,
+             'field_miss': [], 'eff_hits': 4},
+        ]
+        dg._clear_field_miss_when_dominant(cands)
+        full = cands[0]
+        self.assertEqual(full['field_miss'], [],
+                         '−0.71 优于有竞争力候选的 −2.0 -> 豁免')
+        self.assertEqual(full['eff_hits'], 5)
+
+    def test_dominant_helper_keeps_cut_when_weaker(self):
+        """per 强度**不如**对手 -> 不豁免（耀圣杀手旋律局 −0.96 vs −0.56）。"""
+        cands = [
+            {'name': 'Full', 'hits': 21, 'confidence': 1.0, 'bayes': -20.06,
+             'field_miss': [221], 'eff_hits': 19},
+            {'name': 'Rival', 'hits': 19, 'confidence': 0.90, 'bayes': -10.62,
+             'field_miss': [], 'eff_hits': 19},
+        ]
+        dg._clear_field_miss_when_dominant(cands)
+        self.assertEqual(cands[0]['field_miss'], [221],
+                         'per_hit −0.96 弱于 −0.56 -> 不豁免，照常砍')
+        self.assertEqual(cands[0]['eff_hits'], 19)
+
+    def test_dominant_helper_exempts_when_slightly_better(self):
+        """per 强度**更好**就豁免 —— 烙印局（2026-10-05）−0.91 vs −1.01 即此类。
+
+        ⚠️ 这一局会让 `Dracotail`(7/7) 顶掉用户标 `Branded`(6/7)，但两者卡表
+        重合 50/103 张、同属 Tier1 烙印体系 —— 从证据看 `Dracotail` 更贴切。
+        全量回测净赚 2 局（107→109），这一局是其中唯一代价。
+        """
+        cands = [
+            {'name': 'Full', 'hits': 7, 'confidence': 1.0, 'bayes': -6.39,
+             'field_miss': [349], 'eff_hits': 5},
+            {'name': 'Rival', 'hits': 6, 'confidence': 0.86, 'bayes': -6.07,
+             'field_miss': [], 'eff_hits': 6},
+        ]
+        dg._clear_field_miss_when_dominant(cands)
+        self.assertEqual(cands[0]['field_miss'], [], '−0.91 优于 −1.01 -> 豁免')
+        self.assertEqual(cands[0]['eff_hits'], 7)
+
     def test_clear_cache_helper(self):
         dg.clear_word_setcode_cache()
         self.assertEqual(dg.name_setcodes('Artmage'), [461])
@@ -524,3 +617,164 @@ class TestFieldCheck(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class ReferenceMissingTest(unittest.TestCase):
+    """★ BUG-A6-02：参照库**缺失**和「有但没这副卡组」要能分开。
+
+    旧代码 `load_reference()` 两种情况都静默返回 `{}` —— 界面表现都是
+    「AI 建议全空」，用户无从判断该去刷新参照库还是换一副。
+    """
+
+    def setUp(self):
+        import tempfile, shutil
+        self.d = tempfile.mkdtemp(prefix='a602-')
+        self.addCleanup(shutil.rmtree, self.d, True)
+        dg.clear_reference_cache()
+
+    def test_missing_when_file_absent(self):
+        path = os.path.join(self.d, 'nope.json')
+        self.assertTrue(dg.reference_missing(path))
+        self.assertEqual(dg.load_reference(path), {})
+
+    def test_missing_when_decks_empty(self):
+        path = os.path.join(self.d, 'empty.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump({'decks': {}, 'fetched_at': '2026-10-01'}, f)
+        dg.clear_reference_cache()
+        self.assertTrue(dg.reference_missing(path))
+
+    def test_not_missing_when_decks_present(self):
+        path = os.path.join(self.d, 'ok.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump({'decks': {'Branded': {'total': 5}}}, f)
+        dg.clear_reference_cache()
+        self.assertFalse(dg.reference_missing(path))
+
+    def test_missing_when_file_corrupt(self):
+        path = os.path.join(self.d, 'bad.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('{not json')
+        dg.clear_reference_cache()
+        self.assertTrue(dg.reference_missing(path),
+                        '读不出来 = 当缺失（要提示用户去刷新）')
+
+@unittest.skipUnless(_HAS_YGOCDB, 'ygocdb cards.json absent (publish repo)')
+class EngineNeverInCandidatesTest(unittest.TestCase):
+    """★ 2026-10-20（用户实报）：`Elfnote Engine` 出现在反推候选里，还拿了第一。
+
+    用户口径（AGENTS 铁律 7）：站内把混轴叫 `Xxx Engine`，我们**不用这个分类** ——
+    engine 行只作为隐藏条目留给 Tier 表，**选择器 / 标注 / 反推候选只该见 deck_type**。
+
+    根因不是 `known_deck_names()` 没按 kind 剔除（它剔了），而是 **别名把条目捞了回来**：
+    `Elfnote` 那行的别名里有历史遗留的 `Elfnote Engine`，于是 keep 集合里有了这个词，
+    参照库里那条 `kind='engine'` 的 `Elfnote Engine` 就通过了过滤。修法 =
+    `prepare()` 里按 :func:`dg.engine_kinds` **独立再剔一次**，与 keep 无关。
+    """
+
+    def test_elfnote_engine_not_in_index(self):
+        index, _groups = dg.load_index()
+        self.assertNotIn('Elfnote Engine', index,
+                         'engine 条目不许进反推候选（用户 2026-10-20 实报）')
+
+    def test_engine_kinds_comes_from_meta(self):
+        eng = dg.engine_kinds()
+        self.assertIn('Elfnote Engine', eng)
+
+    def test_engine_alias_does_not_resurrect_it(self):
+        """★ 核心：就算 keep 里含 engine 名（别名捞的），也不许放进来。"""
+        ref_ = {
+            'decks': {
+                'Elfnote': {'tier': 'Tier1', 'total': 33,
+                            'cards': {'1': {'per': 100}}},
+                'Elfnote Engine': {'tier': 'Tier1', 'total': 33,
+                                   'cards': {'1': {'per': 100}}},
+            },
+            'fetched_at': '2026-10-20',
+        }
+        eng = dg.engine_kinds()
+        keep = {'Elfnote', 'Elfnote Engine'} if eng else {'Elfnote'}
+        index, _groups = dg.prepare(ref_, groups={}, keep=keep)
+        self.assertIn('Elfnote', index)
+        self.assertNotIn('Elfnote Engine', index,
+                         '别名进了 keep 也不许把 engine 条目捞回候选')
+
+    def test_real_elfnote_case_picks_deck_type(self):
+        """实机局（2026-10-20 21:59）：露出 6 张全解释，第一位必须是 deck_type。"""
+        from core.storage import Storage
+        rows = Storage().get_recent_matches(limit=40)
+        row = next((r for r in rows
+                    if str(r.get('started_at') or '').startswith('2026-10-20 21:59')),
+                   None)
+        if row is None:
+            self.skipTest('实机那局不在库里（别的机器/别的库）')
+        ids = dg.revealed_ids(row)
+        index, groups = dg.load_index()
+        cands = dg.guess_deck(ids, index, groups)
+        self.assertTrue(cands)
+        self.assertNotIn('Engine', cands[0]['name'],
+                         '第一位不许是 engine 条目：%r' % cands[0]['name'])
+
+@unittest.skipUnless(_HAS_YGOCDB, 'ygocdb cards.json absent (publish repo)')
+class EngineFoldTest(unittest.TestCase):
+    """★ 2026-10-20 用户口径：混轴只显示在 Tier 表，候选里**只出具体卡组名**，
+    但混轴的卡表要能归到具体卡组名下用（「巳剑黯蜜就取 Yummy Engine 的参照库」，
+    与狱神耀圣取耀圣混轴的卡表同理）。
+
+    实现：`_fold_engines()` 把 `kind='engine'` 的条目按 `source_name`
+    并进目标条目（逐卡 per 取最大值 = 并集），然后删掉 engine 条目本身。
+    """
+
+    def test_engine_entries_disappear(self):
+        ref = dg.load_reference()
+        folded = dg._fold_engines(ref.get('decks') or {})
+        eng = dg.engine_kinds()
+        for name in eng:
+            raw = (ref.get('decks') or {}).get(name)
+            if raw:                       # 参照库里确实有这条
+                self.assertNotIn(name, folded, 'engine 条目必须被归并掉')
+
+    def test_empty_target_gets_the_engine_cards(self):
+        """目标条目卡表为空（`Mitsurugi Yummy`）时，用 engine 的卡表新建。"""
+        decks = {
+            'Yummy Engine': {'tier': 'Trending', 'total': 5,
+                             'source_name': 'Mitsurugi Yummy',
+                             'cards': {'1': {'per': 40}, '2': {'per': 25}}},
+            'Mitsurugi Yummy': {'tier': 'Trending', 'total': None,
+                                'source_name': None, 'cards': {}},
+        }
+        out = dg._fold_engines(decks)
+        self.assertNotIn('Yummy Engine', out)
+        self.assertEqual(len(out['Mitsurugi Yummy']['cards']), 2,
+                         '巳剑黯蜜该拿到 Yummy Engine 的卡表')
+
+    def test_merge_takes_max_per(self):
+        """并集语义 = 逐卡 per 取最大值（不是平均、不是覆盖）。"""
+        decks = {
+            'Elfnote Engine': {'tier': 'Tier1', 'total': 33,
+                               'source_name': 'Elfnote',
+                               'cards': {'1': {'per': 30}, '2': {'per': 90}}},
+            'Elfnote': {'tier': 'Tier1', 'total': 33,
+                        'source_name': None,
+                        'cards': {'1': {'per': 80}, '3': {'per': 50}}},
+        }
+        out = dg._fold_engines(decks)
+        cards = out['Elfnote']['cards']
+        self.assertEqual(cards['1']['per'], 80, '取最大值 80')
+        self.assertEqual(cards['2']['per'], 90, 'engine 独有的卡并进来')
+        self.assertEqual(cards['3']['per'], 50, '目标独有的卡保留')
+        self.assertEqual(out['Elfnote']['tier'], 'Tier1', 'tier 保留目标的')
+
+    def test_engine_without_source_name_folds_into_itself(self):
+        """没写 source_name 的 engine 条目 -> 并进自己同名（等于消失）。"""
+        decks = {
+            'Foo Engine': {'tier': 'Trending', 'total': 3, 'source_name': None,
+                           'cards': {'1': {'per': 40}}},
+        }
+        out = dg._fold_engines(decks)
+        self.assertEqual(sorted(out), ['Foo Engine'])
+        self.assertEqual(len(out['Foo Engine']['cards']), 1)
+
+    def test_no_engine_kinds_is_noop(self):
+        decks = {'A': {'cards': {'1': {'per': 50}}}}
+        self.assertEqual(dg._fold_engines(decks), decks)
+

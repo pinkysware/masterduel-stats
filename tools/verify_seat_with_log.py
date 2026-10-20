@@ -15,15 +15,23 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJ)
 
 from core import duel_record as dr
+from core import paths
 
-DB = os.path.join(PROJ, 'data', 'masterduel.db')
-RECORDS = os.path.join(PROJ, 'data', 'archive', 'duel_records')
+# ★ BUG-B9A-09：改走 `paths.data_path` —— 安装版（Program Files）下
+#   `PROJ/data` 不可写，DATA_DIR 在 `%LOCALAPPDATA%`，写死 PROJ 会「库不在」。
+DB = paths.data_path('masterduel.db')
+RECORDS = paths.data_path('archive', 'duel_records')
 
 PAIRS = [
     ('record_20260913_123326', '13cac4a6ef3b1445'),
     ('record_20260913_123714', 'e3eae5e51500f4ea'),
     ('record_20260913_122146', '872c9bdcdc11f421'),
 ]
+
+if not os.path.isfile(DB):
+    raise SystemExit('库不在：%s（先跑 tools/archive_matches.py --sync）' % DB)
+if not os.path.isdir(RECORDS):
+    raise SystemExit('record 目录不在：%s' % RECORDS)
 
 conn = sqlite3.connect('file:%s?mode=ro' % DB, uri=True)
 conn.row_factory = sqlite3.Row

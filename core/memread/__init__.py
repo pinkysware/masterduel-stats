@@ -27,18 +27,31 @@
 ``public_cards.is_public_zone`` 的判据只留公开区（场上表侧 + 墓地）。
 ``DuelClientMillenniumEye``（千年眼）强制返回 1 = 作弊开关，**绝不能碰**。
 
-模块结构
+模块结构（2026-10-19 补全，BUG-B3-16 —— 原来只列 6 个，实际 19 个）
 --------
-====================  ===================================================
-``redline.py``        红线定义 + 源码静态扫描（被单测调用，唯一豁免文件）
-``process.py``        ``SafeProcess``：只读打开进程、按地址读内存 / 遍历区域 / 搜字节
-``il2cpp.py``         IL2CPP 结构解析：metadata 内存镜像、类名 -> TypeInfo、
-                      字段表（名字 + 偏移）、静态字段区 -> 单例实例
-``reader_base.py``    读数公共底座：偏移按「字段名白名单」查，查不到就抛
-``public_cards.py``   step 2：读「当前对双方公开的卡」（场上表侧 ∪ 墓地），
-                      只输出公开卡 id，隐藏区不输出
-``duel_state.py``     step 3：读公开对局状态（回合 / 阶段 / 双方 LP），M6 的实时输入
-====================  ===================================================
+========================  ================================================
+``redline.py``            红线定义 + 源码静态扫描（唯一豁免文件）
+``process.py``            ``SafeProcess``：只读打开进程、按地址读内存 /
+                           遍历区域 / 搜字节（``read_exact`` 严读）
+``il2cpp.py``             IL2CPP 结构解析：metadata 内存镜像、类名 ->
+                           TypeInfo、字段表、静态字段区 -> 单例实例
+``il2cpp_obj.py``          通用下钻：Dictionary / List / 装箱基元 / String
+``reader_base.py``        读数公共底座：偏移按「字段名白名单」查，查不到就抛
+``duel_log.py``           step 4 逐卡动作流（解 ShowAction 载荷；D5 已取消 UI）
+``public_cards.py``       step 2 读「当前对双方公开的卡」（场上表侧 ∪ 墓地）
+``duel_state.py``         step 3 读公开对局状态（回合 / 阶段 / 双方 LP）
+``client_work.py``        ClientWork 快照（我方卡组快照的来源）
+``duel_settings.py``      duelSettings 中性对（对手名 / 模式 / 开局时间戳）
+``duel_result.py``        本局结算（胜负位 / 结算码 / 双方局前段位）
+``rank.py``               自己的公开资料段位（profile）
+``peak_rate.py``          巅峰决斗积分（Rate Duel RATE）
+``present_box.py``        礼盒（看板「礼盒」页数据源；UI 手动触发）
+``deck_edit.py``          编辑中的卡组（巅峰 own-deck；按字段名查偏移）
+``my_deck_watch.py``      编辑界面卡组观察者（换牌发现 + 三态读）
+``end_message.py``        结算画面（胜负位 / 文案 / EM 评分与仲裁）
+``record_capture.py``     M6 层 0 采集内核（控制器抓取 + manifest）
+========================  ================================================
+
 
 用法::
 

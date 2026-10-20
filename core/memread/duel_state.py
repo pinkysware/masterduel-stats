@@ -105,7 +105,12 @@ class DuelStateReader(TypeInfoReader):
                         dc_ti, find_singleton(proc, dc_ti, slot=0x00))
 
     不在对局、或链路中途断了（回放暂停在加载点等）时，
-    对应字段是 ``None``，**不抛异常** —— 采样器每秒都在读，不能炸。
+    对应字段是 ``None`` —— 采样器每秒都在读。
+
+    ⚠️ **「链路断」不抛，但「字段表查不到」会抛**（BUG-B3-16：原文写的是
+    「不抛异常」，与 :func:`reader_base.TypeInfoReader._offset` 的实际行为相反）。
+    白名单字段名在字段表里找不到时 ``_offset`` 抛 ``ValueError`` —— 这是
+    **故意的**（偏移不猜，宁可不读）；调用方要包 try 才是「不能炸」。
     """
 
     #: 只按这些**字段名**取偏移，白名单外一概不碰（红线设计）。

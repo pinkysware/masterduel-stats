@@ -110,7 +110,9 @@ def _scalar(proc, addr):
         if cn in ('Int32', 'UInt32'):
             return proc.read_u32(addr + 0x10)
         if cn == 'Boolean':
-            return bool(proc.read_u32(addr + 0x10))
+            # ★ BUG-B3-09：装箱 Boolean 只占 **1 字节**（+0x11 起是填充），
+            #   按 4 字节读会把邻字节算进来。范本见 peak_rate._val。
+            return bool(proc.read(addr + 0x10, 1)[0])
     except Exception:
         pass
     return boxed_int(proc, addr)

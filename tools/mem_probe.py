@@ -57,9 +57,13 @@ from core.memread.process import (  # noqa: E402
     find_module,
     find_pids_by_name,
 )
+from core.memread.end_message import default_game_dir                # noqa: E402
 
 GAME_EXE = 'masterduel.exe'
-GAME_DIR = r'D:\steam\steamapps\common\Yu-Gi-Oh!  Master Duel'
+# ★ BUG-B9A-14：游戏目录不再写死 `D:\steam\...` —— 改走
+#   `end_message.default_game_dir()`（认 `MD_GAME_DIR` 环境变量 + 常见盘位探测），
+#   换盘 / 换 Steam 库也能用。原来三份工具各抄一份路径。
+GAME_DIR = default_game_dir()
 
 #: 默认要定位的类名（metadata 里是**短名**，namespace 单独存）
 #: 这些名字都已在 YgomGame.Duel 命名空间下核对过确实存在

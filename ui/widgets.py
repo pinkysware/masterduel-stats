@@ -28,13 +28,12 @@ import os
 import time
 from typing import Optional, Sequence
 
-from PySide6.QtCore import QEventLoop, QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QEventLoop, QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import (QColor, QFont, QPainter, QPainterPath, QPen,
                            QPixmap)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QLabel, QRadioButton,
                                QStyle, QStyleOptionButton, QVBoxLayout,
                                QWidget)
-from PySide6.QtCore import QRect
 
 # ⚠️ **这一层里禁止「函数内 from PySide6... import」**（2026-09-16 段错误教训）：
 #    函数内首次导入某个 PySide6 名字会走 shiboken 的惰性 feature-import，
@@ -253,8 +252,11 @@ def color_or(default: str, value: Optional[str]) -> str:
 
 # --------------------------------------------------------------- 勾选类控件
 def _indicator_rect(widget) -> QRect:
-    """指示器（那个小方块/小圆圈）在控件里的矩形 —— 由样式算，别自己猜。"""
-    from PySide6.QtWidgets import QRadioButton, QStyle, QStyleOptionButton
+    """指示器（那个小方块/小圆圈）在控件里的矩形 —— 由样式算，别自己猜。
+
+    ⚠️ 所需名字（`QStyle` / `QStyleOptionButton`）**在模块头导入** ——
+    函数内 import PySide6 违反本模块自述红线（BUG-B7-10 / 2026-09-16 段错误）。
+    """
     opt = QStyleOptionButton()
     widget.initStyleOption(opt)
     sub = (QStyle.SE_RadioButtonIndicator
@@ -271,9 +273,6 @@ def _draw_mark(widget, radio: bool = False) -> None:
     ⚠️ 单选项的指示器也**画勾**（用户 2026-09-15：「圆点太丑，换成打勾」）——
     互斥行为不变，只是视觉上和勾选框一致。
     """
-    from PySide6.QtCore import QPointF
-    from PySide6.QtGui import QPainter, QPen
-
     if not widget.isChecked():
         return
     r = _indicator_rect(widget)

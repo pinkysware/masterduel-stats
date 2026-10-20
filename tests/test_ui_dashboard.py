@@ -16,6 +16,7 @@
 import os
 import sys
 import tempfile
+import time
 from unittest import mock
 import unittest
 
@@ -909,12 +910,31 @@ class StatsPageTest(unittest.TestCase):
         for key in ('match_id', 'opp_deck', 'opp_revealed_ids'):
             self.assertIn(key, got[0])
 
-    def test_loader_failure_does_not_crash(self):
+    def test_loader_failure_keeps_previous_data_and_warns(self):
+        """★ BUG-B5-11：读挂了**不清空页面** —— 保留上一份数据 + 标题栏提示。
+
+        旧行为是 `data = {}` -> 页面重建成「本月还没打过」；
+        用户分不清「真没打」和「读挂了」（与项目「不许编 0」同一条规矩）。
+        """
+        before = dict(self.page._data)
+
         def boom():
             raise RuntimeError('db is locked')
         self.win.set_loader(boom)
         self.win.reload()
-        self.assertIn('暂无数据', self._texts())
+        self.assertEqual(dict(self.page._data), before,
+                         '读失败时页面数据不该被清空')
+        self.assertIn('stats', self.win.load_errors())
+        self.assertIn('读取出错', self.win._load_warn.text())
+        self.assertFalse(self.win._load_warn.isHidden(),
+                         '失败时标题栏提示要显示')
+
+        # 恢复后提示要撤（别一直挂着误导人）
+        from core.ui_demo import demo_stats_page
+        self.win.set_loader(demo_stats_page)
+        self.win.reload()
+        self.assertEqual(self.win.load_errors(), {})
+        self.assertTrue(self.win._load_warn.isHidden())
 
     def test_realign_renders_after_reload(self):
         """再刷一次不许把内容刷没（每 2 秒的探针会反复调 reload）。"""
@@ -1670,8 +1690,13 @@ class DeckViewPageTest(unittest.TestCase):
                          'in 42%')
         labels = []
         for c in self.page.findChildren(self.dvp.CardCell):
-            text_labels = [l.text() for l in c.findChildren(QLabel) if l.text()]
-            # 一格两行字：**卡名 + 计数**（卡图没下回来时还有个 `…` 占位）
+            # ★ 一格两行字：**卡名 + 计数**。
+            #   `c.art` 是卡图那个 QLabel —— 卡图没下回来时它的文本是 `…`
+            #   （非空！），下回来后是图片（文本为空）。所以按 `if l.text()`
+            #   过滤会把 `…` 也算进来，数量在 2/3 之间随机 → 这条用例曾随机红
+            #   （2026-10-18 BUG-A6-01）。显式排除 art 标签，结果才稳定。
+            text_labels = [l.text() for l in c.findChildren(QLabel)
+                           if l.text() and l is not c.art]
             self.assertEqual(len(text_labels), 2, '一格 = 卡名 + 计数')
             labels.append(text_labels[1])
         self.assertIn('3x in 100%', labels)
@@ -3491,3 +3516,201 @@ class FloatingSectionTitleTest(unittest.TestCase):
         from ui.i18n import tr
         self.assertEqual(tr('最近对局设置'), '最近对局设置')
         self.assertIn('最近对局设置', i18n._T)
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class DeckManagerBugBatchTest(unittest.TestCase):
+    """第 2 优先 6 条里的 4 条 UI 回归（B6-02 / B6-03 / B6-04 + B6-09/10 的线程位）。
+
+    B6-11 在 `tests/test_ui_selector.py`（选择器预填）。
+    """
+
+    def setUp(self):
+        _app()
+        from ui import opp_deck_manager as odm_mod
+        from ui.opp_deck_manager import OppDeckManager
+        self.odm_mod = odm_mod
+        self.mod = OppDeckManager
+        self.tmp = tempfile.mkdtemp(prefix='b6-')
+        self.csv = os.path.join(self.tmp, 'cn.csv')
+        deck_csv.write(self.csv, list(deck_csv.COLUMNS), [
+            ['Branded', '烙印', '烙印融合', '', '', '', ''],
+            ['Sky Striker', '闪刀姬', '闪刀', '', '', '', ''],
+        ])
+
+    def _make(self, **kw):
+        kw.setdefault('runner_factory', lambda s, a: FakeRunner(s, a))
+        return self.mod(csv_path=self.csv, **kw)
+
+    # ------------------------------------------------------ BUG-B6-02
+    def test_double_save_does_not_duplicate_custom_row(self):
+        """★ B6-02：连点两次「保存」不许把自定义行在 CSV 里写两遍。"""
+        mgr = self._make()
+        mgr.add_custom('我的新卡组')
+        mgr.save()
+        mgr.save()                       # 第二次点（用户手快）
+        _h, rows = deck_csv.read(self.csv)
+        idx = deck_csv.index_map(_h)
+        hit = [r for r in rows
+               if deck_csv.get(r, idx, '站内英文名') == '我的新卡组']
+        self.assertEqual(len(hit), 1, '同一行被 append 两次 -> CSV 重复')
+
+    def test_custom_row_promoted_after_save(self):
+        """转正后它就该按「已进表」对待（不再计入待保存、也不再走 custom 队列）。"""
+        mgr = self._make()
+        mgr.add_custom('我的新卡组')
+        mgr.save()
+        self.assertEqual(mgr.custom_rows_ui, [], '转正后必须出队')
+        names = [deck_csv.get(r.csv_row, mgr.idx, '站内英文名')
+                 for r in mgr.rows_ui]
+        self.assertIn('我的新卡组', names)
+
+    # ------------------------------------------------------ BUG-B6-03
+    def test_filter_after_delete_does_not_crash(self):
+        """★ B6-03：删一行之后再搜索不许抛 RuntimeError（已删除的 C++ 对象）。"""
+        mgr = self._make()
+        mgr.remove_row(mgr.rows_ui[0])
+        try:
+            mgr.edit_search.setText('闪')
+        except RuntimeError as e:                            # noqa: BLE001
+            self.fail('筛选碰到已删除对象：%s' % e)
+        self.assertEqual(len([r for r in mgr.rows_ui if r.isVisibleTo(mgr)]), 1)
+
+    def test_delete_custom_csv_row_syncs_both_lists(self):
+        """自定义分组那份引用（`custom_csv_ui`）也要同步移除。
+
+        分组判据 = 站内名单（`site_names`）：这里只把 Branded 当站内，
+        Sky Striker 落进「自定义」组 —— 正是 B6-03 崩溃的那条路。
+        """
+        mgr = self._make(site_names=['Branded'])
+        self.assertTrue(mgr.custom_csv_ui, 'Sky Striker 该落进自定义组')
+        victim = mgr.custom_csv_ui[0]
+        mgr.remove_row(victim)
+        self.assertNotIn(victim, mgr.custom_csv_ui)
+        try:
+            mgr.edit_search.setText('Sky')       # B6-03：再筛一次不许崩
+        except RuntimeError as e:                # noqa: BLE001
+            self.fail('删除后筛选碰到已销毁对象：%s' % e)
+
+    # ------------------------------------------------------ BUG-B6-04
+    def test_confirm_hands_image_to_caller(self):
+        """★ B6-04：确认时临时图必须交给调用方，不许在 `done()` 里先删掉。
+
+        旧行为：`_save()` -> `accept()` -> `done()` -> `_cleanup_tmp()` 删图，
+        调用方 `take_image_path()` 拿到的是**已不存在的路径**（于是又联网下一次）。
+        """
+        dlg = self.odm_mod.SetImageDialog('Branded', '')
+        tmp = os.path.join(tempfile.mkdtemp(prefix='mdm-cardart-'),
+                           'mdm-cardart-x.png')
+        with open(tmp, 'wb') as f:
+            f.write(b'PNG')   # 内容不重要，只要是个真文件
+        dlg.card_id = 12345
+        dlg.image_path = tmp
+        dlg._save()
+        got = dlg.take_image_path()
+        self.assertEqual(got, tmp, '调用方必须拿到那张图')
+        self.assertTrue(os.path.exists(tmp), '交接的图不许被删掉')
+
+    def test_cancel_still_cleans_temp(self):
+        """取消（没确认）时临时图仍然要删（别留垃圾）。"""
+        dlg = self.odm_mod.SetImageDialog('Branded', '')
+        d = tempfile.mkdtemp(prefix='mdm-cardart-')
+        tmp = os.path.join(d, 'mdm-cardart-y.png')
+        with open(tmp, 'wb') as f:
+            f.write(b'x')
+        dlg.image_path = tmp
+        dlg.reject()
+        self.assertFalse(os.path.exists(tmp))
+        self.assertEqual(dlg.take_image_path(), '')
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class ArtBusyResetTest(unittest.TestCase):
+    """★ BUG-B6-09 / B6-10：卡图下载的 `_art_busy` 必须能复位。
+
+    9（卡组构成页）：切卡组时旧线程还在跑 -> 新卡组的图永不下。
+    10（禁限表页）：线程被 `return` 提前退出时，标志永远停在 True。
+    两处都改成「代次令牌 + finally 复位」。
+    """
+
+    def setUp(self):
+        _app()
+
+    def _page(self, cls):
+        page = cls()
+        #: ⚠️ 先 `shutdown()`（等后台线程收尾）再 `deleteLater` —— 顺序反了
+        #: 就是「线程还在跑、Qt 已销毁」的随机段错误（exit 139）。
+        self.addCleanup(page.deleteLater)
+        self.addCleanup(page.shutdown)
+        return page
+
+    def test_deck_view_new_data_resets_busy(self):
+        """换卡组 = 换代：`_art_busy` 立刻复位，新一批能起线程。"""
+        from ui.deck_view_page import DeckViewPage
+        page = self._page(DeckViewPage)
+        page._art_busy = True              # 假装旧线程还在跑
+        gen0 = page._art_gen
+        page.set_data({'name': 'Branded', 'main': [], 'extra': []})
+        self.assertGreater(page._art_gen, gen0, '换代令牌要 +1')
+        # 数据里没有缺图的卡 -> `_warm_art` 直接 return，但忙碌位必须已复位
+        self.assertFalse(page._art_busy)
+
+    def test_deck_view_thread_resets_on_exit(self):
+        """线程正常跑完要复位（旧代码只在 `for` 循环走完时复位）。"""
+        from ui.deck_view_page import DeckViewPage
+        from core import card_art
+        page = self._page(DeckViewPage)
+        orig = card_art.fetch_art
+        card_art.fetch_art = lambda **kw: True
+        try:
+            page.set_data({'name': 'Branded',
+                           'main': [{'id': 1, 'per': 100}], 'extra': []})
+            self._wait_idle(page)
+            self.assertFalse(page._art_busy, '线程结束后必须复位')
+        finally:
+            card_art.fetch_art = orig
+            self._wait_idle(page)          # 别让线程活到进程退出（段错误）
+
+    def test_banlist_new_data_resets_busy(self):
+        from ui.banlist_page import BanlistPage
+        page = self._page(BanlistPage)
+        page._art_busy = True
+        gen0 = page._art_gen
+        page.set_data({'current': []})
+        self.assertGreater(page._art_gen, gen0)
+        self.assertFalse(page._art_busy)
+
+    def test_banlist_thread_resets_on_exit(self):
+        """页面销毁（`alive()` 假）提前 `return` 也要复位 —— B6-10 的核心。
+
+        旧代码那个 `return` 直接跳过 `self._art_busy = False`。
+        """
+        from ui.banlist_page import BanlistPage
+        from core import card_art
+        page = self._page(BanlistPage)
+        orig = card_art.fetch_art
+        def _slow_ok(**kw):
+            time.sleep(0.02)
+            return True
+        card_art.fetch_art = _slow_ok
+        try:
+            page.set_data({'current': [{'name_en': 'Ash Blossom',
+                                        'art': None}]})
+            self._wait_idle(page)
+            self.assertFalse(page._art_busy, '线程退出（含提前 return）必须复位')
+        finally:
+            card_art.fetch_art = orig
+            self._wait_idle(page)          # 别让线程活到进程退出（段错误）
+
+    def _wait_idle(self, page, limit=6.0):
+        """等后台下载线程结束 —— **测试必须等它**，否则线程在 pytest 退出、
+        QApplication 已销毁之后 emit，就是随机 `Segmentation fault`（exit 139）。
+        """
+        end = time.time() + limit
+        while time.time() < end:
+            _app().processEvents()
+            if not page._art_busy:
+                # 忙碌位复位后线程可能还在 finally 里，再让一拍
+                _app().processEvents()
+                time.sleep(0.02)
+                return
+            time.sleep(0.01)
+

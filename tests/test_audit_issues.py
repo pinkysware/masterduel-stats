@@ -168,3 +168,66 @@ class AuditToolExitCodeTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class AuditOrphanGroupingTest(unittest.TestCase):
+    """★ A3-结论-C：孤儿目录要分「有没有可配对的行」两组。
+
+    真样本（2026-10-19 复盘）：14 个孤儿目录里 12 个是**观战/单人局** ——
+    日志侧根本没有对手行的 `Starting Duel`，`find_record_pair` 结构性地
+    配不上。旧代码一律报「漏记」，用户每次体检都看到一堆假问题。
+    """
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix='audit-grp-')
+        self.addCleanup(shutil.rmtree, self.d, True)
+
+    def _audit(self, rows):
+        return ui_state.audit_issues(storage=_FakeStorage(rows),
+                                     records_dir=self.d)
+
+    def _row_with_origin(self, dir_, origin, started='2026-09-23 20:00:00'):
+        return _row(dir_, origin=origin, started_at=started)
+
+    def _make_dir(self, name, first_seen='2026-09-23 20:00:00'):
+        path = os.path.join(self.d, name)
+        os.makedirs(path, exist_ok=True)
+        ent = [{'label': 'ShowFirstPlayer'}, {'label': 'SeparateLine'}]
+        man = {'logbase': {'size': 2, 'entries': ent}, 'state': 'final',
+               'capture': {'first_seen_at': first_seen,
+                           'last_saved_at': first_seen}}
+        with open(os.path.join(path, 'manifest.json'), 'w',
+                  encoding='utf-8', newline='') as f:
+            json.dump(man, f)
+        return path
+
+    def test_window_without_log_row_is_no_pair(self):
+        """窗口内只有 record 行（观战/单人）-> `no_pair_object`，不算漏记。"""
+        self._make_dir('record_20260923_200000')
+        rows = [self._row_with_origin('record_20260923_190000', 'record',
+                                      '2026-09-23 19:00:00')]
+        got = self._audit(rows)
+        self.assertEqual([x['dir'] for x in got['orphan_no_pair']],
+                         ['record_20260923_200000'])
+        self.assertEqual(got['orphan_pair_exists'], [])
+        self.assertEqual(got['n_issues'], 0, '观战局不该计入问题数')
+
+    def test_window_with_log_row_is_real_orphan(self):
+        """窗口内**有** log 行却没并上 -> 真漏记（`pair-exists-but-not-merged`）。"""
+        self._make_dir('record_20260923_200000')
+        rows = [self._row_with_origin('abc123', 'log', '2026-09-23 20:00:10')]
+        got = self._audit(rows)
+        self.assertEqual([x['dir'] for x in got['orphan_pair_exists']],
+                         ['record_20260923_200000'])
+        self.assertEqual(got['orphan_no_pair'], [])
+        self.assertEqual(got['n_issues'], 1)
+        self.assertEqual(got['orphan_pair_exists'][0]['pair_hint'],
+                         'pair-exists-but-not-merged')
+
+    def test_line_mentions_skipped_watch_dirs(self):
+        """一行总结要交代「另有 N 个观战/单人目录」（不计入问题数）。"""
+        self._make_dir('record_20260923_200000')
+        got = self._audit([])
+        line = ui_state.audit_issues_line(got)
+        self.assertIn('体检通过', line)
+        self.assertIn('观战/单人', line)
+

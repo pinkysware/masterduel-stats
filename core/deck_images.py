@@ -30,13 +30,18 @@ import os
 import re
 import shutil
 from typing import Dict, Iterable, Optional, Sequence
+from core import paths
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: 站内下载的图（可再生）
-IMG_DIR = os.path.join(PROJ, 'data', 'deck_images')
+#: ★ BUG-B2A-08（2026-10-18）：两个目录都改走 `paths.data_path` ——
+#:   安装版（Program Files）的 `<PROJ>/data` 不可写：用户换图存不进去、
+#:   自己加的图也不在包里 → 「换图功能静默失效」。
+#:   `data/deck_images_custom/` 是**进版本库的用户资产**，更要能写。
+IMG_DIR = paths.data_path('deck_images')
 #: 自定义条目 + 手动替换的图（**不可再生**）
-CUSTOM_IMG_DIR = os.path.join(PROJ, 'data', 'deck_images_custom')
+CUSTOM_IMG_DIR = paths.data_path('deck_images_custom')
 #: 缺图时的兜底
 DEFAULT_IMAGE = os.path.join(CUSTOM_IMG_DIR, '_default.webp')
 

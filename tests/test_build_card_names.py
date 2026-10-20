@@ -249,6 +249,24 @@ class TestCollectUnknown(Base):
         self.assertEqual(bcn.collect_unknown_from_records(
             os.path.join(self.d, 'nope')), [])
 
+class TestDumpAtomic(unittest.TestCase):
+    """★ BUG-B9A-11：生产卡名表走原子写。"""
+
+    def test_failure_keeps_old_file(self):
+        d = tempfile.mkdtemp(prefix='cardnames_')
+        self.addCleanup(shutil.rmtree, d, True)
+        p = os.path.join(d, 'card_names.json')
+        bcn.dump({1: ['x', 'y', 'z']}, p)
+        before = open(p, 'rb').read()
+        # 目标路径是个**目录** → `os.replace` 失败（目录路径不会被自动建）
+        blocked = os.path.join(d, 'blocked')
+        os.makedirs(blocked)
+        with self.assertRaises((SystemExit, OSError)):
+            bcn.dump({2: ['a', 'b', 'c']}, blocked)
+        self.assertEqual(open(p, 'rb').read(), before)
+
+
+
 
 if __name__ == '__main__':
     unittest.main()

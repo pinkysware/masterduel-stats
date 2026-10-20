@@ -179,6 +179,12 @@ def winbits_from_native(native_bytes) -> Optional[tuple]:
 
     ⚠️ 校验 0/1 是 2026-09-15 深夜补的：库里出现过 `[128, 1]` —— 那是**半死实例**
     （图标对象正在被回收）读出来的残值，不挡掉就会写进 `winbits` 列。
+
+    ⚠️ **与生产的 :func:`read_winbits` 不是一条路**（BUG-B3-16）：
+    这里从**同一个** GameObject 的 ``+0x46 / +0x47`` 取两字节（实测两字节
+    恒同值）；生产读的是**两个图标各一个字节**。两者函数名 / 返回形状几乎
+    一样、语义不同。本函数**只有测试在调**（`_native_from_window` 那套
+    fixture）—— 生产要改 winbit 语义请改 :func:`read_winbits`，别动这里。
     """
     if not native_bytes or len(native_bytes) <= WINBIT_OFFSET:
         return None
@@ -726,8 +732,11 @@ class EndMessageReader(object):
             if hit in seen:
                 continue
             seen.add(hit)
-            if hit in (self._ti + f.offset for f in self._fields.values()):
-                continue
+            # ★ BUG-B3-16：原来这里还有一行
+            #   ``if hit in (self._ti + f.offset for f in self._fields.values())``
+            #   —— `hit` 是**对象头地址**（进程堆里），右边是 **TypeInfo 内部**的
+            #   字段地址（metadata 镜像里），两者不可能相等，过滤恒不成立。
+            #   真身甄别靠下面的对象头回读，已足够；删掉这行死代码。
             try:
                 if proc.read_ptr(hit) != self._ti:
                     continue

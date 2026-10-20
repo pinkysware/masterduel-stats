@@ -12,7 +12,9 @@
     assets/.../prefabs/profile/rankicons/large/img_rateicon_01_l  ->  peak.webp
 
 ⚠️ 文件名是 **`rate`icon**（不是 `rank`icon）—— 按 `img_rankicon` 过滤会漏掉它。
-此前一版取自第三方 CDN（masterduelmeta 的 s3），**已替换** —— 别再照旧注释改回去。
+★ 2026-09-15（commit d3d0479）起**全部换成游戏本体解包原版**，第三方 CDN 那版已废。
+`tools/fetch_mode_icons.py` 是更早的 CDN 下载器（**遗留工具**，没有弃用闸门）——
+跑 `--force` 会把 `peak.webp` 覆盖回旧来源，**别再运行它**。
 
 ⚠️ **不要再找「天梯模式图标」了**（用户 2026-09-14 澄清）：天梯那一行的标识
 就是**该局的段位图标**（`core.ranks.icon_path`），不用单独一个模式图标。

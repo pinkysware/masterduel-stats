@@ -44,6 +44,7 @@ from __future__ import annotations
 import datetime
 from typing import List, Optional
 
+from core import ranks
 from core import ui_state as _ui_state
 from core.ui_state import (CROSS_SCOPE_NOTE, MODE_IDLE, Probe, UiSnapshot)
 
@@ -54,17 +55,17 @@ _RANK = 'data/rank_icons/%s.webp'
 PEAK_ICON = 'data/mode_icons/peak.webp'
 
 
-# 大段编号 -> 英文名（**demo 专用副本**；真源是 core.ranks.RANK_NAMES）
-_RANK_NAME = {2: 'Silver', 3: 'Gold', 4: 'Gold',
-              5: 'Platinum', 6: 'Diamond', 7: 'Master'}
-
-
 def _label(rank) -> str:
-    """`(5, 2)` -> `'Platinum 2'`（demo 里给 rank_label_after 用；对齐 ranks.rank_label）。"""
+    """`(5, 2)` -> `'Platinum 2'`（demo 里给 rank_label_after 用）。
+
+    ★ BUG-B2A-16（2026-10-20）：这里原来抄了一份 `_RANK_NAME` 副本，
+    与 `core.ranks.RANK_NAMES` **不一致**（缺 Rookie、把 3 和 4 都映成 Gold）
+    —— demo 里展示的段位名会和真机对不上（"demo 绿、真机不对"那类坑）。
+    现在直接转调真源，**副本已删**。
+    """
     if not rank or not rank[0]:
         return ''
-    name = _RANK_NAME.get(rank[0], 'Rookie')
-    return '%s %d' % (name, rank[1]) if rank[1] else name
+    return ranks.rank_label(rank[0], rank[1])
 
 
 #: 覆盖目录（`data/deck_images_custom/`）—— **进版本库**，demo 引用的图只能指这里
@@ -82,7 +83,7 @@ def _row(match_id, hour, day_offset, result, went_first,
     # 分钟给个稳定又各不相同的值（纯装饰，界面只展示 HH:MM）
     started = '%s %02d:%02d' % (d.isoformat(), hour, (hour * 17 + 23) % 60)
     if badge_icon is None and rank_before and rank_before[0]:
-        badge_icon = _RANK % _RANK_NAME.get(rank_before[0], 'Rookie')
+        badge_icon = _RANK % (ranks.rank_name(rank_before[0]) or 'Rookie')
     return {
         'match_id': match_id,
         'started_at': started,
@@ -446,7 +447,6 @@ def _prow(date, time, result, went_first, opp_player, turns,
     下面几组 demo 行**故意**在活动/巅峰/DC 局里也传 `rank_*` 参数 ——
     看的就是"界面会不会照样画出来"（画了就是 bug，单测会红）。
     """
-    from core import ranks
     from core.storage import MODE_GROUP_NAMES
     if mode != 'ranked':
         rank_before = rank_after = None

@@ -33,6 +33,13 @@ from core.storage import (DECK_SNAPSHOT_TRUSTED_MODES,
 DUEL_JSON_NAME = 'duel.json'
 FORMAT_VERSION = 1
 
+#: 卡组名归一的**进程内缓存**（BUG-B2A-11）：
+#: 名 -> 显示名（查不到 = None）。
+#: 全量重跑 `to_row()` 时每行新建 Storage + 查一次库是线性放大。
+_DISPLAY_NAME_CACHE = {}
+#: 懒建的 Storage 单例（仅 `_display_deck_name` 用；建构不跑 init_schema）
+_DISPLAY_STORAGE = None
+
 #: 同局分组的最大间隔（capture 区间不重叠但间隔 ≤ 此值仍算同一局）
 MERGE_GAP_SEC = 900
 #: end_messages 双向窗（秒）——one-shot/残影在结算后才建目录，必须双向。
@@ -177,19 +184,6 @@ def fingerprint(record_dir, card_names_file=None):
                                'md5': _md5(path)}
     return out
 
-    """层 0 全部文件的 {名字: {size, mtime, md5}}（duel.json 本身不计入）。"""
-    out = {}
-    for name in sorted(os.listdir(record_dir)):
-        if name == DUEL_JSON_NAME:
-            continue
-        path = os.path.join(record_dir, name)
-        if not os.path.isfile(path):
-            continue
-        st = os.stat(path)
-        out[name] = {'size': st.st_size, 'mtime': round(st.st_mtime, 3),
-                     'md5': _md5(path)}
-    return out
-
 
 def scan_record(dir_path):
     """读一份 record 目录的基本信息（解码/分组共用，manifest 只 load 一次）。"""
@@ -209,6 +203,13 @@ def scan_record(dir_path):
         #: 首见时的 logbase size（M6 契约）—— 同局延续性判据用（见 _logbase_continues）
         'first_logbase_size': cap.get('first_logbase_size'),
         'logbase_size': lb.get('size') or len(lb.get('entries') or []),
+        #: ★ BUG-B2A-13：**两个 size 是否都可用**。
+        #:   它们取自不同时点（first = capture 首见时 / last = logbase 落盘时），
+        #:   缺一个就是「判不出续不续」（与「判出不是延续」不同事）。
+        #:   `_logbase_continues` 拋异常前先看这个标志，日志/单测才能分开记。
+        'continues_known': (cap.get('first_logbase_size') is not None
+                            and (lb.get('size') is not None
+                                 or bool(lb.get('entries')))),
         'instance': _norm_instance(manifest.get('instance')),
     }
 
@@ -458,18 +459,31 @@ def decode_record(scan, card_names_file=None):
     payloads = man.get('payload') or {}
     bin_cache = {}
 
+    #: ★ BUG-B2A-22：**「bin 文件缺失」与「bin 是空的」不再混同**。
+    #:   两者都让事件退化成 `truncated`，但根因完全不同（采集器没写出来 vs
+    #:   真没数据）—— 记进 `summary['bin_problems']` / 事件 `bin_missing` 才有出口。
+    bin_problems = {}
+
     def bin_for(arr):
         if arr not in bin_cache:
             info = payloads.get(arr) or {}
             name = info.get('bin')
             path = os.path.join(record_dir, name) if name else None
             data = b''
-            if path:
+            if not name:
+                bin_problems[arr] = 'not-declared'      # manifest 里没说有 bin
+            elif not os.path.exists(path):
+                bin_problems[arr] = 'missing:' + name   # 声明了但文件不在
+            else:
                 try:
                     with open(path, 'rb') as f:      # 审查 P3-4：别漏关文件
                         data = f.read()
-                except OSError:
+                except OSError as e:
+                    bin_problems[arr] = 'unreadable:%s' % e
                     data = b''
+                else:
+                    if not data:
+                        bin_problems[arr] = 'empty:' + name   # 文件在但是空的
             bin_cache[arr] = data
         return bin_cache[arr]
 
@@ -495,12 +509,24 @@ def decode_record(scan, card_names_file=None):
                 or (count is not None and di >= count)
                 or off + size > len(buf)):
             ev['truncated'] = True           # 载荷缺失/越界：留痕不炸
+            #: ★ BUG-B2A-22：文件级问题（缺失/空/读不了）另外标明 —— 与
+            #: `dataindex` 越界（数据级）区分开
+            if arr in bin_problems:
+                ev['bin_missing'] = bin_problems[arr]
             events.append(ev)
             continue
-        _append_event(ev, label, arr, buf, off, count, di)
+        _append_event(ev, label, arr, buf, off, count, di, size=size)
         events.append(ev)
 
     summ = _summary(events, payloads, bin_for)
+    if bin_problems:
+        #: 只登记**真被用到**的数组（没出现的 label 不算问题）
+        used = {LABEL_TO_ARRAY.get(e.get('label'), e.get('label'))
+                for e in events}
+        summ['bin_problems'] = {k: v for k, v in sorted(bin_problems.items())
+                                if k in used}
+    else:
+        summ['bin_problems'] = {}
     meta = _default_meta(scan, man)
     ds = man.get('duel_settings') or None
     # 座位判据 ① = 我方卡组快照（层 0 自给；判不出 NULL 不硬猜）
@@ -523,6 +549,10 @@ def decode_record(scan, card_names_file=None):
         # 这是「ClientWork 下标空间 == 对局 seat 空间」的实机探针，别静默吞。
         meta['seat_evidence'] = '%s;clientwork-myid=%d 冲突' % (
             meta['seat_evidence'], int(my_idx))
+        #: ★ BUG-B2A-14：**可观测字段**（不只是给人看的 evidence 文本）——
+        #:   `seat` 判错的连带面很大（opp_revealed / went_first / 两列手坑），
+        #:   所以冲突要能被打包工具筛出来复核。真库当前 0 行（无冲突样本）。
+        meta['seat_conflict'] = True
     if meta['seat'] is not None:
         summ['opp_revealed_ids'] = summ['revealed'][
             'p1' if meta['seat'] == 0 else 'p0']
@@ -556,8 +586,14 @@ def decode_record(scan, card_names_file=None):
     return duel
 
 
-def _append_event(ev, label, arr, buf, off, count, di):
-    """按 label 类型把载荷解进事件 dict（就地修改）。"""
+def _append_event(ev, label, arr, buf, off, count, di, size=None):
+    """按 label 类型把载荷解进事件 dict（就地修改）。
+
+    ``size``：调用方**已经校验过**的单条元素字节数（来自 :data:`ARRAY_SIZES`）。
+    ★ BUG-B2A-10：raw 分支原来用 `size_of(arr)` 二次查表 —— 同一个 dict 的
+    两次查询，`size_of` 又是公开函数，别处一改就与校验过的 `size` 漂移。
+    现在统一用传进来的这一份；调用方没给才回退查表（只为老签名兼容）。
+    """
     if label == 'ShowAction':
         entry = _dl.parse_entry(buf, off)
         for tag, side in (('l', entry.datal), ('r', entry.datar)):
@@ -612,7 +648,8 @@ def _append_event(ev, label, arr, buf, off, count, di):
         ev['raw'], = struct.unpack_from('<i', buf, off)
         return
     if label in RAW_HEX_LABELS or arr in RAW_HEX_LABELS:
-        ev['raw_hex'] = bytes(buf[off:off + size_of(arr)]).hex()
+        n = size if size is not None else size_of(arr)
+        ev['raw_hex'] = bytes(buf[off:off + n]).hex()
         return
     ev['unknown_label'] = True
 
@@ -634,6 +671,9 @@ def _default_meta(scan, man):
         'opp_player_name': None,
         'my_deck_id': None, 'my_deck_name': None, 'my_deck_name_src': None,
         'seat': None, 'seat_evidence': None,
+        #: ★ BUG-B2A-14：座位两来源（快照 vs ClientWork）冲突标记 ——
+        #: True 才有意义，None = 没冲突/判不出。见 decode_record 的冲突分支。
+        'seat_conflict': None,
         'note': man.get('note'),
         'sources': {'log': None, 'end_messages': None,
                     'duel_modes': None, 'capture': None, 'manual': []},
@@ -653,9 +693,84 @@ def _default_meta(scan, man):
     return meta
 
 
+#: `ShowTurn` 残渣判据的 LP 合法区间。
+#: 上界 20000：实测真库有局 LP 到 10000（规则伤害/支付后回血），
+#: 设 8000 会误伤 24 局（实测踩过）；下界 1：没有正常局首回合 LP 是 0。
+TURN_LP_MAX = 20000
+
+
+def _turn_entry_is_residue(t):
+    """单条 `ShowTurn` 是不是**控制器内存残渣**（是 -> True）。
+
+    判据（全库实测，见 :func:`_first_turn_is_residue`）：
+    `player ∈ {0,1}` + `0 ≤ turn < 200` + `1 ≤ lp ≤ TURN_LP_MAX`。
+    **不含**「双方 LP 相等」那条 —— 那是只对**首条**成立的额外判据
+    （对局中途双方 LP 本来就会不同）。
+    """
+    try:
+        player = int(t.get('player'))
+        turn = int(t.get('turn'))
+        lp_a = int(t.get('lp_a'))
+        lp_b = int(t.get('lp_b'))
+    except (TypeError, ValueError, AttributeError):
+        return True                      # 读不出数 = 不可信
+    if player not in (0, 1):
+        return True
+    if not (0 <= turn < 200):
+        return True
+    return not (1 <= lp_a <= TURN_LP_MAX and 1 <= lp_b <= TURN_LP_MAX)
+
+
+def _first_turn_is_residue(turns):
+    """首条 `ShowTurn` 是不是**控制器内存残渣**（是 -> True）。
+
+    ★ 2026-10-20（用户实报「我先手却判成后手」）：`record_20261020_215925`
+    那局日志明写 `Turn 1 for player 1`（我方先手），但内存侧 `ShowTurn`
+    解出 `player=0 / turn=1 / marker=2 / lp_a=2 / lp_b=3` —— 24 字节里装的
+    全是残渣（控制器内存被复用，`m_DataList_ShowTurn` 没被本局写过）。
+    于是 `first_player=0`、`went_first` 判成后手。
+
+    在单条判据之外再加一条**只对首条成立**的：**对局首回合双方 LP 必须相等**
+    —— 开局双方同 LP，速决胜斗（500/2000/4000）也相等；残渣则是
+    `(622,0)` / `(597,1)` / `(0,0)` / `(2,3)` 这种不相等或离谱的值。
+    实测这一条能抓住「单条判据看不出来」的残渣（21:59 那局每条单独看都合法）。
+    """
+    if not turns:
+        return False                     # 没回合事件 = 另一回事（不猜）
+    t = turns[0]
+    if _turn_entry_is_residue(t):
+        return True
+    try:
+        return int(t.get('lp_a')) != int(t.get('lp_b'))
+    except (TypeError, ValueError):
+        return True
+
+
+def _turns_is_residue(turns):
+    """整条 `ShowTurn` 链里**任一条**是残渣 -> True（是 -> 整条作废）。
+
+    ★ 2026-10-20 追加：光查首条不够 —— `record_20261010_203819` 首条
+    `lp=(597,1)` 已被首条判据抓住，但它**后面几条同样污染**
+    （`player=1304766336` / `lp_b=-1737342400`），`total_turns` 和 `lp_final`
+    都是垃圾。用户在 untapped 上查到那局是「先手 5 回合」，而库里记成后手。
+
+    全库实测（322 局）：整链校验命中 **5 局**，全是真残渣、零误伤
+    （LP 上界放到 20000 之后；设 8000 会误伤 24 局正常对局）。
+    """
+    if not turns:
+        return False
+    return any(_turn_entry_is_residue(t) for t in turns)         or _first_turn_is_residue(turns)
+
+
 def _summary(events, payloads, bin_for):
     turns = [e for e in events
              if e['label'] == 'ShowTurn' and 'player' in e]
+    #: ★ 2026-10-20：ShowTurn 链里有控制器残渣时**整条作废**
+    #: （`first_player` / `total_turns` / `lp_final` 全部不可信），
+    #: 宁可判不出（None）也不要把残渣当先手证据 —— 用户实报「我先手却判成
+    #: 后手」就是这么来的（record_20261020_215925 / record_20261010_203819）。
+    if _turns_is_residue(turns):
+        turns = []
     info = payloads.get('ShowAction') or {}
     entries = []
     if info.get('count'):
@@ -880,20 +995,36 @@ def _display_deck_name(name):
     近似匹配，别名「狱神神艺」命中时 `name` 是 `Artmage`（≠查询词），
     只比 `name` 会漏掉全部别名命中（2026-10-17 踩过）。
     """
+    key = str(name).strip()
+    if not key:
+        return None
+    if key in _DISPLAY_NAME_CACHE:
+        return _DISPLAY_NAME_CACHE[key]
+    got = None
     try:
-        from core.storage import Storage
-        storage = Storage()
-        key = str(name).strip()
+        global _DISPLAY_STORAGE
+        if _DISPLAY_STORAGE is None:
+            from core.storage import Storage
+            _DISPLAY_STORAGE = Storage()
+        storage = _DISPLAY_STORAGE
         for d in (storage.search_meta_decks(key, limit=5) or []):
             names = [str(d.get(k) or '').strip()
                      for k in ('name', 'name_display', 'name_cn', 'name_ja')]
             names += [str(a or '').strip()
                       for a in (d.get('aliases') or [])]
             if key in [n for n in names if n]:
-                return d.get('name_cn') or d.get('name_display') or d.get('name')
+                got = (d.get('name_cn') or d.get('name_display')
+                       or d.get('name'))
+                break
     except Exception:                                        # noqa: BLE001
-        pass
-    return None
+        return None                    # 读失败不缓存（下次还要试）
+    _DISPLAY_NAME_CACHE[key] = got
+    return got
+
+
+def refresh_display_name_cache() -> None:
+    """清掉卡组名归一缓存（正式库据变了、要重算时调）。"""
+    _DISPLAY_NAME_CACHE.clear()
 
 
 def to_row(duel):

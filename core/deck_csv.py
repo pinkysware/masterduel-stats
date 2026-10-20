@@ -128,12 +128,21 @@ def set_cell(row, idx, name, value):
 
 
 def write(path, header, rows):
-    """写回覆盖表：**BOM + LF**（跟仓库里现有文件一致，Excel 也认）。"""
+    """写回覆盖表：**BOM + LF**（跟仓库里现有文件一致，Excel 也认）。
+
+    ★ 2026-10-18（BUG-B2A-03）：改成**原子写** —— 先落 `<path>.tmp` 再
+    `os.replace`。原实现直接 `open(path, 'wb')`，会在写第一个字节前就把真源
+    截断；此时崩溃 / 磁盘满 / 进程被杀 → 用户手填的覆盖表只剩 0 字节或半截
+    CSV（`data/deck_name_cn.csv` 不可再生）。现在要么全成功、要么**原文件
+    保持原样**。
+
+    返回 `True` / `False`（失败时原文件不变），调用方据此提示用户。
+    """
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator='\n')
     writer.writerow(list(header))
     for r in rows:
         writer.writerow(list(r))
-    with open(path, 'wb') as f:
-        f.write(b'\xef\xbb\xbf')
-        f.write(buf.getvalue().encode('utf-8'))
+    from core import atomic
+    return atomic.write_bytes(
+        path, b'\xef\xbb\xbf' + buf.getvalue().encode('utf-8'))

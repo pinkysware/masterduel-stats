@@ -85,15 +85,32 @@ class QtTrimManifestTest(unittest.TestCase):
 
     def test_has_core_qt(self):
         for n in ('Qt6Core.dll', 'Qt6Gui.dll', 'Qt6Widgets.dll',
-                  'Qt6Network.dll', 'Qt6Svg.dll', 'Qt6DBus.dll',
-                  'Qt6Concurrent.dll', 'Qt6OpenGL.dll',
-                  'Qt6OpenGLWidgets.dll', 'Qt6PrintSupport.dll',
+                  'Qt6Network.dll', 'Qt6Svg.dll',
                   'QtCore.pyd', 'QtGui.pyd', 'QtWidgets.pyd',
-                  'QtNetwork.pyd', 'QtSvg.pyd', 'QtDBus.pyd',
-                  'QtConcurrent.pyd', 'QtOpenGL.pyd',
-                  'QtOpenGLWidgets.pyd', 'QtPrintSupport.pyd',
+                  'QtNetwork.pyd', 'QtSvg.pyd',
                   '__init__.py'):
             self.assertIn(n, self.manifest, n)
+        # ★ 2026-10-19 用户拍板：这 4 个 pyd 零引用且打包后必然 DLL load failed，
+        #   已从白名单删掉（QT_PYDS 10 -> 6）。别再加回来 —— 要用就得同时把
+        #   对应 dll 从 QT_RETIRED_TOP 拿掉。
+        for n in ('QtDBus.pyd', 'QtConcurrent.pyd', 'QtOpenGL.pyd',
+                  'QtOpenGLWidgets.pyd', 'QtPrintSupport.pyd'):
+            self.assertNotIn(n, self.manifest, '%s 应立即删除（零引用）' % n)
+
+    def test_dll_lists_do_not_contradict(self):
+        """★ BUG-B2A-18：同一个 dll 不能既在 `QT_DLLS`（要拷）又在
+        `QT_RETIRED_TOP`（要删）里 —— 补丁 / 增量打包会把它当旧件删掉。"""
+        both = sorted(set(qt_trim.QT_DLLS)
+                      & {os.path.splitext(n)[0]
+                         for n in qt_trim.QT_RETIRED_TOP})
+        self.assertEqual(both, [], '既拷又删的 dll：%r' % (both,))
+
+    def test_retired_qt_dlls_are_not_copied(self):
+        """退役的 5 个 dll（只留 .pyd 的那批）**不在** manifest 里。"""
+        for n in ('Qt6PrintSupport.dll', 'Qt6OpenGL.dll',
+                  'Qt6OpenGLWidgets.dll', 'Qt6Concurrent.dll',
+                  'Qt6DBus.dll'):
+            self.assertNotIn(n, self.manifest, n)
 
     def test_has_binding_runtime(self):
         """★ `pyside6.abi3.dll` 是绑定层本体 —— 漏了 `import QtWidgets` 直接

@@ -143,11 +143,20 @@ class BanCard(QWidget):
         lab = _lab(name, 'body', size=theme.PAGE_F_BODY)
         lab.setMinimumWidth(0)
         hl.addWidget(lab, 1)
-        self.status = _lab(tr(str(row.get('status') or '')), 'body',
+        # ★ BUG-B6-06：`ui_state.banlist_page_data` 给的 `status` 已经是
+        #   **当前语言的显示文案**（中文「禁止」/ 英文「Forbidden」），语义 key
+        #   在 `status_key`。旧代码拿 `status` 去 `STATUS_COLOR`（键是
+        #   `Forbidden/Limited 1/...`）查色 → 中文界面**全部落到兜底灰**，
+        #   禁止/限制/准限制三色形同不存在；英文界面 `tr('Forbidden')`
+        #   二次翻译查不到 → 显示 `⟦Forbidden⟧`。
+        #   现在按语义 key 走：文字用 `_status_lab`、颜色用 `STATUS_COLOR`，
+        #   与同文件 `_status_block` / `_summary_text` 一致。
+        _skey = _row_key(row, 'status')
+        self.status = _lab(_status_lab(_skey), 'body',
                            size=theme.PAGE_F_SMALL)
         self.status.setStyleSheet(
             'color: %s; background: transparent;'
-            % STATUS_COLOR.get(row.get('status'), theme.INK_MUTED))
+            % STATUS_COLOR.get(_skey, theme.INK_MUTED))
         hl.addWidget(self.status)
 
 
@@ -177,6 +186,8 @@ class BanlistPage(QWidget):
         self._runner_factory = runner_factory or (
             lambda script, args: ScriptRunner(script, args))
         self._runner = None
+        #: 当前网格列数（BUG-B6-08：resizeEvent 重排用）
+        self._grid_cols_now = 0
         outer = QVBoxLayout(self)
         outer.setContentsMargins(theme.S_LG, theme.S_MD, theme.S_LG, theme.S_LG)
         outer.setSpacing(theme.S_MD)
@@ -217,6 +228,9 @@ class BanlistPage(QWidget):
         self.scroll.setWidget(self.host)
         outer.addWidget(self.scroll, 1)
         self._art_busy = False
+        #: ★ BUG-B6-10：卡绘下载的代次令牌（`set_data` 换代）
+        self._art_gen = 0
+        self._art_thread = None
         self._art_ready.connect(self._on_art_ready)
 
     # ------------------------------------------------------------ 抓取（联网）
@@ -249,8 +263,14 @@ class BanlistPage(QWidget):
         if not missing:
             return
         self._art_busy = True
+        #: ★ BUG-B6-10（2026-10-19 审查点名）：`_art_busy` **只置 True 从不复位**
+        #:   —— 线程被下面的 `return`（页面销毁 / emit 失败）提前退出时，标志
+        #:   永远停在 True，刷新后新卡的卡绘再也下不来（要重启看板）。
+        #:   修法 = 整个线程体包 try/finally，**无论怎么退出都复位**；
+        #:   外加代次令牌：刷新（`set_data`）换代，旧线程收尾时不抢新线程的状态。
+        gen = self._art_gen
 
-        def work(names):
+        def work(names, my_gen):
             from core import card_art
             try:
                 from shiboken6 import isValid
@@ -267,30 +287,40 @@ class BanlistPage(QWidget):
                     return False
 
             todo = list(names)
-            for _round in range(3):          # 偶发失败有 3 轮机会（实测有单张第一次 404/超时）
-                still = []
-                for name in todo:
-                    if not alive():
-                        return
-                    try:
-                        ok = bool(card_art.fetch_art(name_en=name))
-                    except Exception:                    # noqa: BLE001
-                        ok = False
-                    if ok:
+            try:
+                for _round in range(3):      # 偶发失败有 3 轮机会（实测有单张第一次 404/超时）
+                    still = []
+                    for name in todo:
                         if not alive():
                             return
                         try:
-                            self._art_ready.emit(name)
-                        except RuntimeError:             # C++ 对象没了（兜底）
-                            return
-                    else:
-                        still.append(name)
-                todo = still
-                if not todo:
-                    break
-                time.sleep(2.0)  # 下一轮前歇口气（别对同一批连续猛拉）
+                            ok = bool(card_art.fetch_art(name_en=name))
+                        except Exception:                # noqa: BLE001
+                            ok = False
+                        if ok:
+                            if not alive():
+                                return
+                            try:
+                                self._art_ready.emit(name)
+                            except RuntimeError:         # C++ 对象没了（兜底）
+                                return
+                        else:
+                            still.append(name)
+                    todo = still
+                    if not todo:
+                        break
+                    time.sleep(2.0)  # 下一轮前歇口气（别对同一批连续猛拉）
+            finally:
+                #: 只有当前代次才复位（切数据后旧线程别抢新线程的忙碌位）
+                if my_gen == self._art_gen:
+                    self._art_busy = False
 
-        threading.Thread(target=work, args=(missing,), daemon=True).start()
+        #: 留住线程句柄：页面销毁时等它收尾（`shutdown()`）——
+        #: 线程还在跑、QApplication 已经销毁的话，最后那次 `emit` 是
+        #: access violation（2026-10-03 段错误同款，只是换了个触发点）。
+        self._art_thread = threading.Thread(target=work, args=(missing, gen),
+                                            daemon=True)
+        self._art_thread.start()
 
     def _on_art_ready(self, name_en: str) -> None:
         """一张图下好了 -> 就地回填（不整页重画，避免打断滚动）。"""
@@ -311,8 +341,22 @@ class BanlistPage(QWidget):
     # ------------------------------------------------------------ 数据
     def set_data(self, data: dict) -> None:
         self._data = dict(data or {})
+        #: ★ BUG-B6-10：刷新 = 换代；旧线程还挂着也不拦新的这批
+        self._art_gen += 1
+        self._art_busy = False
         self._rebuild()
         self._warm_art()          # 缺的卡绘后台下（不卡界面）
+
+    def shutdown(self) -> None:
+        """等后台卡绘线程收尾（页面销毁 / 测试 teardown 前调）。
+
+        没有它的话，线程可能在 `deleteLater` 之后、Qt 已销毁的窗口上 emit
+        —— 进程退出时的随机 `Segmentation fault`。
+        """
+        self._art_gen += 1        # 换代：线程看到代次不符就不会再 emit
+        th = getattr(self, '_art_thread', None)
+        if th is not None and th.is_alive():
+            th.join(timeout=3.0)
 
     def _clear(self):
         while self.col.count():
@@ -339,6 +383,29 @@ class BanlistPage(QWidget):
             txt += tr(' · 最近生效 %s') % eff
         return txt
 
+    def _grid_cols(self) -> int:
+        """可视区宽度 → 网格列数（**放得下才给列**，不会撑出横向滚动条）。
+
+        ★ BUG-B6-08：与 `deck_view_page.cols_for_width` 同一口径。
+        `n` 列占宽 = ``n*CARD_W + (n-1)*S_SM`` ≤ 视口宽
+        → ``n ≤ (w+S_SM)//(CARD_W+S_SM)``。
+        """
+        try:
+            w = int(self.width())
+        except Exception:
+            w = 0
+        if w <= 0:
+            w = 1200        # 还没 show（取不到宽度）：按主区最小宽估
+        return max(1, (w + theme.S_SM) // (CARD_W + theme.S_SM))
+
+    def resizeEvent(self, event) -> None:                    # noqa: N802
+        """窗口变了 → 列数可能变 → 重排整页（数据已在 self._data）。"""
+        super().resizeEvent(event)
+        cols = self._grid_cols()
+        if cols != self._grid_cols_now:
+            self._grid_cols_now = cols
+            self.set_data(self._data)
+
     def _status_block(self, status: str, rows) -> QWidget:
         box = QWidget()
         v = QVBoxLayout(box)
@@ -353,9 +420,14 @@ class BanlistPage(QWidget):
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(theme.S_SM)
+        # ★ BUG-B6-08：列数按**可视宽**算，不再写死 5 列。
+        #   5×210 + 4×S_SM > 最小窗口 1200×620 下的视口 → 必出横向滚动条
+        #   （用户 2026-09-21 明确要求本页不出横滚）。
+        cols = self._grid_cols()
+        self._grid_cols_now = cols
         for i, row in enumerate(rows):
-            grid.addWidget(BanCard(row), i // GRID_COLS, i % GRID_COLS)
-        for j in range(GRID_COLS):
+            grid.addWidget(BanCard(row), i // cols, i % cols)
+        for j in range(cols):
             grid.setColumnStretch(j, 1)
         v.addLayout(grid)
         v.addStretch(1)

@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJ)
@@ -254,6 +255,41 @@ class TestRecordsIO(unittest.TestCase):
         with open(self.path, 'rb') as f:
             raw = f.read()
         self.assertNotIn(b'\r\n', raw)
+
+class TestGameDirAndSingleton(unittest.TestCase):
+    """★ BUG-B8-15 / B8-15b：游戏目录认 `MD_GAME_DIR`；读失败 ≠ 实例消失。"""
+
+    def test_game_dir_honours_env(self):
+        old = os.environ.get('MD_GAME_DIR')
+        os.environ['MD_GAME_DIR'] = 'X:/fake/Master Duel'
+        try:
+            self.assertEqual(cdm.DuelModeReader().game_dir, 'X:/fake/Master Duel')
+        finally:
+            if old is None:
+                os.environ.pop('MD_GAME_DIR', None)
+            else:
+                os.environ['MD_GAME_DIR'] = old
+
+    def test_read_failure_is_not_duel_end(self):
+        """读静态区失败（ok=False）must be `in_duel=None`，不能当「不在对局」。"""
+        r = cdm.DuelModeReader()
+        r._proc = object()            # 非 None 即可
+        r._ti = 0x1000
+        with mock.patch.object(cdm, 'read_singleton_slot',
+                               return_value=(0, False)):
+            s = r.sample()
+        self.assertIsNone(s.in_duel, '读失败被当成「不在对局」—— 会静默漏局')
+
+    def test_slot_zero_is_no_duel(self):
+        r = cdm.DuelModeReader()
+        r._proc = object()
+        r._ti = 0x1000
+        with mock.patch.object(cdm, 'read_singleton_slot',
+                               return_value=(0, True)):
+            s = r.sample()
+        self.assertIs(s.in_duel, False, '读到了、槽位为 0 = 真的不在对局')
+
+
 
 
 if __name__ == '__main__':

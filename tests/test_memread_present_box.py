@@ -287,6 +287,43 @@ class TestFakeChain(unittest.TestCase):
         obj = self.chain.mem.alloc(0x30)      # 什么都不放 —— 读炸 → None
         self.assertIsNone(pb.read_element(proc, obj, fields))
 
+class TestPathsAndGameDir(unittest.TestCase):
+    """★ B3-04 / B3-05：缓存路径跟 `paths.DATA_DIR` 走、游戏目录认 `MD_GAME_DIR`。"""
+
+    def test_cache_path_follows_data_dir(self):
+        from core import paths
+        self.assertTrue(os.path.isabs(pb.CACHE_PATH),
+                        'CACHE_PATH 是相对路径 —— 安装版会写到只读的安装目录')
+        self.assertEqual(os.path.normcase(os.path.dirname(pb.CACHE_PATH)),
+                         os.path.normcase(paths.DATA_DIR))
+
+    def test_game_dir_honours_env(self):
+        old = os.environ.get('MD_GAME_DIR')
+        os.environ['MD_GAME_DIR'] = 'X:/fake/Master Duel'
+        try:
+            self.assertEqual(pb._candidate_game_dirs(), ['X:/fake/Master Duel'])
+        finally:
+            if old is None:
+                os.environ.pop('MD_GAME_DIR', None)
+            else:
+                os.environ['MD_GAME_DIR'] = old
+
+    def test_missing_metadata_reason_mentions_env(self):
+        """目录里没有 metadata -> 提示要指向 MD_GAME_DIR，而不是「等游戏加载完」。"""
+        old = os.environ.get('MD_GAME_DIR')
+        os.environ['MD_GAME_DIR'] = 'X:/definitely/not/here'
+        try:
+            msg = pb.game_metadata_missing_reason()
+        finally:
+            if old is None:
+                os.environ.pop('MD_GAME_DIR', None)
+            else:
+                os.environ['MD_GAME_DIR'] = old
+        self.assertIn('MD_GAME_DIR', msg)
+        self.assertNotIn('加载完', msg)
+
+
+
 
 if __name__ == '__main__':
     unittest.main()

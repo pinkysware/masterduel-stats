@@ -24,6 +24,26 @@ from core.memread.il2cpp import find_singleton, find_typeinfo, list_fields
 from core.memread.il2cpp_obj import (boxed_int, class_name_of, dict_items,
                                      list_items, read_string)
 
+#: 字段白名单（**按名查偏移**，不在表里 / 查不到都直接失败 —— 偏移不猜）
+DUELCLIENT_FIELDS = ('<engineInitializer>k__BackingField',)
+INITIALIZER_FIELDS = ('<duelSettings>k__BackingField',)
+
+
+def _offset(fields, name):
+    """字段表里按名取偏移；查不到给 ``None``（**绝不退回 0**）。
+
+    ``fields`` 既接受 ``{名字: FieldEntry}`` 也接受 ``{名字: 偏移}``。
+
+    ★ BUG-B3-06：原来写的是 ``df.get(name, 0)`` —— 偏移 0 正好是 IL2CPP
+    对象头的 ``klass`` 指针，真机上它是个**有效地址**，两道地址校验都会放过，
+    最后返回一个「全是 None 的 dict」而不是 None，调用方会当成「读到了」。
+    """
+    for key in (name, name.strip('<>').replace('k__BackingField', '')):
+        f = fields.get(key)
+        if f is not None:
+            return getattr(f, 'offset', f)
+    return None
+
 #: 方向（**实机定案 2026-09-13，2/2 样本**）：duelSettings 的 name 列表
 #: **按座位排** —— names[i] = player i 的名字，不是固定的「0=对手」。
 #: 证据：局 1 seat=0 -> names[0]='示例玩家'（我）；局 3 seat=1 ->
@@ -74,13 +94,18 @@ def read_duel_settings(proc, mirror, tbl, dc_ti=None):
             return None
         df = {f.name: f.offset
               for f in list_fields(proc, ti, mirror=mirror)}
-        init = proc.read_ptr(dc + df.get('<engineInitializer>k__BackingField',
-                                         0)) if df else 0
+        off = _offset(df, '<engineInitializer>k__BackingField')
+        if off is None:
+            return None                  # 字段名变了 -> 偏移不猜，宁可不读
+        init = proc.read_ptr(dc + off)
         if not init or init < 0x10000:
             return None
         ifl = {f.name: f.offset
                for f in list_fields(proc, proc.read_ptr(init), mirror=mirror)}
-        ds = proc.read_ptr(init + ifl.get('<duelSettings>k__BackingField', 0))
+        off = _offset(ifl, '<duelSettings>k__BackingField')
+        if off is None:
+            return None
+        ds = proc.read_ptr(init + off)
         if not ds or ds < 0x10000:
             return None
         pairs = dict_items(proc, mirror, ds) or []

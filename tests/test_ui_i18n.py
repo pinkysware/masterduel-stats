@@ -142,3 +142,67 @@ class SmokeEnJpTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class FallbackAndDuplicateKeysTest(unittest.TestCase):
+    """★ BUG-B7-05 / B7-06（2026-10-20）。
+
+    B7-05：未收录键要**回落中文**（模块 docstring 的原话），`⟦⟧` 只在
+    `MD_I18N_STRICT=1`（开发期查漏）时出现。
+    B7-06：`先手` / `后手` 曾有**重复键**把短文案覆盖成长文案
+    （`First` -> `Going 1st`，75px vs 战绩页 56px 列宽 → 裁字）。
+    """
+
+    def setUp(self):
+        self._lang = i18n._LANG
+        self._strict = i18n.STRICT
+
+    def tearDown(self):
+        i18n._LANG = self._lang
+        i18n.STRICT = self._strict
+
+    def test_untranslated_key_falls_back_to_chinese(self):
+        i18n.STRICT = False
+        i18n._LANG = 'en'
+        self.assertEqual(i18n.tr('这条一定没收录zzz'), '这条一定没收录zzz')
+        i18n._LANG = 'ja'
+        self.assertEqual(i18n.tr('这条一定没收录zzz'), '这条一定没收录zzz')
+
+    def test_strict_mode_marks_missing_keys(self):
+        i18n.STRICT = True
+        i18n._LANG = 'en'
+        self.assertEqual(i18n.tr('另一条没收录zzz'), '⟦另一条没收录zzz⟧')
+
+    def test_missing_key_recorded_even_without_strict(self):
+        """查漏名单照样记（否则开发期根本不知道漏了多少）。"""
+        i18n.STRICT = False
+        i18n._LANG = 'en'
+        key = '第三条没收录zzz'
+        if key in i18n.MISSES:
+            i18n.MISSES.remove(key)
+        i18n.tr(key)
+        self.assertIn(key, i18n.MISSES)
+
+    def test_first_second_are_short(self):
+        """`先手`/`后手` 必须是短文案（56px 列宽）。"""
+        self.assertEqual(i18n._T['先手'][0], 'First')
+        self.assertEqual(i18n._T['后手'][0], 'Second')
+
+    def test_no_duplicate_keys(self):
+        """`_T` 里不许有重复键 —— 重复会静默覆盖（B7-06 就是这么来的）。
+
+        直接扫源码文本（dict 字面量在 import 后已经折叠，看不到重复）。
+        """
+        import re
+        path = os.path.join(PROJ, 'ui', 'i18n.py')
+        seen, dups = set(), []
+        with open(path, encoding='utf-8') as f:
+            for line in f:
+                m = re.match(r"^    '([^']+)':", line)
+                if not m:
+                    continue
+                k = m.group(1)
+                if k in seen:
+                    dups.append(k)
+                seen.add(k)
+        self.assertEqual(dups, [], '重复键（后者静默覆盖前者）：%r' % dups)
+

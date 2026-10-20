@@ -13,8 +13,11 @@
                                                              # ★ 直接取站内某卡组的图
     python tools/set_deck_image.py 烙印 --reset               # 撤掉自换的图，回到站内图
 
-图片格式：装了 Pillow 就自动转成 **200x200 webp**（和其他卡图统一）；
-没装就原样拷贝（尺寸不变，界面会自己缩放）。
+图片格式：**一律归一化成 200x200 webp**（居中裁剪 + 缩放，和其他卡图统一）——
+归一化在 `core.deck_images._normalize_to_webp`，**Pillow 优先、没有就走 Qt**
+（Qt 是项目本来就有的依赖，不需要 QApplication）。只有 Pillow 与 Qt 都不可用时
+才原样拷贝（那时文案会明说「尺寸未统一」）。★ BUG-B9A-04：原先文案按
+「有没有装 Pillow」猜，本机没装 Pillow 就永远说「原样拷贝」，与实际行为不符。
 
 ★ 2026-10-08（用户报「自定义卡组没有卡图」）：
   * `find_deck` 找不到 `meta_decks` 条目时**不再直接报错** —— 游戏内自组卡组名
@@ -61,32 +64,43 @@ def convert(src, dst_base):
     """把 ``src`` 存成覆盖目录里的 ``<dst_base>.*``，返回 ``(产出路径, 说明)``。
 
     ⚠️ 实现已搬到 :func:`core.deck_images.save_custom_image`（**口径只有一份**）——
-    UI 也要用同一个，而 `ui/` 不许 import `tools/`。这里只是薄封装，
-    带上「有没装 Pillow」的说明文字。
+    UI 也要用同一个，而 `ui/` 不许 import `tools/`。
+
+    ★ BUG-B9A-04：说明文字**量产物**，不再按「有没有装 Pillow」猜。归一化其实
+    由 `save_custom_image` 的 Pillow -> Qt 两条腿完成；本机没 Pillow 也照样
+    产出 200x200 webp（Qt 那条腿），旧文案却永远说「原样拷贝」。
     """
-    try:
-        from PIL import Image                      # noqa: F401
-        have_pil = True
-    except ImportError:
-        have_pil = False
     base_name = os.path.splitext(os.path.basename(dst_base))[0]
+    src_size = _src_size(src)
     rel = dimg.save_custom_image(base_name, src, TARGET_SIZE)
     if rel is None:
         return None, '写入失败'
     dst = os.path.join(PROJ, rel.replace('/', os.sep))
-    note = ('%dx%d -> %dx%d webp' % (*_src_size(src), TARGET_SIZE, TARGET_SIZE)
-            if have_pil else
-            '原样拷贝（没装 Pillow，尺寸未统一；用内置 Python 跑可自动转 200x200 webp）')
+    out_size = _src_size(dst)
+    if rel.lower().endswith('.webp'):
+        note = '%dx%d -> %dx%d webp（居中裁剪 + 缩放）' % (src_size + out_size)
+    else:
+        note = ('原样拷贝（%dx%d -> %dx%d）：Pillow 与 Qt 都不可用，'
+                '尺寸未统一，界面会自己缩放' % (src_size + out_size))
     return dst, note
 
 
 def _src_size(path):
+    """读图片尺寸 —— Pillow 优先，没有就走 Qt（本机就没装 Pillow）。"""
     try:
         from PIL import Image
         with Image.open(path) as im:
             return im.size
     except Exception:                              # noqa: BLE001
-        return (0, 0)
+        pass
+    try:
+        from PySide6.QtGui import QImage
+        img = QImage(path)
+        if not img.isNull():
+            return (img.width(), img.height())
+    except Exception:                              # noqa: BLE001
+        pass
+    return (0, 0)
 
 
 def cmd_list(st):

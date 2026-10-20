@@ -699,8 +699,11 @@ class DemoDeckPagesTest(_LangCnMixin, unittest.TestCase):
     干净克隆上也得画得出来 —— 这是它和「直接读真文件」那条路的差别。
     """
 
+    #: ★ BUG-A6-02 新增 `ref_missing`：参照库整份缺失时页面要给出
+    #: 「去数据工具刷新」的提示（与「这副卡组没样本」区分开）。
     COMP_KEYS = {'name', 'display', 'tier', 'total', 'avg_main', 'has_ref',
-                 'main', 'extra', 'unknown', 'options', 'ref_fetched_at'}
+                 'main', 'extra', 'unknown', 'options', 'ref_fetched_at',
+                 'ref_missing'}
 
     def test_composition_keys_and_content(self):
         d = ui_demo.demo_deck_composition()
@@ -719,4 +722,34 @@ class DemoDeckPagesTest(_LangCnMixin, unittest.TestCase):
         self.assertEqual(ui_demo.demo_deck_composition('K9vs')['name'],
                          'Vanquish Soul K9')
         self.assertFalse(ui_demo.demo_deck_composition('不存在的卡组')['has_ref'])
+
+class DemoRankNameTest(unittest.TestCase):
+    """★ BUG-B2A-16：demo 不许自带段位名副本。
+
+    旧副本 `_RANK_NAME = {2:'Silver', 3:'Gold', 4:'Gold', ...}` 缺 Rookie、
+    把 3 和 4 都映成 Gold —— demo 展示的段位名与真机不一致
+    （"demo 绿、真机不对"那一类坑）。现在直接转调 `core.ranks.rank_label`。
+    """
+
+    def test_demo_big_rank_names_match_real_source(self):
+        from core import ranks, ui_demo
+        for big in range(1, 8):
+            expect = ranks.rank_label(big, 1)
+            self.assertEqual(ui_demo._label((big, 1)), expect,
+                             '大段 %d 的 demo 名与真源不一致' % big)
+
+    def test_silver_is_not_gold(self):
+        """3 号必须叫 Silver（旧副本里 3 和 4 都是 Gold）。"""
+        from core import ui_demo
+        self.assertEqual(ui_demo._label((3, 2)), 'Silver 2')
+        self.assertEqual(ui_demo._label((4, 2)), 'Gold 2')
+
+    def test_rookie_exists(self):
+        from core import ui_demo
+        self.assertEqual(ui_demo._label((1, 0)), 'Rookie')
+
+    def test_no_rank_name_copy_left(self):
+        from core import ui_demo
+        self.assertFalse(hasattr(ui_demo, '_RANK_NAME'),
+                         '副本必须删掉（真源 = core.ranks.RANK_NAMES）')
 

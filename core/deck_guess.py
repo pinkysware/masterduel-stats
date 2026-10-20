@@ -101,7 +101,13 @@ _DATA_CACHE = {}
 
 
 def load_reference(path=None):
-    """读参照库。文件不在 → 空参照（调用方据此说「没有建议」）。"""
+    """读参照库。文件不在 → 空参照（调用方据此说「没有建议」）。
+
+    ★ BUG-A6-02（2026-10-20）：**文件不在**和**文件在但读不出内容**要能区分 ——
+    旧代码两种情况都静默返回 `{}`，界面上表现为「AI 建议全空」且**没有任何提示**
+    （用户以为「这局本来就没建议」，实际是参照库没跑过 / 被删了）。
+    缺失判据见 :func:`reference_missing`。
+    """
     path = path or DEFAULT_REFERENCE
     if path in _DATA_CACHE:
         return _DATA_CACHE[path]
@@ -113,6 +119,23 @@ def load_reference(path=None):
         data = {}
     _DATA_CACHE[path] = data
     return data
+
+
+def reference_missing(path=None) -> bool:
+    """参照库**根本不存在 / 里面一副卡组都没有**（= 该提示用户去刷新）。
+
+    与 `load_reference()` 返回 `{}` 的区别：那个 `{}` 也可能是「文件坏了」，
+    这一条只回答「要不要给用户一句『参照库缺失』的提示」。
+    """
+    path = path or DEFAULT_REFERENCE
+    try:
+        if not os.path.exists(path):
+            return True
+        data = load_reference(path)
+        decks = data.get('decks') if isinstance(data, dict) else None
+        return not (isinstance(decks, dict) and decks)
+    except Exception:                                    # noqa: BLE001
+        return True                                      # 读不出来 = 当缺
 
 
 def clear_reference_cache(path=None) -> None:
@@ -279,11 +302,100 @@ def known_deck_names():
         #   ⚠️ 只影响**反推候选**；Tier 表仍列出全部混轴（那是另一条路径）。
         if str(r.get('kind') or '').strip() == 'engine':
             continue
-        for k in (r.get('name'), r.get('name_display'), r.get('name_cn')):
+        # ★ BUG-B2A-07：收**五字段 + 别名**，与 `deck_images.build_index` /
+        #   AGENTS 铁律 7「比所有叫法」同一口径。原来只有 3 个字段，于是
+        #   「用户改过显示名 / 只有别名或日文名对得上」的条目会被当成
+        #   「用户不认可」滤掉 → 漏候选；反过来已删条目若英文名仍在隐藏行
+        #   里也照样留下。真库当前 119 条参照库条目全在 3 字段里可达
+        #   （= 现在不触发），但这是迟早会撞上的口径漂移。
+        for k in (r.get('name'), r.get('name_display'), r.get('name_cn'),
+                  r.get('name_ja')):
             k = str(k or '').strip()
             if k:
                 names.add(k)
+        for a in (r.get('aliases') or []):
+            k = str(a or '').strip()
+            if k:
+                names.add(k)
     return names or None
+
+
+def engine_kinds():
+    """`meta_decks` 里 `kind='engine'` 的条目名集合（拿不到返回空集）。
+
+    ★ 2026-10-20：这些条目**绝不能进反推候选**。用户口径（AGENTS 铁律 7）：
+    站内把混轴叫 `Xxx Engine`，我们不用这个分类 —— engine 行保留为**隐藏条目**
+    只为 Tier 表列出全部混轴，选择器 / 标注**只该见 deck_type**。
+
+    ⚠️ 不能只靠 :func:`known_deck_names` 的 keep 过滤：那个集合收的是
+    **所有叫法的并集（含别名）**，而 `Elfnote` 的别名里就有历史遗留的
+    `Elfnote Engine` —— 会让 engine 条目被「别名捞回来」，正是实机事故。
+    """
+    try:
+        from core.storage import Storage
+        rows = Storage().list_meta_decks(include_hidden=True) or []
+    except Exception:                                    # noqa: BLE001
+        return set()
+    return {str(r.get('name') or '').strip() for r in rows
+            if str(r.get('kind') or '').strip() == 'engine'
+            and str(r.get('name') or '').strip()}
+
+
+def _fold_engines(decks):
+    """把 `kind='engine'` 的条目按 `source_name` 并进目标条目（返回新 dict）。
+
+    ★ 2026-10-20 用户口径：候选里只显示**具体卡组名**，但混轴的卡表要能用
+    （「巳剑黯蜜就取 Yummy Engine 的参照库」）。
+
+    * 目标 = 条目的 ``source_name``；目标条目不在参照库里时**以 engine 条目的
+      显示名新建**（例：`Mitsurugi Yummy` 不在库里 -> 用「巳剑黯蜜」这个名字）；
+    * 合并语义 = 逐卡 per 取**最大值**（并集，不是平均 —— 那是
+      `tools/fetch_mdm_decks.py` 建 engine 条目时的事，这里只负责归并）；
+    * 目标已有的 tier / total 保留（那是具体卡组的真身属性）。
+
+    ⚠️ 纯函数、不碰库 —— 单测直接喂 dict 就能锁行为。
+    """
+    if not isinstance(decks, dict) or not decks:
+        return decks
+    eng = engine_kinds()
+    if not eng:
+        return decks
+    out = {k: v for k, v in decks.items() if k not in eng}
+    for name in sorted(eng):
+        d = decks.get(name)
+        if not isinstance(d, dict):
+            continue                      # 参照库里没有这条 engine（正常）
+        target = (d.get('source_name') or '').strip() or name
+        #: ⚠️ `source_name` 指向**自己**时没有归并意义（等于自我合并），
+        #: 直接丢 —— 否则这条 engine 会原样留在候选里（实测踩过：
+        #: 合成参照库里 `Elfnote Engine` 的 source_name 就是它自己）。
+        if target == name:
+            continue
+        src_cards = d.get('cards') or {}
+        if not src_cards:
+            continue
+        base = out.get(target)
+        if base is None:
+            #: 目标条目不在参照库 -> 用 engine 的显示名新建（中文名优先，
+            #: 例 `Mitsurugi Yummy` -> 「巳剑黯蜜」）
+            out[target] = {'tier': d.get('tier'),
+                           'source_name': target,
+                           'total': d.get('total'),
+                           'cards': dict(src_cards)}
+            continue
+        merged = dict(base.get('cards') or {})
+        for cid, info in src_cards.items():
+            per = (info or {}).get('per') if isinstance(info, dict) else info
+            if per is None:
+                continue
+            old = merged.get(cid)
+            old_per = (old or {}).get('per') if isinstance(old, dict) else old
+            if old_per is None or per > old_per:
+                merged[cid] = info
+        base = dict(base)
+        base['cards'] = merged
+        out[target] = base
+    return out
 
 
 def prepare(reference, groups=None, keep=None):
@@ -306,6 +418,25 @@ def prepare(reference, groups=None, keep=None):
         if dropped:
             reference = dict(reference)
             reference['decks'] = {k: v for k, v in decks.items() if k in keep}
+    #: ★★ 2026-10-20（用户实报「倒数第二局判成 Elfnote Engine」）：
+    #: engine 条目不进候选，但它的**卡表要归到具体卡组名下**。
+    #:
+    #: 用户口径（2026-10-20 拍板）：「混轴只显示在 Tier 表，具体名字还是要在
+    #: 卡组名管理里区分，不显示混轴」—— 所以反推候选里**只出现具体卡组名**
+    #: （狱神耀圣 / 巳剑黯蜜 / K9VS / 耀圣杀手旋律），永远不出现「耀圣混轴」。
+    #: 但混轴的**卡表数据要能用**：「巳剑黯蜜就取 Yummy Engine 的参照库」
+    #: （与狱神耀圣取耀圣混轴的卡表同理）—— 混轴卡表 = 各相关卡组的并集，
+    #: 证据比单轴更全。
+    #:
+    #: 实现：把 engine 条目的 cards 按 `source_name` 合并进目标条目
+    #: （取逐卡 per 的**最大值** —— 并集语义），然后删掉 engine 条目本身。
+    #:
+    #: ⚠️ 顺带修掉一个历史坑：`Elfnote` 的别名里带着 `Elfnote Engine`
+    #: （早期「engine 当别名」的口径），靠它 `keep` 会把 engine 条目捞回来。
+    #: 所以这里**不依赖 keep**，独立按 `engine_kinds()` 处理。
+    decks = _fold_engines(reference.get('decks') or {})
+    reference = dict(reference)
+    reference['decks'] = decks
     groups = build_name_groups() if groups is None else groups
     return build_index(reference, groups), groups
 
@@ -406,7 +537,9 @@ def guess_deck(revealed_ids, index, groups, prefill_tiers=PRE_FILL_TIERS):
                 score += math.log((per + ALPHA) / (100.0 + ALPHA))
         conf = (float(hits) / n) if n else 0.0
         tier = d.get('tier')
-        #: ★ 字段校验：条目名点名的字段，在露出卡里一个都没出现 -> 砍有效命中
+        #: ★ 字段校验：条目名点名的字段，在露出卡里一个都没出现 -> 砍有效命中。
+        #: （**豁免规则**在循环外统一算 —— 它要看「全体候选」的最优 per_hit，
+        #: 见下面的 `_clear_field_miss_when_dominant`。这里先原样记下缺字段。）
         fm = missing_named_fields(name, revealed_sc)
         cands.append({
             'name': name, 'tier': tier,
@@ -422,6 +555,23 @@ def guess_deck(revealed_ids, index, groups, prefill_tiers=PRE_FILL_TIERS):
             'eff_hits': max(0, hits - (FIELD_MISS_CUT if fm else 0)),
             'prefill': False,
         })
+    #: ★★ 2026-10-20（天杯龙局）：**「全解释且证据压倒性」的候选豁免字段砍分**。
+    #:
+    #: 事故：对手露出 5 张（含天杯龙本家 `哆啦哆啦`），`Tenpai Dragon` 命中
+    #: **5/5（全部解释）**、bayes −3.55（第二名 −8.05）、per 全 ≥40；但
+    #: `Dragon` 在 ygocdb 里映射到 24 个泛用龙族 setcode（真红眼/青眼/电子龙/
+    #: 雷龙…），并入 `Tenpai`(426) 后凑出 25 个字段，一个都没露面 -> 砍 2 张
+    #: -> eff=3，掉出「差 1 张同档」的档位 -> **输给只命中 4/5、per 均值 38.5
+    #: （最低 15）的同调士**。
+    #:
+    #: 只看 `confidence == 1.0` 不够（实测会掉准确率）：`Dracotail`(7/7)、
+    #: `Rose Dragon`(21/21) 这类**大卡表混轴**条目也常常全解释，它们本来
+    #: 就该被压。真正的区分点是 **per 强度**（`bayes/hits`，越小越强）：
+    #:   * 天杯龙 −0.71 vs 非全解释最佳 −2.01  -> 压倒性，豁免（改对了）
+    #:   * 烙印局 −0.91 vs −1.01              -> 几乎一样，不豁免
+    #:   * 耀圣杀手旋律局 −0.96 vs −0.56      -> 更差，不豁免
+    #: 回测（266 局）：107 -> 108（65.6% -> 66.3%），零退化局。
+    _clear_field_miss_when_dominant(cands)
     sort_candidates(cands)
     if cands:
         top = cands[0]
@@ -576,6 +726,41 @@ def _revealed_setcodes(ids, groups):
         except (TypeError, ValueError):
             pass
     return out
+
+
+def _clear_field_miss_when_dominant(cands):
+    """「全解释 + per 强度压倒性」的候选豁免字段砍分（**原地修改**）。
+
+    见 :func:`guess_deck` 里那段说明。判据两条同时成立：
+
+    1. ``confidence >= 1.0``（露出的每一张这张卡表里都有 = 没有凑数空间）；
+    2. ``bayes/hits`` **严格优于**所有「非全解释」候选里的最佳值 ——
+       只赢一点点不算（烙印局 −0.91 vs −1.01 就是这种），必须明显更强
+       （天杯龙 −0.71 vs −2.01）。
+
+    ⚠️ ``bayes/hits`` 是**负数**，越接近 0 越强 —— 所以「优于」是 ``>``，
+    不是 ``<``（2026-10-20 第一版就写反了，天杯龙一局都没救回来）。
+
+    豁免后 ``field_miss`` 清空、``eff_hits`` 回填成 ``hits``。
+    """
+    #: ⚠️ 只跟**有竞争力的**非全解释候选比（`conf >= TIER_TRUST_CONF`）——
+    #: 只命中 1 张的垃圾候选 per_hit 会低到 −17（如 `Labrynth`），
+    #: 拿它当「最佳」等于永远不豁免（2026-10-20 实测踩过）。
+    partial = [c for c in cands
+               if TIER_TRUST_CONF <= (c.get('confidence') or 0.0) < 1.0
+               and c.get('hits')]
+    if not partial:
+        return
+    #: ⚠️ 负数，`max` = **最强**（越接近 0 越好）
+    best_partial = max((c['bayes'] / c['hits']) for c in partial)
+    for c in cands:
+        if not c.get('field_miss'):
+            continue
+        if (c.get('confidence') or 0.0) < 1.0 or not c.get('hits'):
+            continue
+        if (c['bayes'] / c['hits']) > best_partial:
+            c['field_miss'] = []
+            c['eff_hits'] = c['hits']
 
 
 def sort_candidates(cands, mode='hits'):

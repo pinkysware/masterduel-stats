@@ -87,6 +87,19 @@ def write_pref(path: str) -> bool:
         return False
 
 
+def _remove_probe(path: str) -> None:
+    """删探针文件 —— 先判存在再删（别人已经删掉就不算失败）。
+
+    ★ BUG-B2A-17 的另一半：原来直接 `os.remove()`，文件被并发进程删掉时
+    抛 `OSError`，被外层 `except` 吃掉后返回 **False**（可写目录被判不可写）。
+    """
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
 def _writable(d: str) -> bool:
     """目录可写吗 —— **纯探测，不留副作用**（不建目录、不留文件）。
 
@@ -98,12 +111,17 @@ def _writable(d: str) -> bool:
       2. 目录不存在 -> 看**最近的已存在祖先**能不能写（能不能建出来由它决定）。
     """
     d = os.path.abspath(d)
+    #: ★ BUG-B2A-17：探针文件名**带 pid** —— 采集器 + UI + CLI 同时启动时
+    #:   各自探测同一目录，固定名 `.md_write_probe` 会互相盲删：
+    #:   A 建好、B 删掉、A 再删就抛 OSError（被下面吞掉）→ **可写目录被判成
+    #:   不可写**，数据被赶到 %LOCALAPPDATA%。带 pid 后各删各的。
+    probe_name = '.md_write_probe_%d' % os.getpid()
     try:
         if os.path.isdir(d):
-            probe = os.path.join(d, '.md_write_probe')
+            probe = os.path.join(d, probe_name)
             with open(probe, 'w', encoding='utf-8') as f:
                 f.write('x')
-            os.remove(probe)
+            _remove_probe(probe)
             return True
         # 往上找第一个已存在的祖先
         parent = os.path.dirname(d)
@@ -114,11 +132,11 @@ def _writable(d: str) -> bool:
             parent = nxt
         if not os.path.isdir(parent):
             return False
-        probe = os.path.join(parent, '.md_write_probe')
+        probe = os.path.join(parent, probe_name)
         try:
             with open(probe, 'w', encoding='utf-8') as f:
                 f.write('x')
-            os.remove(probe)
+            _remove_probe(probe)
             return True
         except OSError:
             return False

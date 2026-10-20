@@ -97,11 +97,19 @@ def prepare_data_dir() -> list:
     #: `archive/duel_records`（空），之后「目标目录空不空」的判据就失效 ->
     #: 对局记录一条都迁不过来。顺序反一下就没这个问题。
     legacy = paths.asset_path()       # = <安装目录>/data
+    # ★ BUG-B7-02：判据不能只 `not os.path.exists(db)`。
+    #   `ui/app.py` 的构造顺序是「先 `_make_storage()`（里面 `init_schema()`
+    #   **把空库建出来**）→ 再 `ensure_meta_decks()` → 里面才调本函数」，
+    #   所以库文件**总是存在**，旧判据永远为假 → 安装版的旧便携数据
+    #   一条都迁不过来，用户看到的是「全新空库」。
+    #   现在：**不存在 或 0 字节**都算「还没数据」（`init_schema` 刚建的空库
+    #   是 0 字节）。有内容 = 本机已在用新位置，别再迁。
+    _db = paths.data_path('masterduel.db')
+    _db_fresh = (not os.path.exists(_db)) or os.path.getsize(_db) == 0
     can_migrate = (not paths.is_portable()
                    and os.path.normcase(legacy) != os.path.normcase(paths.DATA_DIR)
                    and os.path.isdir(legacy)
-                   #: 已经有库 = 本机已在用新位置，别再迁（否则覆盖现有数据）
-                   and not os.path.exists(paths.data_path('masterduel.db')))
+                   and _db_fresh)
     if can_migrate:
         out.extend(_migrate_from(legacy))
 
@@ -174,7 +182,10 @@ def ensure_meta_decks(app) -> Optional[object]:
     if st is None:
         return None
 
-    s = QSettings()
+    # ⚠️ 必须显式给 organization/application（BUG-B7-09）：裸 `QSettings()`
+    #    依赖 QCoreApplication 的 organizationName —— 没设时 status=AccessError，
+    #    标志读写出错（「首跑播种」会每次都重跑）。与全项目其余 7 处同源。
+    s = QSettings('masterduel', 'M7')
     if s.value(FLAG_KEY):
         return None
 

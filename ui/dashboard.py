@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import os
 from typing import Optional, Tuple
 
 from PySide6.QtCore import (QPoint, QPointF, QRectF, QSettings, QSize, Qt,
@@ -37,14 +38,15 @@ from ui.banlist_page import BanlistPage    # 禁限表（D3 第二刀，本地 b
 from ui.decks_page import DecksPage        # 卡组页（D3 §2：卡组名管理 / Tier 表 / 卡组构成 三页签）
 from ui.export_page import ExportPage      # 导出页（D4c：左栏独立一项，按月 + 模式）
 from ui.i18n import tr                     # 界面骨架三语（2026-10-03 本地化）
-from ui.script_page import SCRIPT_COMMANDS, exit_note    # 工具命令表 + 退出码翻译
+from ui.script_page import (SCRIPT_COMMANDS, exit_note,   # 工具命令表
+                            needs_attention)              # + 退出码翻译/标红
 from ui.script_runner import ScriptRunner               # 概览页兜底 factory
 from core.storage import MODE_GROUP_NAMES
 from ui.mode_filter import (ModeFilterButton, as_keys,       # noqa: E402
                             dump_setting, label_for, parse_setting)   # 模式筛选的四个名字（唯一来源）
 from ui import theme, widgets
 from ui.floating import (COIN_BACK, COIN_FRONT, COIN_SIZE,
-                         RESIZE_MARGIN, WindowButton, cursor_for)
+                         RESIZE_MARGIN, WindowButton, cursor_for, pos_on_screen)
 
 #: 最小尺寸（逻辑像素）—— 用户口径：**可拖拽，这是最小**（1800×930 物理 ÷ DPR 1.5）
 MIN_W, MIN_H = 1200, 620
@@ -857,8 +859,24 @@ class SettingsIndexPage(QWidget):
         for b in self._tool_btns:
             b.setEnabled(True)
         cfg = SCRIPT_COMMANDS.get(key) or {}
-        self._status.setText(tr('%s：%s') % (tr(cfg.get('title') or key),
-                                             tr(exit_note(cfg.get('script'), code))))
+        script = cfg.get('script')
+        note = tr(exit_note(script, code))
+        self._status.setText(tr('%s：%s') % (tr(cfg.get('title') or key), note))
+        #: ★ BUG-B7-08：`needs_attention()` 原来没有任何调用点 —— 退出码 1 的
+        #: 「要人工看一眼」（卡表 B 类未知卡 / 体检发现问题）在界面上和「成功」
+        #: 长得一模一样。这里按语义给状态行上色：要人工看 = WARN，
+        #: 真失败 = LOSE，其余（成功）恢复默认 muted。
+        if needs_attention(script, code):
+            color = theme.WARN
+        elif code != 0:
+            color = theme.LOSE
+        else:
+            color = theme.INK_MUTED
+        self._status.setStyleSheet('color: %s; background: transparent;'
+                                   % color)
+        #: ⚠️ 换样式表会把字号弹回默认（`ui/widgets.py` 模块头 ②）——
+        #: 改完颜色**必须补一次字体**，否则这一行会突然变小。
+        self._status.setFont(widgets.font(theme.F_BODY_SM))
         if code == 0:
             #: ★ 参照库刷新完必须**清进程内缓存**（2026-10-10 修的真 bug）：
             #:   `deck_guess.load_reference()` 把 JSON 永久缓存，不清的话
@@ -872,6 +890,20 @@ class SettingsIndexPage(QWidget):
     def reload_hint(self):
         self._status.setText(self._status.text() +
                              tr('（数据已更新 —— 相关页面重开看板后刷新）'))
+
+    def shutdown(self) -> None:
+        """宿主销毁 / 重建前掐掉在跑的脚本（BUG-B7-07）。
+
+        切语言（`Dashboard.retranslate`）会把本页 `deleteLater()`；不先 stop
+        的话 QProcess 变孤儿、`done` 永不回调 —— 按钮会永久禁用。
+        """
+        runner = self._runner
+        self._runner = None
+        if runner is not None:
+            try:
+                runner.stop()
+            except Exception:                                # noqa: BLE001
+                pass
 
 
 def _fixed(text: str, width: int, size: int, color: str = None) -> QLabel:
@@ -1498,6 +1530,37 @@ def _fingerprint(data) -> str:
     except Exception:                                # noqa: BLE001
         # 不可序列化就退回 id() —— 等于「每次都当变了」（与旧行为一致，别更糟）
         return 'id:%s' % id(data)
+
+
+def _bind_or_none(fn, spec):
+    """``(args, kwargs)`` 能不能绑定到 ``fn`` —— 绑不上返回 None（签名不匹配）。
+
+    ⚠️ **只在绑定失败时降级**（BUG-B5-11）：拿 `except TypeError` 当「签名不匹配」
+    会把**数据层内部**抛的 TypeError 也当成签名问题，一路降级到空数据。
+    """
+    import inspect
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return None                      # 取不到签名 -> 交给调用方按旧路试
+    try:
+        sig.bind(*spec[0], **spec[1])
+    except TypeError:
+        return None
+    return True
+
+
+def _call_with_degrade(fn, candidates):
+    """按候选 ``[(args, kwargs), ...]`` 依次尝试调用（**签名为准，不看异常类型**）。
+
+    所有候选都绑不上 = 真的签名不匹配 -> 抛 ``TypeError``。
+    数据层自己抛的异常**原样上抛**（由调用方记「读取失败」）。
+    """
+    for spec in candidates:
+        ok = _bind_or_none(fn, spec)
+        if ok:
+            return fn(*spec[0], **spec[1])
+    raise TypeError('loader 签名不匹配：%r' % (fn,))
 
 
 #: 单卡卡绘缺图时的兜底（悠悠）—— 与项目既有口径一致（`DeckImages` 那套）
@@ -2287,6 +2350,11 @@ class DashboardWindow(QWidget):
         self._on_set_autostart = on_set_autostart
         #: 语言切换回调（实时切换，2026-10-04）：app 侧重建窗口
         self._on_lang_changed = on_lang_changed
+        #: 几何落盘的防抖定时器（BUG-B5-03：拖动 / 缩放期间别每个事件都写 QSettings）
+        self._geom_timer = QTimer(self)
+        self._geom_timer.setSingleShot(True)
+        self._geom_timer.setInterval(400)
+        self._geom_timer.timeout.connect(self.save_geometry)
         #: 悬浮窗显示/隐藏回调（2026-10-03）：app 侧切换后返回新状态 bool
         self._on_toggle_floating = on_toggle_floating
         self._on_pick_deck = on_pick_deck
@@ -2334,6 +2402,9 @@ class DashboardWindow(QWidget):
         #: （`dash/deckview`），Tier 芯片 / 卡组页都会改它
         #: ⚠️ 这个键**不是**页签键（它存的是卡组名）—— 两者都别互相覆盖
         self._deck_view_name = str(settings().value('dash/deckview') or '')
+        #: 各页 loader 的**最近一次读失败**（BUG-B5-11）：失败时页面保留上一份
+        #: 数据，标题栏给一行「读取失败：…」—— 别让用户把「读挂了」看成「没打过」。
+        self._load_errors = {}
 
         self._build()
         self._restore_geometry()
@@ -2488,6 +2559,14 @@ class DashboardWindow(QWidget):
 
         def _work():
             for w in list(self.pages.values()):
+                # ★ 先掐在跑的子进程（BUG-B7-07）：页面马上 deleteLater，
+                #   不 stop 的话 QProcess 变孤儿、`done` 永不回调。
+                stop_fn = getattr(w, 'shutdown', None)
+                if callable(stop_fn):
+                    try:
+                        stop_fn()
+                    except Exception:                        # noqa: BLE001
+                        pass
                 self.stack.removeWidget(w)
                 # ★ 先 hide 再脱离：hide 立即停止绘制（修重影），且隐藏状态下
                 #   setParent(None) 不会闪现顶层窗口框（2026-10-05 实测弹框修因）
@@ -2526,6 +2605,14 @@ class DashboardWindow(QWidget):
         lay.addStretch(1)
         #: ★ D4b：采集器状态（标题栏右侧、窗口按钮左边）—— 不跑也能一眼看到
         #:   采集器在不在跑（判据见 `ui_state.collector_status` 的 docstring）
+        #: ★ BUG-B5-11：数据读取失败的提示（标题栏、采集器状态左边）。
+        #:   平时空串且隐藏；有失败时显示一行「读取失败：…」（tooltip 给全量）。
+        self._load_warn = _lab('', 'body', size=theme.PAGE_F_SMALL)
+        self._load_warn.setStyleSheet('color: %s; background: transparent;'
+                                      % theme.WARN)
+        self._load_warn.setVisible(False)
+        lay.addWidget(self._load_warn)
+        lay.addSpacing(theme.S_MD)
         self.collector = _lab('', 'body', size=theme.PAGE_F_SMALL)
         self.collector.setStyleSheet('color: %s; background: transparent;'
                                      % theme.INK_MUTED)
@@ -2573,6 +2660,38 @@ class DashboardWindow(QWidget):
             self._on_pick_result(row, widget)
 
     # ------------------------------------------------------------ 数据（D1）
+    # -------------------------------------------------- 读失败提示（B5-11）
+    def _note_load_ok(self, section: str) -> None:
+        """这一块这次读成功了 -> 之前记的失败提示可以撤了。"""
+        if self._load_errors.pop(section, None) is not None:
+            self._refresh_load_warn()
+
+    def _note_load_error(self, section: str, exc: BaseException) -> None:
+        """这一块读挂了 -> 记下来并在标题栏提示（**页面保留上一份数据**）。"""
+        msg = '%s: %s' % (type(exc).__name__, exc)
+        self._load_errors[section] = msg
+        self._refresh_load_warn()
+
+    def _refresh_load_warn(self) -> None:
+        """按 `_load_errors` 重画标题栏那行提示（没有失败就隐藏）。"""
+        lab = getattr(self, '_load_warn', None)
+        if lab is None:
+            return
+        if not self._load_errors:
+            lab.setText('')
+            lab.setToolTip('')
+            lab.setVisible(False)
+            return
+        first = next(iter(self._load_errors.values()))
+        lab.setText(tr('读取出错：%s') % first)
+        lab.setToolTip('\n'.join('%s: %s' % (k, v)
+                                  for k, v in self._load_errors.items()))
+        lab.setVisible(True)
+
+    def load_errors(self) -> dict:
+        """当前仍未恢复的读失败（`{页: '异常类型: 消息'}`）—— 单测/调试用。"""
+        return dict(self._load_errors)
+
     def set_loader(self, loader) -> None:
         self._loader = loader
 
@@ -2641,17 +2760,15 @@ class DashboardWindow(QWidget):
         if callable(self._deckview_loader):
             try:
                 data = self._deckview_loader(self._deck_view_name) or {}
-            except Exception:
-                data = {}                    # 数据层炸了也别把窗口带崩
+                self._note_load_ok('deckview')
+            except Exception as exc:                     # noqa: BLE001
+                self._note_load_error('deckview', exc)   # 保留上一份（B5-11）
+                return
         fp = _fingerprint(data)
         if self._page_fps.get('deckview') == fp:
             return                       # 数据没变 -> 页保持原样（卡顿修复 2026-10-11）
         self._page_fps['deckview'] = fp
         page.set_data(data)
-
-    def _reload_decks(self) -> None:
-        """「卡组」页只读部分（现在只有构成页签要数）。"""
-        self._reload_deckview()
 
     def _show_account_menu(self) -> None:
         """账号下拉（挂左栏「MD 战绩」品牌位；单选：账号名 + 局数）。
@@ -2727,24 +2844,23 @@ class DashboardWindow(QWidget):
         data = {}
         if callable(self._loader):
             try:
-                data = self._loader(mode_group=self._mode_group,
-                                    month=self._stats_month,
-                                    account=self._account) or {}
-            except TypeError:
-                # 旧签名 ``loader(mode_group[, month])``（单测 lambda 等）也认；
-                # 降级路径同样要兜（loader 自己炸了别把窗口带崩）
-                try:
-                    data = self._loader(mode_group=self._mode_group,
-                                        month=self._stats_month) or {}
-                except TypeError:
-                    try:
-                        data = self._loader(self._mode_group) or {}
-                    except Exception:
-                        data = {}
-                except Exception:
-                    data = {}
-            except Exception:
-                data = {}                    # 数据层炸了也别把窗口带崩
+                # 签名降级只看**参数绑定**（`_call_with_degrade`）：
+                # 数据层内部抛的 TypeError 现在会被当成「读取失败」，不再被
+                # 误判成签名不匹配而丢数据（BUG-B5-11）。
+                data = _call_with_degrade(self._loader, [
+                    ((), {'mode_group': self._mode_group,
+                          'month': self._stats_month,
+                          'account': self._account}),
+                    ((), {'mode_group': self._mode_group,
+                          'month': self._stats_month}),
+                    ((self._mode_group,), {}),
+                ]) or {}
+                self._note_load_ok('stats')
+            except Exception as exc:                     # noqa: BLE001
+                # ★ 失败**保留上一份数据**（BUG-B5-11）：原来 `data = {}` 会让
+                #   页面被重建成「本月还没打过」—— 用户分不清「真没打」和「读挂了」。
+                self._note_load_error('stats', exc)
+                return
         # ⚠️ 账号按钮**每次都要更新**（切换账号后数据可能不变但品牌位要跟着换
         #    —— 单测 test_set_account_reloads_with_account 抓过），放在闸门之前。
         self._update_account_button(data.get('accounts') or [])
@@ -2765,7 +2881,9 @@ class DashboardWindow(QWidget):
         self._reload_analysis()
         self._reload_tier()
         self._reload_banlist()
-        self._reload_decks()
+        # ⚠️ 只调 `_reload_deckview` 一次（BUG-B5-12）：`_reload_decks` 的实现
+        #    就是再调一遍它 —— 第二个调用被指纹挡住，但**取数已经发生**
+        #    （`deck_composition` 不便宜）。`_reload_decks` 已删。
         self._reload_deckview()
 
     def _reload_banlist(self) -> None:
@@ -2777,8 +2895,17 @@ class DashboardWindow(QWidget):
         if callable(self._banlist_loader):
             try:
                 data = self._banlist_loader() or {}
-            except Exception:
-                data = {}
+                self._note_load_ok('banlist')
+            except Exception as exc:                     # noqa: BLE001
+                # 保留上一份数据（BUG-B5-11），别把 209 张卡清空成空表。
+                self._note_load_error('banlist', exc)
+                return
+        # ★ 指纹闸门（BUG-B5-12）：其余六个 loader 都有，只有这里漏了 ——
+        #   每次 reload（每 2 秒探针变化 / 每次标注）都全量重建 209 张卡 + 卡绘。
+        fp = _fingerprint(data)
+        if self._page_fps.get('banlist') == fp:
+            return
+        self._page_fps['banlist'] = fp
         page.set_data(data)
 
     # ------------------------------------------------------------ 导出（D4c）
@@ -2800,8 +2927,10 @@ class DashboardWindow(QWidget):
         if callable(self._export_loader):
             try:
                 data = self._export_loader(page.month(), page.mode_group()) or {}
-            except Exception:
-                data = {}                    # 数据层炸了也别把窗口带崩
+                self._note_load_ok('export')
+            except Exception as exc:                     # noqa: BLE001
+                self._note_load_error('export', exc)     # 保留上一份（B5-11）
+                return
         fp = _fingerprint(data)
         if self._page_fps.get('export') == fp:
             return                       # 数据没变 -> 页保持原样（卡顿修复 2026-10-11）
@@ -2842,8 +2971,10 @@ class DashboardWindow(QWidget):
         if callable(self._tier_loader):
             try:
                 data = self._tier_loader() or {}
-            except Exception:
-                data = {}                    # 数据层炸了也别把窗口带崩
+                self._note_load_ok('tier')
+            except Exception as exc:                     # noqa: BLE001
+                self._note_load_error('tier', exc)       # 保留上一份（B5-11）
+                return
         fp = _fingerprint(data)
         if self._page_fps.get('tier') == fp:
             return                       # 数据没变 -> 页保持原样（卡顿修复 2026-10-11）
@@ -2861,8 +2992,10 @@ class DashboardWindow(QWidget):
                 data = self._analysis_loader(self._went_first,
                                              self._analysis_month,
                                              self._analysis_mode) or {}
-            except Exception:
-                data = {}                    # 数据层炸了也别把窗口带崩
+                self._note_load_ok('analysis')
+            except Exception as exc:                     # noqa: BLE001
+                self._note_load_error('analysis', exc)   # 保留上一份（B5-11）
+                return
         fp = _fingerprint(data)
         if self._page_fps.get('analysis') == fp:
             return                       # 数据没变 -> 页保持原样（卡顿修复 2026-10-11）
@@ -3019,7 +3152,9 @@ class DashboardWindow(QWidget):
         else:
             self.resize(MIN_W, MIN_H)
         pos = s.value('dash/pos')
-        if isinstance(pos, QPoint) and pos.x() >= -50 and pos.y() >= -50:
+        # ★ BUG-B5-15：改判「还在屏幕上」（原来只挡左上负坐标，
+        #   换显示器/拔副屏后窗口会停在屏幕外右侧或下方）
+        if pos_on_screen(self, pos):
             self.move(pos)
         else:
             screen = self.screen().availableGeometry() if self.screen() else None
@@ -3027,7 +3162,42 @@ class DashboardWindow(QWidget):
                 self.move(screen.left() + max(0, (screen.width() - self.width()) // 2),
                           screen.top() + max(0, (screen.height() - self.height()) // 2))
 
+    def moveEvent(self, ev):                                 # noqa: N802
+        """位置变了 → **防抖落盘**。
+
+        ★ BUG-B5-03：看板原来只在 `mouseReleaseEvent` 和 `closeEvent` 存几何，
+        但拖动走的是 `startSystemMove()` —— 交给窗口管理器后我们**收不到
+        mouseRelease**；而标题栏的 `×` 是 `hide()`（不是 closeEvent）。
+        于是「拖看板 → 点 × 隐藏 → 退出」这条最常见路径下，位置**一条都没存**。
+        照 `ui/floating.py:2158` 的同款修法（moveEvent + 定时器防抖）。
+        """
+        super().moveEvent(ev)
+        timer = getattr(self, '_geom_timer', None)
+        if timer is not None:
+            timer.start()
+
+    def resizeEvent(self, ev):                               # noqa: N802
+        """尺寸变了 → 防抖落盘（同上，系统原生 resize 也不发 mouseRelease）。"""
+        super().resizeEvent(ev)
+        timer = getattr(self, '_geom_timer', None)
+        if timer is not None:
+            timer.start()
+
+    def hideEvent(self, ev):                                 # noqa: N802
+        """被隐藏（点 `×`）也要存一次 —— 用户常常之后就直接退程序。"""
+        super().hideEvent(ev)
+        self.save_geometry()
+
     def closeEvent(self, ev):                               # noqa: N802
+        #: 关看板 = 宿主销毁：先掐掉在跑的工具脚本（BUG-B7-07），
+        #: 免得 QProcess 孤儿化（进程留着、`done` 永不回调）。
+        for w in list(self.pages.values()):
+            stop_fn = getattr(w, 'shutdown', None)
+            if callable(stop_fn):
+                try:
+                    stop_fn()
+                except Exception:                            # noqa: BLE001
+                    pass
         self.save_geometry()
         super().closeEvent(ev)
 

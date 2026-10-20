@@ -486,6 +486,103 @@ class TestSiteNames(unittest.TestCase):
         self.assertEqual(payload['names'], ['Branded', 'DoomZ'])
         self.assertIn('fetched_at', payload)
 
+class TestStaleCustomImage(unittest.TestCase):
+    """★ BUG-B9A-03：用户删掉覆盖图后，`--cn-only` 必须**清掉**库里的旧路径。"""
+
+    def test_stale_detects_missing_file(self):
+        self.assertTrue(
+            fmd._stale_custom_image('data/deck_images_custom/__no_such__.webp'))
+
+    def test_existing_file_is_not_stale(self):
+        d = tempfile.mkdtemp(prefix='staleimg_')
+        self.addCleanup(__import__('shutil').rmtree, d, True)
+        p = os.path.join(d, 'x.webp')
+        with open(p, 'wb') as f:
+            f.write(b'RIFF')
+        self.assertFalse(fmd._stale_custom_image(p))
+
+    def test_non_custom_path_is_not_stale(self):
+        self.assertFalse(fmd._stale_custom_image('data/deck_images/Branded.webp'))
+        self.assertFalse(fmd._stale_custom_image(None))
+        self.assertFalse(fmd._stale_custom_image(''))
+
+
+class TestSiteNamesAtomic(unittest.TestCase):
+    """★ BUG-B9A-10：写站内名单要是原子的（失败时原文件不变）。"""
+
+    def test_write_failure_keeps_old_file(self):
+        d = tempfile.mkdtemp(prefix='sitenames_')
+        self.addCleanup(__import__('shutil').rmtree, d, True)
+        p = os.path.join(d, 'site_deck_names.json')
+        fmd.write_site_names(['Branded'], path=p)
+        before = open(p, 'rb').read()
+        missing_dir = os.path.join(d, 'no-such-dir', 'site_deck_names.json')
+        with self.assertRaises(OSError):
+            fmd.write_site_names(['DoomZ'], path=missing_dir)
+        self.assertEqual(open(p, 'rb').read(), before)
+
+
+
+class TestCnOnlyClearsDeletedCustomImage(unittest.TestCase):
+    """★ BUG-B9A-03 端到端：用户删了覆盖图 → `--cn-only` 把库里旧路径**清成空串**。"""
+
+    def setUp(self):
+        import shutil
+        from core.storage import Storage, SOURCE_CUSTOM
+        self.tmp = tempfile.mkdtemp(prefix='cnonly_')
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.db = os.path.join(self.tmp, 'masterduel.db')
+        self.st = Storage(self.db)
+        self.st.init_schema()
+        self.st.replace_meta_decks([dict(
+            name='Branded', kind='deck_type', name_cn='烙印', tier='Tier1',
+            source='masterduelmeta',
+            img_file='data/deck_images_custom/__deleted_branded__.webp')])
+        self._Storage = fmd.Storage
+        self._ovr = fmd.load_overrides
+        self._custom = fmd.custom_image_for
+        fmd.Storage = lambda *a, **k: self.st
+        fmd.load_overrides = lambda *a, **k: ({'Branded': dict(
+            cn='烙印', jp='', display='', aliases=[], tier='Tier1',
+            hidden=False, note='')}, [])
+        fmd.custom_image_for = lambda name: None          # 覆盖目录里已没图
+        self.addCleanup(setattr, fmd, 'Storage', self._Storage)
+        self.addCleanup(setattr, fmd, 'load_overrides', self._ovr)
+        self.addCleanup(setattr, fmd, 'custom_image_for', self._custom)
+
+    def test_stale_img_file_is_cleared(self):
+        import contextlib, io as _io
+        buf = _io.StringIO()
+        old_argv = sys.argv
+        sys.argv = ['fetch_meta_decks.py', '--cn-only']
+        try:
+            with contextlib.redirect_stdout(buf):
+                fmd.main()
+        finally:
+            sys.argv = old_argv
+        row = [r for r in self.st.list_meta_decks(include_hidden=True)
+               if r['name'] == 'Branded'][0]
+        self.assertEqual(row['img_file'] or '', '',
+                         '旧路径没被清掉 —— 界面会一直显示破图')
+        self.assertIn('清图', buf.getvalue())
+
+    def test_fresh_entry_without_custom_image_is_untouched(self):
+        """从来没有覆盖图的条目（指向站内图）不能被清。"""
+        self.st.set_meta_deck_override('Branded',
+                                       img_file='data/deck_images/Branded.webp')
+        import contextlib, io as _io
+        old_argv = sys.argv
+        sys.argv = ['fetch_meta_decks.py', '--cn-only']
+        try:
+            with contextlib.redirect_stdout(_io.StringIO()):
+                fmd.main()
+        finally:
+            sys.argv = old_argv
+        row = self.st.get_meta_deck('Branded')
+        self.assertEqual(row['img_file'], 'data/deck_images/Branded.webp')
+
+
+
 
 if __name__ == '__main__':
     unittest.main()

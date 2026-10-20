@@ -4,7 +4,7 @@ r"""版本号唯一真源（2026-10-18 新增，为「补丁包 + 精简包」�
 ## 为什么要有这个文件
 
 版本号原先只存在于**三处、全靠人抄**：发布仓 README 的下载表、git tag、
-GitHub Release。更糟的是 `packaging/build_installer.py` 的 ``default_version()``
+GitHub Release。更糟的是 `build/build_installer.py` 的 ``default_version()``
 用正则从 README 里 grep 版本号 —— 意味着「README 里写错一个数字」= 「打出来的包
 名字错、控制面板里版本错」。
 
@@ -24,7 +24,7 @@ GitHub Release。更糟的是 `packaging/build_installer.py` 的 ``default_versi
 from __future__ import annotations
 
 #: 当前版本。**发版时只改这一行**（改完记得同步到发布仓，否则打包脚本会拦下）。
-__version__ = '1.0.8'
+__version__ = '1.1.0'
 
 #: 语义化三段的默认值（解不出来时用 0 兜底，绝不抛）
 _ZERO = (0, 0, 0)

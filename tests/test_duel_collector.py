@@ -79,6 +79,8 @@ class StubHooks(Hooks):
         self.state = None             # read_state 的返回
         self.scans = []               # scan_records 的返回
         self.reuse = None
+        #: ★ BUG-B8-06：续采要读目录 manifest 校验 instance —— 由 Base.setUp 指过来
+        self.records_dir = None
         self.instance_hex = '0xabc'
         self.deck = None
         self.settings = None
@@ -133,7 +135,15 @@ class StubHooks(Hooks):
         return list(self.scans), []
 
     def load_reuse_manifest(self, name):
-        return self.reuse
+        #: 显式给了桩就用桩；否则**从磁盘读**（BUG-B8-06 续采要读 instance）
+        if self.reuse is not None:
+            return self.reuse
+        try:
+            from core import duel_record
+            return duel_record.load_manifest(
+                os.path.join(self.records_dir, name))
+        except Exception:                                # noqa: BLE001
+            return None
 
     def snapshot_deck(self):
         return self.deck
@@ -176,6 +186,10 @@ class StubHooks(Hooks):
         return self.my_deck_state
 
     def append_em(self, rec):
+        #: ★ BUG-B8-02：可注入写盘失败（磁盘满 / 权限 / 杀软锁文件）
+        if getattr(self, 'fail_appends', 0):
+            self.fail_appends -= 1
+            raise OSError('disk full (stub)')
         self.em_appended.append(rec)
 
     def import_record(self, name):
@@ -208,6 +222,7 @@ class Base(unittest.TestCase):
         self.records = os.path.join(self.tmp, 'duel_records')
         os.makedirs(self.records)
         self.st = StubHooks()
+        self.st.records_dir = self.records
         self.lines = []
         self.c = DuelCollector(records_dir=self.records, hooks=self.st,
                                log=self.lines.append)
@@ -2125,6 +2140,70 @@ class TestRankInference(Base):
         self.assertEqual(len(DB_CALLS['infer']), 1)
 
 
+class TestDisconnectResume(Base):
+    """★ BUG-B8-06：掉线收口后对局**仍在进行** -> 续采原目录，收局照常入库。
+
+    旧行为：`in_duel` 连续 None 超时就 `_close_current`，`open_rec` 清空、
+    目录标 final —— 后半局永久不采；`pvpFinished` 到达时 `open_rec is None`，
+    `_finish_record` 直接 return，**这一局的收局被整体丢弃**。
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.st.size = 3
+        self.st.state = mk_state(3)
+
+    def _go_disconnected(self, base=1000.0):
+        c = self.c
+        c.observe(TS0, True, 3, now=base)                    # 开局 + 建目录
+        name = os.path.basename(c.open_rec.dir_path)
+        c.observe(TS1, None, now=base + 10.0)                # 第一次读不到
+        c.observe(TS1, None, now=base + 130.0)               # 连续 130s >= 120 收口
+        self.assertIsNone(c.open_rec)
+        self.assertIsNotNone(c._resume_rec, '收口后必须留续采锚点')
+        return name
+
+    def test_resume_after_disconnect(self):
+        """恢复读数 -> 原目录接回来（不新建目录、不劈成两局）。"""
+        c = self.c
+        name = self._go_disconnected()
+        self.st.state = mk_state(6)          # 后半局长到 6
+        lines = c.observe(TS1, True, 3, now=1010.0 + 130.0)
+        self.assertIsNotNone(c.open_rec)
+        self.assertEqual(os.path.basename(c.open_rec.dir_path), name,
+                         '必须接回原目录（不能新建）')
+        self.assertFalse(c.open_rec.finalized)
+        self.assertTrue(any('续采原目录' in x for x in lines), lines)
+
+    def test_resumed_duel_finishes_normally(self):
+        """续采后 pvpFinished 照常收局 + 入库（旧代码这一整局会被丢掉）。"""
+        c = self.c
+        self._go_disconnected()
+        self.st.state = mk_state(6)
+        c.observe(TS1, True, 3, now=1140.0)              # 恢复
+        self.st.state = mk_state(9)
+        c.observe(TS1, True, 3, finished=1, now=1200.0)   # 真收局
+        self.assertIsNone(c.open_rec)
+        self.assertEqual(len(self.st.imports), 2,
+                         '收口那次 + 真正收局这次各 import 一次')
+
+    def test_new_duel_drops_resume_anchor(self):
+        """真开了新局（tracker 发 DUEL_START）-> 锚点作废，不许并成一局。"""
+        c = self.c
+        self._go_disconnected()
+        # tracker 认为在局中（实例没消失）时先来一拍 True，但 DUEL_START 只在
+        # `tracker.open is None` 时发；这里直接模拟「新局开局」路径：
+        self.c.tracker.open = None
+        c.observe(TS2, True, 3, now=1200.0)
+        self.assertIsNone(c._resume_rec, '新局开局必须作废续采锚点')
+
+    def test_game_gone_drops_resume_anchor(self):
+        c = self.c
+        self._go_disconnected()
+        c.on_game_gone()
+        self.assertIsNone(c._resume_rec)
+
+
 class TestGameGone(Base):
     """09-26 事故刀②：游戏退出时跨进程挂起必须作废。
 
@@ -2148,6 +2227,23 @@ class TestGameGone(Base):
 
     def test_noop_when_nothing_pending(self):
         self.assertEqual(self.c.on_game_gone(), [])
+
+    def test_clears_peak_probe(self):
+        """★ BUG-B8-07：巅峰积分挂起也必须作废（漏了它就会跨进程存活、
+        把上一局的结算对写进旧目录并补库）。"""
+        self.c._peak_probe = {'dir': 'x', 'at': 0, 'deadline': 0, 'tries': 1}
+        self.c._peak_base = {'before': 1000, 'after': 1010}
+        lines = self.c.on_game_gone()
+        self.assertIsNone(self.c._peak_probe)
+        self.assertIsNone(self.c._peak_base)
+        self.assertTrue(any('巅峰积分' in x for x in lines), lines)
+
+    def test_clears_resume_anchor(self):
+        """★ BUG-B8-06：游戏退出时续采锚点必须作废（否则下一局会被并进来）。"""
+        self.c._resume_rec = object()
+        lines = self.c.on_game_gone()
+        self.assertIsNone(self.c._resume_rec)
+        self.assertTrue(any('续采锚点' in x for x in lines), lines)
 
 
 # =====================================================================
@@ -2243,3 +2339,270 @@ class TestToolsOnSysPath(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class TestEmAppendFailure(unittest.TestCase):
+    """★ BUG-B8-02：EM 落盘失败不许让这一局的胜负**永久丢失**。
+
+    旧代码 `_flush_em` 第一句就是 `self._em_seen.add(sig)`，紧接着
+    `append_em()` —— append 一抛（磁盘满 / 权限 / 杀软锁文件）：
+    ① 记录没了；② 签名已进集合，下次重抓被判 duplicate；③ 异常冒泡，
+    `_reimport_after_em` 与 import 全被跳过。修法 = **先写盘、后记签名**，
+    失败进 backlog（同一拍末尾就会重试一次，写成就补跑 import）。
+
+    节奏说明：EM 抓取有自己的窗口（文案就绪后还要等胜负位）。`winbits`
+    始终 None 时走「补读 `EM_WB_DRY_TRIES` 次仍无」那条，落盘发生在
+    收局后第 `EM_WB_DRY_TRIES` 拍左右。
+    """
+
+    def setUp(self):
+        import tempfile, shutil
+        self.records = tempfile.mkdtemp(prefix='emfail-')
+        self.addCleanup(shutil.rmtree, self.records, True)
+        self.st = StubHooks()
+        self.st.size = 5
+        self.st.state = mk_state(5)
+        self.st.em = ({'messageText': '对手已投降', 'player0Name': '我',
+                       'player1Name': '对手'}, {'instance': '0x1234'})
+        self.st.winbits = None          # 图标始终没就绪 -> 走「补读 N 次」落盘
+        self.st.fail_appends = 2        # 前 N 次 append 抛 OSError
+        self.logs = []
+        self.c = DuelCollector(records_dir=self.records, hooks=self.st,
+                               log=self.logs.append)
+
+    def _to_flush(self, start=1010.0):
+        """推进到 EM 落盘那一拍（补读 dry 次数用完）。返回 (lines, now)。"""
+        c = self.c
+        lines = []
+        t = start
+        for _ in range(dc.EM_WB_DRY_TRIES + 3):
+            if c._em_pending is None:
+                break
+            t += 1.0
+            lines += c.observe(TS1, False, now=t)
+        return lines, t
+
+    def test_failed_append_keeps_record_and_retries(self):
+        c = self.c
+        c.observe(TS0, True, 3, now=1000.0)
+        c.observe(TS1, True, 3, finished=1, now=1010.0)
+        self._to_flush()
+        # 第一次写盘失败 -> 记了日志、记录**没丢**
+        self.assertTrue(any('落盘失败' in x for x in self.logs), self.logs)
+        # 同一拍末尾就补试（第 2 次也失败）-> 队列里还留着
+        self.assertEqual(self.st.em_appended, [])
+        self.assertEqual(len(c._em_backlog), 1, '失败必须进队列（不许丢）')
+        # 下一拍重试：这次成功
+        lines2 = c.observe(TS1, False, now=1100.0)
+        self.assertEqual(len(self.st.em_appended), 1, '重试后必须落盘')
+        self.assertEqual(c._em_backlog, [], '写成功后队列清空')
+        self.assertTrue(any('补写成功' in x for x in lines2), lines2)
+        self.assertIsNotNone(self.st.em_appended[0].get('record_id'))
+
+    def test_failed_append_does_not_poison_dedup(self):
+        """写失败时签名**不许**记进 `_em_seen` —— 否则下次被判 duplicate。"""
+        c = self.c
+        c.observe(TS0, True, 3, now=1000.0)
+        c.observe(TS1, True, 3, finished=1, now=1010.0)
+        self._to_flush()
+        sig = c._em_backlog[0][2]
+        self.assertNotIn(sig, c._em_seen)
+        c.observe(TS1, False, now=1100.0)
+        self.assertIn(sig, c._em_seen)
+
+    def test_persistent_failure_keeps_queueing(self):
+        """一直写不进 = 一直排队（不静默丢弃），且不会写第二份。"""
+        self.st.fail_appends = 99
+        c = self.c
+        c.observe(TS0, True, 3, now=1000.0)
+        c.observe(TS1, True, 3, finished=1, now=1010.0)
+        _lines, t = self._to_flush()
+        for i in range(3):
+            c.observe(TS1, False, now=t + 1.0 + i)
+        self.assertEqual(len(c._em_backlog), 1, '不许因为重试而复制出第二条')
+        self.assertEqual(self.st.em_appended, [])
+
+
+class TestFinishRecordAlwaysClears(unittest.TestCase):
+    """★ BUG-B8-02 第二 half：收局中途抛异常，也不许把 final 的 manifest 翻回 open。
+
+    旧代码 `self.open_rec = None` 是⑥之后的一句 —— ③EM / ⑤段位 任何一步
+    抛异常，`_OpenRecord` 就留在 `open_rec` 上（且 `finalized=True`），
+    下一拍 `_track_record` 又 `_write(..., 'open', ...)`：manifest 被写回 open。
+    """
+
+    def setUp(self):
+        import tempfile, shutil
+        self.records = tempfile.mkdtemp(prefix='finishfail-')
+        self.addCleanup(shutil.rmtree, self.records, True)
+        self.st = StubHooks()
+        self.st.size = 5
+        self.st.state = mk_state(5)
+        self.c = DuelCollector(records_dir=self.records, hooks=self.st)
+
+    def test_open_rec_cleared_even_if_steps_raise(self):
+        """段位探测抛异常：仍要离开 open_rec，且 import 照跑（B8-02）。"""
+        c = self.c
+        c.observe(TS0, True, 3, now=1000.0)
+        self.assertIsNotNone(c.open_rec)
+        self.st.state = mk_state(5)     # 要真落盘才建得出目录
+
+        def boom(*a, **kw):
+            raise RuntimeError('段位探测炸了')
+        self.st.read_my_rank = boom
+        c.observe(TS1, True, 3, finished=1, now=1010.0)
+        self.assertIsNone(c.open_rec, '收局后必须离开 open_rec（哪怕中途抛异常）')
+        self.assertEqual(len(self.st.imports), 1, '段位挂了也不许跳过 import')
+
+    def test_manifest_stays_final(self):
+        """收局后下一拍**不许**再写 open（manifest 保持 final）。"""
+        c = self.c
+        c.observe(TS0, True, 3, now=1000.0)
+        c.observe(TS1, True, 3, finished=1, now=1010.0)
+        writes = []
+        orig = c._write
+
+        def spy(now, state, size, state_data=None):
+            writes.append(state)
+            return orig(now, state, size, state_data=state_data)
+        c._write = spy
+        c.observe(TS1, True, 3, now=1012.0)
+        self.assertNotIn('open', writes, '收局后的写盘不许是 open')
+
+class TestPendingQueues(Base):
+    """★ BUG-B8-20：段位 / 巅峰挂起是**队列**，连打两局不互相覆盖。
+
+    旧行为（单槽位）：第二局收局时 `self._rank_probe = {...}` /
+    `self._peak_probe = {...}` 直接覆盖第一局还没等到结果的挂起 ——
+    第一局的段位 / 巅峰积分**静默丢失**（库里那行永远空着，不留任何日志）。
+    """
+
+    BASE = {'rank': 5, 'rate': 2, 'exp': 28900}
+    UP = {'rank': 5, 'rate': 1, 'exp': 29000}
+
+    def _one_duel(self, now0, ts0, name_suffix=''):
+        """跑一局到收局（目录已建）。返回目录名。"""
+        ts = ts0 + name_suffix
+        self.c.observe(ts, True, 3, now=now0)
+        self.c.observe(ts, True, 3, finished=1, now=now0 + 10)
+        return os.path.basename(self.c._rank_probes[0]['dir'])             if self.c._rank_probes else None
+
+    def test_two_rank_probes_both_settle(self):
+        """两局都拿到基线 -> 队列里有两条，逐条落盘（各写自己的目录）。"""
+        c = self.c
+        c._begin_rank_probe(dict(self.BASE), os.path.join(self.records, 'record_A'),
+                            1000.0)
+        c._begin_rank_probe(dict(self.BASE), os.path.join(self.records, 'record_B'),
+                            1001.0)
+        self.assertEqual(len(c._rank_probes), 2, '两局各一条（旧代码只剩最后一条）')
+        for d in ('record_A', 'record_B'):
+            os.makedirs(os.path.join(self.records, d), exist_ok=True)
+        # rate 变化 -> 两条都 settled
+        c.hooks.read_my_rank = lambda: dict(self.UP)
+        c._poll_rank_probes(1010.0)
+        self.assertEqual(c._rank_probes, [], '两条都该落盘并出队')
+        for d in ('record_A', 'record_B'):
+            self.assertTrue(
+                os.path.exists(os.path.join(self.records, d,
+                                            'my_rank_after.json')),
+                '%s 没落盘（旧代码里第二局把它覆盖掉了）' % d)
+
+    def test_two_rank_base_pendings_both_kept(self):
+        """两局都没读到基线 -> 两个挂起都在队列里等（不互相覆盖）。"""
+        c = self.c
+        c._rank_base_pendings.append(
+            {'dir': os.path.join(self.records, 'record_A'), 'at': 1000.0,
+             'deadline': 1060.0, 'tries': 1})
+        c._rank_base_pendings.append(
+            {'dir': os.path.join(self.records, 'record_B'), 'at': 1001.0,
+             'deadline': 1061.0, 'tries': 1})
+        self.assertEqual(len(c._rank_base_pendings), 2)
+        # 一拍仍读不到 -> 两条都留着
+        c.hooks.read_my_rank = lambda: None
+        c._poll_rank_bases(1005.0)
+        self.assertEqual(len(c._rank_base_pendings), 2, '两条都还在等')
+        # 读到了 -> 两条都开机成探测
+        c.hooks.read_my_rank = lambda: dict(self.BASE)
+        c._poll_rank_bases(1006.0)
+        self.assertEqual(c._rank_base_pendings, [])
+        self.assertEqual(len(c._rank_probes), 2, '两局都该进入两拍法')
+
+    def test_two_peak_probes_both_settle(self):
+        """两局巅峰都挂起 -> 队列两条，结算对一出现就都收（各写自己的目录）。"""
+        c = self.c
+        for d in ('record_P', 'record_Q'):
+            os.makedirs(os.path.join(self.records, d), exist_ok=True)
+            c._peak_probes.append({'dir': os.path.join(self.records, d),
+                                   'at': 1000.0, 'deadline': 1060.0,
+                                   'tries': 1})
+        self.assertEqual(len(c._peak_probes), 2)
+        c._peak_base = None                       # 没有基线 -> 第一对就收
+        c.hooks.read_peak_result = lambda: {'before': 1000.0, 'after': 1010.0,
+                                            'season': 3}
+        c._poll_peak_probes(1005.0)
+        self.assertEqual(c._peak_probes, [])
+        for d in ('record_P', 'record_Q'):
+            self.assertTrue(os.path.exists(os.path.join(self.records, d,
+                                                        'peak_rate.json')),
+                            '%s 的巅峰积分丢了' % d)
+
+    def test_peak_timeout_names_the_dir(self):
+        """超时放弃时日志要带目录名（两局时能分清是哪一局）。"""
+        c = self.c
+        os.makedirs(os.path.join(self.records, 'record_T'), exist_ok=True)
+        c._peak_probes.append({'dir': os.path.join(self.records, 'record_T'),
+                               'at': 1000.0, 'deadline': 1010.0, 'tries': 1})
+        c.hooks.read_peak_result = lambda: None
+        lines = c._poll_peak_probes(1020.0)
+        self.assertTrue(any('record_T' in x for x in lines), lines)
+
+class TestSoloNotCollected(Base):
+    """★ 2026-10-20 用户口径「单人模式直接忽略不要留数据」。
+
+    旧行为：不管什么模式都建目录采集，只在 import 侧才筛掉 solo ——
+    结果磁盘上每次打单人都留 3~4 个 record 目录（实测 19 个散在 5 个日期），
+    而库里 0 行，用户看着「有目录、库里没有」还得手工清。
+
+    修法：`duel_start` 时 `game_mode == 9` 直接 continue，**不建目录**。
+    模式读不到（None）时**不跳** —— 那一拍可能只是瞬时未就位，宁可多采
+    （import 会筛）也不要漏采（漏了不可恢复）。
+    """
+
+    def _start(self, mode):
+        self.st.size = 3
+        self.st.state = mk_state(3)
+        self.st.scans = []                # 没有可复用目录
+        return self.c.observe(TS0, True, mode, now=1000.0)
+
+    def test_solo_duel_creates_no_dir(self):
+        lines = self._start(9)
+        self.assertIsNone(self.c.open_rec, 'solo 局不该留 open_rec')
+        self.assertTrue(any('单人模式' in x for x in lines), lines)
+        self.assertFalse(os.path.isdir(os.path.join(
+            self.records, dir_name_for(TS0))), '磁盘上不该有目录')
+        #: 收局也要干净（tracker 仍会记这一局并发 duel_end）
+        lines2 = self.c.observe(TS1, True, 9, finished=1, now=1010.0)
+        self.assertIsNone(self.c.open_rec)
+        self.assertFalse(os.path.isdir(os.path.join(
+            self.records, dir_name_for(TS0))), '收局也不该冒出目录')
+        self.assertEqual(self.st.finalized, [], '没有目录可 finalize')
+        self.assertEqual(self.st.imports, [], '没有目录可 import')
+
+    def test_ranked_duel_still_collected(self):
+        lines = self._start(3)
+        self.assertIsNotNone(self.c.open_rec.dir_path, '天梯照常采集')
+        self.assertTrue(os.path.isdir(os.path.join(
+            self.records, dir_name_for(TS0))))
+
+    def test_unknown_mode_still_collected(self):
+        """模式读不到（None）时不跳 —— 瞬时未就位，宁可多采不可漏。"""
+        lines = self._start(None)
+        self.assertIsNotNone(self.c.open_rec.dir_path,
+                             '模式未知要照常采集（漏采不可恢复）')
+
+    def test_dc_and_peak_still_collected(self):
+        for mode in (12, 19):
+            self.setUp()
+            self._start(mode)
+            self.assertIsNotNone(self.c.open_rec.dir_path,
+                                 'mode=%s 该照常采集' % mode)
+

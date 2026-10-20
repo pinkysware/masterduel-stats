@@ -40,6 +40,20 @@ from PySide6.QtWidgets import (QComboBox, QCompleter, QFrame, QGridLayout,
 
 from ui import theme, widgets
 
+def _qobject_alive(obj):
+    """返回一个「这个 QObject 还活着吗」的判定函数（后台线程 emit 前必查）。
+
+    ★ BUG-B6-09：往**已删除**的 QObject `emit()` 是 access violation
+    （后台线程尤其致命，2026-10-03 段错误同款）。没有 shiboken 时退化成恒真
+    （不阻塞功能，只丢一层防护）。
+    """
+    try:
+        from shiboken6 import isValid
+    except Exception:                                    # noqa: BLE001
+        return lambda: True
+    return lambda: bool(isValid(obj))
+
+
 #: 卡图尺寸 —— **完整卡**（59:86 长方形，KeepAspectRatio 不裁切）
 ART_W, ART_H = 84, 122
 #: 格子宽 = 卡图宽（卡名与计数文字都按它省略）
@@ -188,6 +202,10 @@ class DeckViewPage(QWidget):
         self._data = {}
         self._loading = False          # 程序化填下拉时不触发 deck_selected
         self._art_busy = False
+        #: ★ BUG-B6-09：卡图下载的**代次令牌** —— 切卡组就 +1，旧线程据此
+        #: 放弃 emit 且**不再复位** `_art_busy`（复位权归当前代次）。
+        self._art_gen = 0
+        self._art_thread = None
         self._per_min = 0
         self._sort = 'per'
         self._cells = {'main': [], 'extra': []}   # 当前显示的格（筛/排之后）
@@ -307,6 +325,10 @@ class DeckViewPage(QWidget):
     # ------------------------------------------------------------ 数据
     def set_data(self, data: dict) -> None:
         self._data = dict(data or {})
+        #: ★ BUG-B6-09：换卡组 = 换代。旧线程还在跑也**不拦**新的这批
+        #: （原来 `_art_busy` 一直是 True -> 新卡组卡图永不下）。
+        self._art_gen += 1
+        self._art_busy = False
         self._rebuild(fill_picker=True)
         self._warm_art()
 
@@ -350,11 +372,19 @@ class DeckViewPage(QWidget):
         self.sub.setText(' · '.join(bits) or tr('（暂无该卡组构成）'))
 
         unknown = int(d.get('unknown') or 0)
-        self.note.setText((tr('%d 张卡没查到类型，未显示（跑一次 '
-                              'tools/build_card_names.py --update 试试）')
-                           % unknown)
-                          if unknown else '')
-        self.note.setVisible(bool(unknown))       # 没缺卡就不占那一行
+        #: ★ BUG-A6-02：参照库**整份缺失**时先给这句 —— 与「这副卡组没样本」
+        #: 是两件事，用户要做的动作也不同（去数据工具刷新 vs 换一副卡组）。
+        missing = bool(d.get('ref_missing'))
+        if missing:
+            self.note.setText(tr('参照库缺失（data/mdm_deck_cards.json 不在或没内容）'
+                                 '—— 去「设置 → 数据工具 → 参照库刷新」跑一次'))
+        elif unknown:
+            self.note.setText(tr('%d 张卡没查到类型，未显示（跑一次 '
+                                 'tools/build_card_names.py --update 试试）')
+                              % unknown)
+        else:
+            self.note.setText('')
+        self.note.setVisible(missing or bool(unknown))
         has = bool(d.get('has_ref'))
         self.per_box.setEnabled(has)
         self.sort_box.setEnabled(has)
@@ -419,7 +449,11 @@ class DeckViewPage(QWidget):
             self.titles['main'].setText('Top Main Deck')
             self.titles['extra'].setText('Top Extra Deck')
             #: 2026-10-03 用户：长说明换短句（引擎/混轴条目本来就没有构成）
-            msg = widgets.label(tr('暂无该卡组构成'), 'label')
+            #: ★ BUG-A6-02：参照库整份缺失时把「为什么」说清楚（否则用户
+            #: 看到的就是一句「暂无」，无从判断该去刷新还是换卡组）。
+            msg = widgets.label(
+                tr('参照库缺失 —— 去「设置 → 数据工具 → 参照库刷新」跑一次')
+                if d.get('ref_missing') else tr('暂无该卡组构成'), 'label')
             msg.setFont(widgets.font(theme.PAGE_F_BODY))
             msg.setWordWrap(True)
             self._spans['main'].append(msg)
@@ -510,9 +544,18 @@ class DeckViewPage(QWidget):
 
     # ------------------------------------------------------------ 卡图（后台）
     def _warm_art(self) -> None:
-        """后台把缺的卡图逐张下回来（一次一个线程；已在跑就跳过）。"""
-        if self._art_busy:
-            return
+        """后台把缺的卡图逐张下回来（一次一个线程；已在跑就跳过）。
+
+        ★ BUG-B6-09 两处：
+        ① **切卡组时 `_art_busy` 没复位** —— 下载途中换卡组，`set_data()`
+           看到 `_art_busy=True` 直接 return，新卡组卡图**永远不下**。
+           修法 = `set_data()` 换**代次令牌**（`_art_gen`），旧线程发现自己
+           过期就不再复位标志（复位权只属当前代次），新数据立刻起新线程。
+        ② 线程里 `emit()` 没有 `isValid` 守卫 —— 页面销毁后往已删除的
+           QObject 发信号 = access violation（2026-10-03 段错误同款，
+           禁限表页已有这道守卫，这里漏了）。
+        """
+        #: 本次要下的图（干净快照，线程只读它）
         missing = []
         for key in ('main', 'extra'):
             for r in (self._data.get(key) or []):
@@ -520,28 +563,59 @@ class DeckViewPage(QWidget):
                     missing.append(int(r['id']))
         if not missing:
             return
+        if self._art_busy:
+            return
         self._art_busy = True
+        gen = self._art_gen
+        alive = _qobject_alive(self)
 
-        def work(ids):
+        def work(ids, my_gen, keep_alive):
             from core import card_art
             todo = list(ids)
-            for _round in range(3):      # 偶发失败有 3 轮机会（同禁限表页的做法）
-                still = []
-                for cid in todo:
-                    try:
-                        if card_art.fetch_art(cid=cid):
-                            self._art_ready.emit(cid)
+            try:
+                for _round in range(3):   # 偶发失败有 3 轮机会（同禁限表页做法）
+                    still = []
+                    for cid in todo:
+                        if not keep_alive():
+                            return
+                        try:
+                            ok = bool(card_art.fetch_art(cid=cid))
+                        except Exception:                # noqa: BLE001
+                            ok = False
+                        if ok:
+                            if not keep_alive():
+                                return
+                            try:
+                                self._art_ready.emit(cid)
+                            except RuntimeError:         # C++ 对象没了（兜底）
+                                return
                         else:
                             still.append(cid)
-                    except Exception:                    # noqa: BLE001
-                        still.append(cid)
-                todo = still
-                if not todo:
-                    break
-                time.sleep(2.0)
-            self._art_busy = False
+                    todo = still
+                    if not todo:
+                        break
+                    time.sleep(2.0)
+            finally:
+                #: 只有**当前代次**才有复位权（旧线程不许把新线程的标志清掉）
+                if my_gen == self._art_gen:
+                    self._art_busy = False
 
-        threading.Thread(target=work, args=(missing,), daemon=True).start()
+        self._art_thread = threading.Thread(target=work, args=(missing, gen, alive),
+                                            daemon=True)
+        self._art_thread.start()
+
+    def shutdown(self, timeout: float = 5.0) -> None:
+        """等后台卡图线程收尾（**页面销毁/程序退出前必须调**）。
+
+        ★ 这是随机 `Segmentation fault`（pytest exit 139）的根治点之一：
+        线程在 `QApplication` 已销毁之后 `emit()`，或往已删除的 QObject 发信号，
+        就是 access violation。测试的 `_wait_idle` 与看板 `closeEvent` 都依赖它。
+
+        :param timeout: 最长等几秒（超时就放弃 —— 线程是 daemon，不会挂住进程）
+        """
+        t = getattr(self, '_art_thread', None)
+        if t is not None and t.is_alive():
+            t.join(timeout)
 
     def _on_art_ready(self, cid: int) -> None:
         """一张图下好了 → 就地回填（不整页重画、不打断滚动）。"""

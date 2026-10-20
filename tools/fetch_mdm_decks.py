@@ -68,8 +68,17 @@ def query_name(row):
     return (row.get('name_display') or '').strip() or (row.get('name') or '').strip()
 
 
-def fetch_cards_map(delay=0.3, page=PAGE, max_pages=10, verbose=True):
-    """翻页拉全站卡表 → ``{站内 _id: 游戏内 gameId}``（值都是 int）。"""
+def fetch_cards_map(delay=0.3, page=PAGE, max_pages=200, verbose=True):
+    """翻页拉全站卡表 → ``{站内 _id: 游戏内 gameId}``（值都是 int）。
+
+    ★ BUG-B9A-08：`max_pages` 从 10 提到 **200**。站内卡表现在约 1.46 万条
+    （10 页 × 3000 = 3 万刚好够），但每出一次大卡池就会涨 ——
+    超过 3 万条时旧代码**静默截断**映射表，后果是某些卡按名字查不到 gameId
+    （`Nx in P%` 那页直接少卡，且没有任何提示）。
+    现在 200 页是**安全阀**而不是业务上限：正常靠「不满页就停」收尾
+    （下面那行 `if len(rows) < page: break` 本来就在），
+    真撞到 200 页说明有异常，会打一行告警。
+    """
     out, skip = {}, 0
     for n in range(max_pages):
         rows = fetch_api({'fields': '_id,gameId', 'limit': page, 'skip': skip},
@@ -90,6 +99,11 @@ def fetch_cards_map(delay=0.3, page=PAGE, max_pages=10, verbose=True):
             break
         skip += len(rows)
         time.sleep(delay)
+    else:
+        #: 翻完 max_pages 还没见到不满页 —— 异常（站内卡表不可能 60 万条），
+        #: 响亮告警而不是静默返回半份映射表（BUG-B9A-08）
+        print('⚠️ cards 翻页达到上限 %d 页仍未结束（累计 %d 条）—— '
+              '映射表可能不完整，请检查站内接口' % (max_pages, len(out)))
     return out
 
 

@@ -34,6 +34,11 @@ class _MemSettings(object):
 
     store = {}
 
+    def __init__(self, *a, **kw):
+        #: 真 `QSettings('masterduel', 'M7')` 是带两个参数的（BUG-B7-09 起）；
+        #: 替身只关心读写，参数收下即可。
+        pass
+
     def value(self, key, default=None):
         return self.store.get(key, default)
 

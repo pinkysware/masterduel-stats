@@ -824,3 +824,92 @@ class TestModeOf(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class ShowTurnResidueTest(unittest.TestCase):
+    """★ 2026-10-20（用户实报「我先手却判成后手」）：首条 ShowTurn 是控制器
+    内存残渣时，整条回合链作废（判不出比判错好）。
+
+    事故局 `record_20261020_215925`：日志明写 `Turn 1 for player 1`（我方先手），
+    内存侧 24 字节解出 `player=0 / turn=1 / marker=2 / lp_a=2 / lp_b=3`
+    （控制器内存被复用，`m_DataList_ShowTurn` 没被本局写过）。
+    于是 `first_player=0`、`went_first` 记成后手。
+
+    判据：**对局首回合双方 LP 必须相等**（速决胜斗 500/2000/4000 也相等），
+    外加 `player ∈ {0,1}`。全库 322 局实测：316 局原样通过、6 局被抓出，零误伤。
+    """
+
+    def test_normal_first_turn_not_residue(self):
+        turns = [{'player': 1, 'turn': 0, 'lp_a': 8000, 'lp_b': 8000}]
+        self.assertFalse(dr._first_turn_is_residue(turns))
+
+    def test_speed_duel_low_lp_not_residue(self):
+        """速决胜斗起手 500 / 2000 / 4000 —— 两边相等，不算残渣。"""
+        for lp in (500, 2000, 4000, 8000):
+            turns = [{'player': 0, 'turn': 0, 'lp_a': lp, 'lp_b': lp}]
+            self.assertFalse(dr._first_turn_is_residue(turns),
+                             'LP=%d 是速决起手，不该当残渣' % lp)
+
+    def test_unequal_first_turn_lp_is_residue(self):
+        """首回合双方 LP 不相等 = 残渣（事故局 2 vs 3 就是这种）。"""
+        turns = [{'player': 0, 'turn': 1, 'lp_a': 2, 'lp_b': 3}]
+        self.assertTrue(dr._first_turn_is_residue(turns))
+
+    def test_huge_player_is_residue(self):
+        turns = [{'player': 4390959, 'turn': 7471201, 'lp_a': 8000, 'lp_b': 8000}]
+        self.assertTrue(dr._first_turn_is_residue(turns))
+
+    def test_zero_lp_is_residue(self):
+        turns = [{'player': 0, 'turn': 0, 'lp_a': 0, 'lp_b': 0}]
+        self.assertTrue(dr._first_turn_is_residue(turns))
+
+    def test_no_turns_is_not_residue(self):
+        """没有回合事件 = 另一回事（不猜），不该被这条判据拦。"""
+        self.assertFalse(dr._first_turn_is_residue([]))
+
+
+    def test_whole_chain_residue_voids_everything(self):
+        """★ 首条之外还有残渣时也作废（`record_20261010_203819` 实报）。
+
+        那局首条 `lp=(597,1)` 已被首条判据抓住，但后面几条同样污染
+        （`player=1304766336` / `lp_b=-1737342400`）—— untapped 上查到是
+        「先手 5 回合」，库里却记成后手。
+        """
+        events = [
+            {'label': 'ShowTurn', 'player': 0, 'turn': 0, 'lp_a': 597, 'lp_b': 1},
+            {'label': 'ShowTurn', 'player': 1, 'turn': 0, 'lp_a': 0, 'lp_b': 0},
+            {'label': 'ShowTurn', 'player': 1304766336, 'turn': 597,
+             'lp_a': 597, 'lp_b': 0},
+        ]
+        summ = dr._summary(events, {}, lambda n: b'')
+        self.assertIsNone(summ['first_player'])
+        self.assertEqual(summ['total_turns'], 0)
+        self.assertIsNone(summ['lp_final'])
+
+    def test_mid_game_unequal_lp_is_fine(self):
+        """对局中途双方 LP 不同是**正常**的（首条判据只对首回合成立）。"""
+        events = [
+            {'label': 'ShowTurn', 'player': 1, 'turn': 0, 'lp_a': 8000, 'lp_b': 8000},
+            {'label': 'ShowTurn', 'player': 0, 'turn': 1, 'lp_a': 8000, 'lp_b': 6500},
+            {'label': 'ShowTurn', 'player': 1, 'turn': 2, 'lp_a': 5200, 'lp_b': 6500},
+        ]
+        summ = dr._summary(events, {}, lambda n: b'')
+        self.assertEqual(summ['first_player'], 1)
+        self.assertEqual(summ['total_turns'], 3)
+        self.assertEqual(summ['lp_final'], {'a': 5200, 'b': 6500})
+
+    def test_high_lp_not_residue(self):
+        """LP 到 10000 是正常的（规则伤害/支付后回血）—— 上界 20000。"""
+        self.assertFalse(dr._turn_entry_is_residue(
+            {'player': 1, 'turn': 1, 'lp_a': 8000, 'lp_b': 10000}))
+
+    def test_residue_voids_the_whole_chain(self):
+        """残渣时 `first_player` / `total_turns` / `lp_final` 全部作废。"""
+        events = [
+            {'label': 'ShowTurn', 'player': 0, 'turn': 1, 'lp_a': 2, 'lp_b': 3},
+            {'label': 'ShowTurn', 'player': 1, 'turn': 2, 'lp_a': 2, 'lp_b': 3},
+        ]
+        summ = dr._summary(events, {}, lambda n: b'')
+        self.assertIsNone(summ['first_player'], '残渣不许当先手证据')
+        self.assertEqual(summ['total_turns'], 0)
+        self.assertIsNone(summ['lp_final'])
+

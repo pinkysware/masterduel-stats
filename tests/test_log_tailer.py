@@ -474,6 +474,30 @@ class TestFileCreatedLater(Base):
         self.assertEqual(len(r), 1)
         self.assertIn('created-later', r[0])
 
+    def test_start_from_end_skips_history_when_file_appears_later(self):
+        """★ BUG-B2A-12：`start_from='end'` 下「后出现的文件」不能吐全历史。
+
+        旧行为：`_bootstrap()` 时文件不在 → 直接 return（不写游标）；
+        之后 `_read_main()` 的 `setdefault(offset=0)` 把整份文件当新内容。
+        """
+        t = self.mk(start_from='end')
+        self.assertEqual(t.poll(), [])
+        # 文件出现时已经有历史 —— 不该被当成新内容
+        self.write(self.main, L('09:00:00.000', 'A', 'ancient'))
+        self.assertEqual(t.poll(), [], 'end 语义下不应读历史')
+        # 后续追加的照常读
+        self.write(self.main, L('10:00:00.000', 'A', 'fresh'))
+        got = t.poll()
+        self.assertEqual([x[-5:] for x in got], ['fresh'], got)
+
+    def test_start_from_beginning_still_reads_history(self):
+        """对照：`beginning` 下后出现的文件照旧读全部。"""
+        t = self.mk(start_from='beginning')
+        self.assertEqual(t.poll(), [])
+        self.write(self.main, L('09:00:00.000', 'A', 'ancient'))
+        got = t.poll()
+        self.assertEqual([x[-7:] for x in got], ['ancient'], got)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -7,6 +7,11 @@
 * **便宜路径**：记住上次找到的实例地址 —— 每拍只做「对象头校验 + 读两个 List」
   （`deck_edit.read_instance`）。在编辑界面里几乎零成本地发现「换牌了」。
 * **重发现**：实例失效（离开编辑界面）后，**距上次全堆扫 ≥ `RESCAN_SEC`** 才再扫一次。
+* ⚠️ **「读不到」不等于「实例没了」**（BUG-B3-14）：一次瞬时读失败（正在删牌/换牌
+  时 `_size` 短暂不足、页刚好被回收）不能让实例地址作废 —— 否则 120s 内不再重扫，
+  用户换完牌两分钟看不到变化。判据走 `deck_edit.instance_state()` 三态：
+  只有**确实不是本类实例**才作废地址；读失败只跳过这一拍，下一拍照旧重试。
+  （同款结构见 `il2cpp.read_singleton_slot` 的 2026-10-14 事故修法。）
 * 认出同一套牌（**卡表指纹相同**）就什么都不做 —— 反复进出编辑界面不会来回抖。
 * 认不出（过不了闸门）**不覆盖**旧值（别拿噪声盖掉对的名字）。
 
@@ -37,11 +42,28 @@ class DeckEditReader(object):
             self.typeinfo = deck.get('typeinfo')
         return deck, addr
 
+    def read_at_state(self, addr):
+        """便宜读 -> ``(deck, state)``；``state`` ∈ ``'ok' / 'error' / 'gone'``。
+
+        * ``ok``    —— 读到卡表（deck 非 None）；
+        * ``error`` —— **这一拍读不到**（瞬时失败）→ 调用方**保留**实例地址，下拍重试；
+        * ``gone``  —— 对象头说明它确实不是本类实例（离开编辑界面 / 地址被复用）。
+
+        ⚠️ 把 ``error`` 当成 ``gone`` 就是 BUG-B3-14 的 120 秒盲区。
+        """
+        state = deck_edit.instance_state(self.proc, addr, self.typeinfo)
+        if state is None:
+            return None, 'error'
+        if not state:
+            return None, 'gone'
+        deck = deck_edit.read_instance(self.proc, self.mirror, addr)
+        if deck is None:
+            return None, 'error'        # 实例还在，只是这一拍读不出卡表
+        return deck, 'ok'
+
     def read_at(self, addr):
-        """便宜读（对象头校验 + 读两个 List）-> deck 或 None。"""
-        if not deck_edit.is_instance(self.proc, addr, self.typeinfo):
-            return None
-        return deck_edit.read_instance(self.proc, self.mirror, addr)
+        """便宜读的旧口（deck 或 None）。三态请用 :meth:`read_at_state`。"""
+        return self.read_at_state(addr)[0]
 
 
 def identify_by_cards(ids):
@@ -70,14 +92,25 @@ class MyDeckWatcher(object):
         self._inst = None                 # 上次找到的实例地址（便宜路径用）
         self._next_scan_at = 0.0
 
+    def _read_at(self, addr):
+        """reader 的三态接口；只有旧式 ``read_at`` 时按「None = 没了」兼容。"""
+        fn = getattr(self.reader, 'read_at_state', None)
+        if fn is not None:
+            return fn(addr)
+        deck = self.reader.read_at(addr)
+        return deck, ('ok' if deck is not None else 'gone')
+
     def poll(self, now=None) -> Optional[dict]:
         """推进一步。返回**新写入的状态**（有变化时），否则 None。"""
         now = time.time() if now is None else now
         deck, addr = None, None
         if self._inst:
-            deck = self.reader.read_at(self._inst)
-            if deck is None:              # 实例没了（离开编辑界面）-> 走重扫节流
-                self._inst = None
+            deck, state = self._read_at(self._inst)
+            if state == 'error':
+                # 这一拍读不到 ≠ 实例没了：保留地址，下一拍照旧走便宜路径
+                return None
+            if state != 'ok':
+                self._inst = None         # 确实不是本类实例 -> 走重扫节流
                 self._next_scan_at = now + self.rescan_sec
                 return None
             addr = self._inst

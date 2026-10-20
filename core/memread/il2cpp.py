@@ -417,9 +417,13 @@ def list_fields(proc: 'SafeProcess', typeinfo: int, mirror=None,
         return out
     lo = hi = 0
     if mirror is not None:
-        lo, hi = mirror.string_table_span   # 字段名的落点不一定在字符串表里
+        # 字段名的落点**不一定在字符串表里**（那只是 metadata 的一段），
+        # 所以校验边界放宽到「整份 metadata 镜像」：从 base 到字符串表末尾。
+        # ★ BUG-B3-16：这里原来先 `lo, hi = mirror.string_table_span` 再整段
+        #   覆盖成上面这两个值 —— 第一行赋值是死代码，读起来像有分支。
         lo = mirror.base
-        hi = mirror.base + (mirror.header.string_offset + mirror.header.string_size)
+        hi = mirror.base + (mirror.header.string_offset
+                            + mirror.header.string_size)
 
     for i in range(limit):
         base = arr + i * FIELDINFO_STRIDE

@@ -39,9 +39,11 @@ import urllib.request
 import zipfile
 from datetime import datetime
 
-from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJ)
+
+from core import atomic
+from core import paths
 
 YGOCDB = os.path.join(PROJ, 'ygocdb.com.cards', 'cards.json')
 CARD_DATA = os.path.join(PROJ, 'data', 'card_data.json')
@@ -137,8 +139,11 @@ def dump(names, path=OUT, generated_at=None):
                           'jp': sum(1 for v in names.values() if v[2])},
                'names': {str(k): v for k, v in sorted(names.items())}}
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8', newline='') as f:
-        json.dump(payload, f, ensure_ascii=False, separators=(',', ':'))
+    #: ★ BUG-B9A-11：**原子写**。这份 14610 张卡的产出一旦写坏，
+    #: `core.card_names.load()` 的 json.load 抛异常 → 全站卡名变 `#id`。
+    text = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+    if not atomic.write_text(path, text):
+        raise SystemExit('写卡名表失败：%s（原文件未改动）' % path)
     return path
 
 

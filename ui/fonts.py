@@ -40,8 +40,10 @@ from typing import List
 from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-#: 自带字体目录
-FONT_DIR = paths.data_path('fonts')
+#: 自带字体目录（**只读随包素材** —— 走 `resolve`：先看数据目录里有没有
+#: 用户放的字体，没有就回落随包的 `data/fonts/`。★ BUG-B7-04：安装版的
+#: `data_path` 指向 %LOCALAPPDATA%，那份字体不在那儿 → 全界面字体回落、列宽漂移）
+FONT_DIR = paths.resolve('fonts')
 
 _EXTS = ('.ttf', '.otf')
 

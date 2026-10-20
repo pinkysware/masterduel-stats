@@ -186,6 +186,27 @@ class SafeProcess(object):
             )
         return buf.raw[:got.value]
 
+    def read_exact(self, address: int, size: int) -> bytes:
+        """读 **正好** ``size`` 字节；读短了抛 :class:`MemoryReadError`。
+
+        ★ BUG-B3-11：`read()` 会静默截断（``got < size`` 时返回短串），
+        于是 ``read_u32`` 拿到 3 字节也能拼出一个「看起来完全合理的数」。
+        需要精确标量 / 定长结构的调用方必须走这里。
+
+        ⚠️ 为什么**不改** `read()` 本身：`read_cstring` 与 `scan` 依赖「读多少
+        算多少」的宽容语义（区域尾部 / 跨页），改严会把它们变成异常源。
+        """
+        if self._closed:
+            raise MemoryReadError('句柄已关闭')
+        if size <= 0:
+            return b''
+        raw = self.read(address, size)
+        if len(raw) != size:
+            raise MemoryReadError(
+                'ReadProcessMemory 短读 addr=0x%X 要 %d 字节只拿到 %d'
+                % (address, size, len(raw)))
+        return raw
+
     def try_read(self, address: int, size: int) -> Optional[bytes]:
         """读失败时返回 ``None`` 而不是抛异常（扫内存时用，页可能中途消失）。"""
         try:
@@ -194,17 +215,18 @@ class SafeProcess(object):
             return None
 
     def read_u32(self, address: int) -> int:
-        """读一个小端 uint32。"""
-        return int.from_bytes(self.read(address, 4), 'little', signed=False)
+        """读一个小端 uint32。**短读抛** :class:`MemoryReadError`（B3-11）。"""
+        return int.from_bytes(self.read_exact(address, 4), 'little', signed=False)
 
     def read_u64(self, address: int) -> int:
-        """读一个小端 uint64（64 位下即原生指针宽度）。"""
-        return int.from_bytes(self.read(address, 8), 'little', signed=False)
+        """读一个小端 uint64（64 位下即原生指针宽度）。短读抛异常。"""
+        return int.from_bytes(self.read_exact(address, 8), 'little', signed=False)
 
     def read_ptr(self, address: int) -> int:
-        """读一个指针（按当前解释器位数）。"""
+        """读一个指针（按当前解释器位数）。短读抛异常。"""
         width = 8 if ctypes.sizeof(ctypes.c_void_p) == 8 else 4
-        return int.from_bytes(self.read(address, width), 'little', signed=False)
+        return int.from_bytes(self.read_exact(address, width), 'little',
+                              signed=False)
 
     def read_cstring(self, address: int, limit: int = 4096) -> str:
         """读到 NUL 为止，按 UTF-8 解码（用于 IL2CPP 字符串表）。"""

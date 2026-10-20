@@ -10,20 +10,20 @@
 3. **安装包的 `SecCore` 必须给四个用户文件 `SetOverwrite off`** ——
    否则重装会静默覆盖用户改过的 `deck_name_cn.csv` 等（实测复现）。
 
-⚠️ 这些是 `packaging/*.nsi` / `*.py` 的文本断言，不真打包 —— 秒级。
+⚠️ 这些是 `build/*.nsi` / `*.py` 的文本断言，不真打包 —— 秒级。
 """
 import io
 import os
 import unittest
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PACKAGING = os.path.join(PROJ, 'packaging')
-NSI = os.path.join(PACKAGING, 'installer.nsi')
+BUILD = os.path.join(PROJ, 'build')
+NSI = os.path.join(BUILD, 'installer.nsi')
 
-#: ⚠️ 发布仓**不带 `packaging/`**（打包脚本是本地构建工具，不进公开仓库）。
+#: ⚠️ 发布仓**不带 `build/`**（打包脚本是本地构建工具，不进公开仓库）。
 #: 与「依赖 ygocdb 卡表的测试」同一套路：缺文件就 skip，别误报红。
-#: 主仓有 `packaging/` 时照常全跑。
-_HAS_PACKAGING = os.path.isdir(PACKAGING)
+#: 主仓有 `build/` 时照常全跑。
+_HAS_BUILD = os.path.isdir(BUILD)
 
 
 def _read(path):
@@ -31,7 +31,7 @@ def _read(path):
         return f.read()
 
 
-@unittest.skipUnless(_HAS_PACKAGING, '发布仓不带 packaging/（本地构建工具）')
+@unittest.skipUnless(_HAS_BUILD, '发布仓不带 build/（本地构建工具）')
 class PatchPackageTest(unittest.TestCase):
     """`build_patch.py` 的补丁清单绝不含 data/。"""
 
@@ -41,7 +41,7 @@ class PatchPackageTest(unittest.TestCase):
             sys.path.insert(0, PROJ)
 
     def test_patch_entries_exclude_data(self):
-        from packaging.build_patch import patch_entries
+        from build.build_patch import patch_entries
         entries = patch_entries()
         self.assertTrue(entries, '补丁清单为空 —— 发布仓路径不对？')
         leaked = [e for e in entries
@@ -49,7 +49,7 @@ class PatchPackageTest(unittest.TestCase):
         self.assertEqual(leaked, [], '补丁包混进了 data/（会覆盖用户数据）')
 
     def test_patch_entries_exclude_runtime(self):
-        from packaging.build_patch import patch_entries
+        from build.build_patch import patch_entries
         entries = patch_entries()
         for bad in ('python/', 'tests/', 'assets/', 'MDStats.exe',
                     'start.bat', 'launch.bat'):
@@ -58,7 +58,7 @@ class PatchPackageTest(unittest.TestCase):
             self.assertEqual(hit, [], '补丁包混进了 %s' % bad)
 
     def test_patch_entries_include_code(self):
-        from packaging.build_patch import patch_entries
+        from build.build_patch import patch_entries
         entries = patch_entries()
         #: ⚠️ 补丁清单走的是**发布仓**（`SRC_REPO`），而 `core/version.py` 是
         #: 2026-10-18 新加的 —— 发布仓同步之前那些新文件本来就不在里面。
@@ -67,7 +67,7 @@ class PatchPackageTest(unittest.TestCase):
             self.assertIn(need, entries)
 
 
-@unittest.skipUnless(_HAS_PACKAGING, '发布仓不带 packaging/（本地构建工具）')
+@unittest.skipUnless(_HAS_BUILD, '发布仓不带 build/（本地构建工具）')
 class InstallerScriptTest(unittest.TestCase):
     """`installer.nsi` 的两条数据安全锁。"""
 
@@ -126,13 +126,13 @@ class InstallerScriptTest(unittest.TestCase):
         self.assertIn('OutFile "${OUTDIR}', self.nsi)
 
 
-@unittest.skipUnless(_HAS_PACKAGING, '发布仓不带 packaging/（本地构建工具）')
+@unittest.skipUnless(_HAS_BUILD, '发布仓不带 build/（本地构建工具）')
 class QtTrimSharedTest(unittest.TestCase):
     """三个打包脚本必须共用同一份白名单（别抄第二份）。"""
 
     def test_scripts_use_shared_helper(self):
         for name in ('build_installer.py', 'build_full_zip.py'):
-            text = _read(os.path.join(PACKAGING, name))
+            text = _read(os.path.join(BUILD, name))
             self.assertIn('copy_pyside6', text,
                           '%s 没走 core.qt_trim_copy 的白名单复制' % name)
             self.assertNotIn("copytree(s, site + '/PySide6')", text,
@@ -140,10 +140,87 @@ class QtTrimSharedTest(unittest.TestCase):
 
     def test_scripts_read_version_module(self):
         for name in ('build_installer.py', 'build_full_zip.py', 'build_patch.py'):
-            text = _read(os.path.join(PACKAGING, name))
+            text = _read(os.path.join(BUILD, name))
             self.assertIn("core', 'version.py'", text,
                           '%s 没读 core/version.py（版本号会漂）' % name)
 
 
+@unittest.skipUnless(_HAS_BUILD, '发布仓不带 build/（本地构建工具）')
+class InstallerPathsTest(unittest.TestCase):
+    """★ BUG-B0-01：四个本机绝对路径不能再写死在源码里。"""
+
+    def setUp(self):
+        self.src = _read(os.path.join(BUILD, 'build_installer.py'))
+
+    def test_no_hardcoded_machine_paths(self):
+        for bad in ('E:/LMStudio', 'C:/Users/Administrator', 'D:/ProgramData'):
+            self.assertNotIn(bad, self.src, '硬编码了本机路径：%s' % bad)
+
+    def test_paths_are_overridable(self):
+        for env, opt in (('MD_PUB_REPO', '--pub-repo'),
+                         ('MD_BUILD_ROOT', '--build-root'),
+                         ('MD_SITE_PACKAGES', '--site-packages'),
+                         ('MD_MAKENSIS', '--makensis'),
+                         ('MD_EMBED_ZIP', '--embed-zip')):
+            self.assertIn(env, self.src, '缺环境变量 %s' % env)
+            self.assertIn(opt, self.src, '缺参数 %s' % opt)
+
+    def test_missing_path_gives_guidance(self):
+        self.assertIn('SystemExit', self.src)
+        self.assertIn('找不到', self.src)
+
+
+
 if __name__ == '__main__':
     unittest.main()
+
+@unittest.skipUnless(_HAS_BUILD, '发布仓不带 build/')
+class UninstallJumpAndPidCheckTest(unittest.TestCase):
+    """★ BUG-B0-02 / B0-04（2026-10-20）：两个**会静默做错事**的脚本写法。
+
+    B0-02：卸载段的 MessageBox 用相对跳转（`IDNO +2` / `IfFileExists ... 0 +4`）——
+            中间插一行就跳错，最坏情况是用户点「否」却删了战绩。
+    B0-04：`launch_installed.bat` 的 pid 判活读的是 **JSON 文件整行**，
+            且用 `find "%OLDPID%"` 子串匹配 —— 永远判成「没在跑」，
+            于是每次启动都开第二个采集器（两个进程写同一个库）。
+    """
+
+    def _code_lines(self, text, comment_prefix=';'):
+        """去掉注释行（注释里提到旧写法是允许的，只有真代码才算）。"""
+        out = []
+        for line in text.split(chr(10)):
+            s = line.strip()
+            if s.startswith(comment_prefix) or s.startswith('rem '):
+                continue
+            out.append(line)
+        return chr(10).join(out)
+    def test_uninstall_has_no_relative_jumps(self):
+        nsi = self._code_lines(_read(NSI))
+        body = nsi[nsi.index('Section "Uninstall"'):]             if 'Section "Uninstall"' in nsi else nsi
+        import re
+        #: 相对跳转 = `+N` / `-N` 作为跳转目标（`IDNO +2` / `0 +4`）
+        bad = re.findall(r'(?:IDNO|IDYES|IfFileExists "[^"]*")\s+[+-]\d+',
+                         body)
+        self.assertEqual(bad, [], '卸载段还有相对跳转：%r（改行就跳错）' % bad)
+
+    def test_uninstall_uses_named_labels(self):
+        nsi = _read(NSI)
+        self.assertIn('data_instdir_skip:', nsi)
+        self.assertIn('data_localappdata_skip:', nsi)
+        self.assertIn('IDNO data_instdir_skip', nsi)
+        self.assertIn('IDNO data_localappdata_skip', nsi)
+
+    def test_launcher_uses_collector_running(self):
+        bat = self._code_lines(_read(os.path.join(BUILD,
+                                                  'launch_installed.bat')))
+        self.assertIn('collector_ctl.collector_running()', bat,
+                      'pid 判活必须走 collector_running()（唯一实现）')
+        self.assertNotIn('tasklist', bat, '不许再手搓 tasklist 判活')
+        self.assertNotIn('set /p OLDPID', bat,
+                         'pid 文件是 JSON，读整行去比永远匹配不上')
+
+    def test_launcher_is_ascii(self):
+        """launch_installed.bat 必须是 ASCII（cmd 代码页，见文件头注释）。"""
+        raw = open(os.path.join(BUILD, 'launch_installed.bat'), 'rb').read()
+        raw.decode('ascii')
+

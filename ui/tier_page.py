@@ -123,6 +123,9 @@ class TierPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._data = {}
+        #: 当前网格列数（resizeEvent 重排用；None = 还没建过网格）
+        self._grid = None
+        self._grid_cols_now = 0
         outer = QVBoxLayout(self)
         outer.setContentsMargins(theme.S_LG, theme.S_MD, theme.S_LG, theme.S_LG)
         outer.setSpacing(theme.S_MD)
@@ -165,8 +168,39 @@ class TierPage(QWidget):
                 w.setParent(None)
                 w.deleteLater()
 
+    def _grid_cols(self) -> int:
+        """可视区宽度 → 网格列数（**放得下才给列**，不会撑出横向滚动条）。
+
+        ★ BUG-B6-07：与 `deck_view_page.cols_for_width` 同一口径。
+        `n` 列占宽 = ``n*CHIP_MIN_W + (n-1)*S_MD`` ≤ 视口宽，
+        解出 ``n ≤ (w+S_MD)//(CHIP_MIN_W+S_MD)``。
+        最小窗口 1200×620 下视口约 974px → ``(974+12)//262 = 3`` 列。
+        """
+        try:
+            w = int(self.viewport().width()) if hasattr(self, 'viewport') else 0
+        except Exception:
+            w = 0
+        if w <= 0:                          # 还没 show（取不到 viewport）：用保守值
+            w = max(320, self.width() or 0)
+        return max(1, (w + theme.S_MD) // (CHIP_MIN_W + theme.S_MD))
+
+    def resizeEvent(self, event) -> None:                    # noqa: N802
+        """窗口变了 → 列数可能变 → 重排（防抖合并成一次）。"""
+        super().resizeEvent(event)
+        if self._grid is None:
+            return
+        cols = self._grid_cols()
+        if cols != self._grid_cols_now:
+            self._grid_cols_now = cols
+            self._rebuild_grid()
+
+    def _rebuild_grid(self) -> None:
+        """按当前列数重建所有芯片网格（列数变化时才调）。"""
+        # 简单可靠：整页重铺（数据已在 self._data 里，几百个芯片也就毫秒级）
+        self.set_data(self._data)
+
     def _section(self, sec: dict) -> QWidget:
-        """一节：TIER N 标题 + 说明 + 芯片网格（4 列）。"""
+        """一节：TIER N 标题 + 说明 + 芯片网格（列数随视口）。"""
         box = QWidget()
         v = QVBoxLayout(box)
         v.setContentsMargins(0, 0, 0, 0)
@@ -187,13 +221,19 @@ class TierPage(QWidget):
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(theme.S_MD)
+        # ★ BUG-B6-07：列数按**可视宽**算，不再写死 4 列。
+        #   4×250 + 3×12 = 1036px > 最小窗口 1200×620 下的视口 974px
+        #   → 必出横向滚动条、右侧芯片被裁（deck_view_page 早有同款修法）。
+        cols = self._grid_cols()
+        self._grid_cols_now = cols
         for i, deck in enumerate(decks):
             chip = TierChip(deck)
             chip.clicked.connect(self.deck_clicked.emit)
-            grid.addWidget(chip, i // GRID_COLS, i % GRID_COLS)
-        for j in range(GRID_COLS):
+            grid.addWidget(chip, i // cols, i % cols)
+        for j in range(cols):
             grid.setColumnStretch(j, 1)
         v.addLayout(grid)
+        self._grid = grid                    # resizeEvent 重排用
         v.addStretch(1)
         return box
 

@@ -751,6 +751,22 @@ class OppDeckManagerTest(SettingsPatchedTest):
         self.assertIn('写盘失败', dlg.status.text())
         dlg.deleteLater()
 
+    def test_save_blocked_when_csv_read_failed(self):
+        """★ BUG-B6-01：覆盖表**读失败**过 -> save() 必须禁写。
+
+        否则会把「只剩表头」的空表盖掉用户手填的 125 行（不可再生、且不报错）。
+        """
+        d = tempfile.mkdtemp(prefix='opp-decks-')
+        self.addCleanup(shutil.rmtree, d, True)
+        dlg, made = self._dlg(_cover_csv(d))
+        # 模拟构造期读表失败（被占用 / 权限）
+        dlg._load_ok = False
+        dlg._load_error = 'PermissionError: 被占用'
+        dlg.save()
+        self.assertEqual(made, [], '读失败后 save 不该起脚本进程')
+        self.assertIn('已禁止写入', dlg.status.text())
+        dlg.deleteLater()
+
     def test_push_failure_reports_exit_code(self):
         d = tempfile.mkdtemp(prefix='opp-decks-')
         self.addCleanup(shutil.rmtree, d, True)

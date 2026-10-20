@@ -42,6 +42,7 @@ import urllib.request
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJ)
 
+from core import atomic                                            # noqa: E402
 from core.storage import (Storage, DONE_RESULTS, GAME_MODE_NAMES,  # noqa: E402
                           MODE_PVP, MODE_SOLO, MODE_LIVE,
                           ORIGIN_API, ORIGIN_LOG)
@@ -134,11 +135,16 @@ def parse_games(text):
 
 
 def fetch(out_path=RAW_PATH):
+    """抓一次原始 JSON 落盘（**原子写** —— ★ BUG-B9A-12）。
+
+    2.2MB 直接覆盖时若写到一半崩，`load_api` 会解析出一份坏文件、报出
+    「API 返回异常」这种误导性错误。现在要么全成功、要么原文件不变。
+    """
     text = http_get(_api_url())
-    games = parse_games(text)
+    games = parse_games(text)                 # 先校验完整性，再落盘
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(text)
+    if not atomic.write_text(out_path, text):
+        raise RuntimeError('写入失败：%s（原文件未改动）' % out_path)
     return out_path, games
 
 

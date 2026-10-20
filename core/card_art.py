@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 from typing import Dict, Optional
 from core import paths
@@ -30,7 +31,21 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: **整张卡** CDN（带卡框与文案，2026-09-21 用户：「完整的卡图，包括卡框」——
 #: 带 `!art` 后缀是纯卡绘 256²，那版被推翻）
-ART_URL = 'https://cdn.233.momobako.com/ygopro/pics/%s.jpg'
+#:
+#: ★ BUG-B2A-01（2026-10-18）：原来是 `cdn.233.momobako.com/ygopro/pics/%s.jpg`，
+#:   该 CDN **已 404**（本机实测：老卡 20500 直接 Not Found）→ 禁限表 209 张、
+#:   卡组构成页两栏卡图**全部空白**，而且 `_download()` 把 404 当普通异常吞成
+#:   None，界面按「留空占位」处理，**没有任何提示**。
+#:   现改用 ygoprodeck 的**整卡**地址（实测 200 image/jpeg）。
+#:
+#: 🔴 **别改成 `cards_cropped`！** `AGENTS.md` 里「别用
+#:   `images.ygoprodeck.com/images/cards/<konamiID>.jpg`」那条针对的是
+#:   **卡组图**（`data/deck_images/`，必须纯卡绘、无框）。
+#:   本模块是**两族并存**：`art_path` = 整张卡（禁限表 / 卡组构成，要卡框）、
+#:   `cropped_path` = 纯卡绘（手坑格用）。这里要的是**带框整卡**，
+#:   且 `_save()` 按 `KeepAspectRatio` 缩到高 200 —— 换成方形的
+#:   `cards_cropped` 会让布局跟着错（实测两张图字节数差 30%~100%）。
+ART_URL = 'https://images.ygoprodeck.com/images/cards/%s.jpg'
 #: 缓存目录（可再生 → gitignore）
 CACHE_DIR = paths.data_path('card_art')
 #: **纯卡绘** CDN（去卡框、去效果文）—— 按 **Konami 密码**寻址。
@@ -52,6 +67,9 @@ _EN: Dict[str, str] = {}
 _EN_SQUEEZED: Dict[str, str] = {}
 _LOADED = False
 _last_fetch = [0.0]
+#: 连续下载失败次数（BUG-B2A-01 附带：失败要留痕，但别刷屏 —— 只在
+#: 「从成功转失败」的第一次打一行 stderr）
+_fail_streak = [0]
 
 
 def _load():
@@ -149,7 +167,13 @@ def art_path_by_en(name: str) -> Optional[str]:
 
 
 def _download(konami: str) -> Optional[bytes]:
-    """下一次图（带 UA 与最小间隔）；失败返回 None。"""
+    """下一次图（带 UA 与最小间隔）；失败返回 None。
+
+    ★ BUG-B2A-01 附带：**失败要留痕**。原来 404 / 断网 / 超时全被裸
+    `except: pass` 吞成 None，界面上只表现为「图是空的」—— 上次 CDN 整条
+    失效（momobako 404）就是这样静默了几个月没人发现。
+    现在连续失败**只在第一次**打一行 stderr（不刷屏、不影响界面）。
+    """
     import urllib.request
     gap = MIN_GAP - (time.time() - _last_fetch[0])
     if gap > 0:
@@ -160,9 +184,19 @@ def _download(konami: str) -> Optional[bytes]:
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read()
         _last_fetch[0] = time.time()
+        _fail_streak[0] = 0                 # 成功一次就重置
         return raw
-    except Exception:                                    # noqa: BLE001
+    except Exception as exc:                             # noqa: BLE001
         _last_fetch[0] = time.time()
+        _fail_streak[0] += 1
+        if _fail_streak[0] == 1:            # 只在「从成功转失败」时打一次
+            try:
+                sys.stderr.write(
+                    '[card_art] 整卡下载失败（%s）: %s: %s -- 若持续出现，'
+                    '可能是 %s 失效或本机断网\n'
+                    % (konami, type(exc).__name__, exc, ART_URL))
+            except Exception:                            # noqa: BLE001
+                pass
         return None
 
 

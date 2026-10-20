@@ -93,6 +93,12 @@ ORIGIN_API = 'api'
 #: ⚠️ 只在与既有 log/api 行配不上时才新建行；能配上就并入旧行（防战绩翻倍）。
 ORIGIN_RECORD = 'record'
 
+#: 同一 ``started_at`` 撞上不同 ``match_id`` 时的**来源优先级**（大者胜）。
+#: 语义：record（内存采集，含 winbit / 逐卡露出）> api（补录，含模式/段位）> log。
+#: 只在 `upsert_match` 的撞车分支用 —— 见 BUG-B1-04：先到的空壳 log 行
+#: 不许把后到的 record 行挤成 'skipped'。
+ORIGIN_PRIORITY = {ORIGIN_LOG: 0, ORIGIN_API: 1, ORIGIN_RECORD: 2}
+
 #: Untapped API 的 `game_mode` 枚举（从网页 JS 里抠出来的完整定义）。
 GAME_MODE_NAMES = {
     0: 'NORMAL', 1: 'FREE', 2: 'SINGLE', 3: 'RANK（排名决斗）',
@@ -506,6 +512,12 @@ CREATE TABLE IF NOT EXISTS banlist_current (
 );
 """
 
+#: 账号两列**成对**取舍（BUG-B1-12）：判据只看 `account_name`，
+#: 两列一起判 —— 否则独立 COALESCE 会拼出「A 号的名字 + B 号的 pcode」。
+_ACCOUNT_PAIR_KEEP = ('{f} = CASE WHEN matches.account_name IS NOT NULL'
+                      ' THEN matches.{f} ELSE excluded.{f} END')
+
+
 def _build_insert_sql():
     """按 MATCH_FIELDS 生成 upsert 语句 —— 免得手写列名跟 schema 漂移。
 
@@ -600,11 +612,11 @@ def _build_insert_sql():
             # 多账号章（2026-10-03）：**一旦有值就不许任何来源改写** ——
             # 采集器盖的是「当时登录的号」，API 盖的是 untapped 号，
             # 两边打架时先到的赢（用户口径：API 补的局都是示例玩家的号）。
-            sets.append('account_name = COALESCE(matches.account_name,'
-                        ' excluded.account_name)')
+            # ⚠️ 两列必须**成对**补（BUG-B1-12）：独立 COALESCE 会拼出
+            #    「name 是 A 号、pcode 是 B 号」的跨账号错配行。
+            sets.append(_ACCOUNT_PAIR_KEEP.format(f='account_name'))
         elif f == 'account_pcode':
-            sets.append('account_pcode = COALESCE(matches.account_pcode,'
-                        ' excluded.account_pcode)')
+            sets.append(_ACCOUNT_PAIR_KEEP.format(f='account_pcode'))
         elif f in KEEP_IF_NEW_NULL:
             sets.append('%s = COALESCE(excluded.%s, matches.%s)' % (f, f, f))
         elif f in KEEP_ALWAYS:
@@ -847,6 +859,16 @@ class Storage:
         self.db_path = db_path or DEFAULT_DB
 
     # -------------------------------------------------------- 连接 / 建表
+    #: ★ BUG-B8-12：SQLite 并发参数（**每次连接都要设**，PRAGMA 是连接级的）。
+    #: 背景：采集器、看板、各 tools 脚本会同时开连接写同一个 db。默认
+    #: `busy_timeout=0` —— 撞上别人的写事务立刻抛 `database is locked`，
+    #: 表现为「打完一局悬浮窗不显示 / 看板刷新报错」这类静默失败。
+    #: `WAL` 让读不被写阻塞、写也不互相等太久；`busy_timeout` 给写事务
+    #: 一个排队窗口（5s），而不是立即失败。
+    #: ⚠️ `journal_mode=WAL` 是**持久化**到库文件头的，只需生效一次；
+    #:    在只读介质的库上可能设不上（返回 'delete'），那里别抛异常。
+    BUSY_TIMEOUT_MS = 5000
+
     @contextmanager
     def _open(self):
         """一次事务。正常退出即提交，异常回滚。"""
@@ -854,6 +876,15 @@ class Storage:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute('PRAGMA foreign_keys = ON')
+        #: ★ BUG-B8-12：并发写排队而不是立刻 `database is locked`（见类常量）
+        try:
+            conn.execute('PRAGMA busy_timeout = %d' % self.BUSY_TIMEOUT_MS)
+        except sqlite3.Error:                            # noqa: BLE001
+            pass
+        try:
+            conn.execute('PRAGMA journal_mode = WAL')
+        except sqlite3.Error:                            # noqa: BLE001
+            pass                                         # 只读介质：保持默认
         try:
             with conn:
                 yield conn
@@ -956,10 +987,28 @@ class Storage:
         with self._open() as conn:
             if params['started_at']:
                 prev = conn.execute(
-                    'SELECT match_id FROM matches WHERE started_at = ?',
+                    'SELECT * FROM matches WHERE started_at = ?',
                     (params['started_at'],)).fetchone()
                 if prev is not None and prev['match_id'] != params['match_id']:
-                    return 'skipped'
+                    # ★ BUG-B1-04：同一开始时间撞上不同 match_id 时**按来源优先级合并**。
+                    #   实机形态：record 行（match_id='rec:<目录>'）晚于同局的
+                    #   空壳 log 行到达，旧逻辑直接 skipped → record 行整局丢失
+                    #   （winbits / 逐卡露出 / 手坑全没），只剩一行没结果的 log 行。
+                    #   * 新来源**不比旧的高** → 保持旧行为（skipped），这是
+                    #     `match_id` 因日志轮转漂移时的防重复护栏；
+                    #   * 新来源更高 → 吸收旧行独有字段（只补空、不覆盖），
+                    #     删旧行再写新行（行数不变、身份换成更可信的那条）。
+                    if (ORIGIN_PRIORITY.get(params.get('origin'), -1)
+                            <= ORIGIN_PRIORITY.get(prev['origin'], -1)):
+                        return 'skipped'
+                    for k in MATCH_FIELDS:
+                        if k in ('match_id', 'origin', 'created_at'):
+                            continue
+                        if params.get(k) is None and prev[k] is not None:
+                            params[k] = prev[k]
+                    params['created_at'] = prev['created_at'] or params['created_at']
+                    conn.execute('DELETE FROM matches WHERE match_id = ?',
+                                 (prev['match_id'],))
             self._ensure_my_deck(conn, params['my_deck_id'], params['my_deck_name'])
             self._ensure_opp_deck(conn, params['opp_deck_id'], params['opp_deck_name'])
             conn.execute(INSERT_MATCH_SQL, params)
@@ -1207,6 +1256,12 @@ class Storage:
         → 歧义放弃）；**紧窗不查**（35 秒窗、实测两局最短隔 43 秒，取最新一条即可）。
 
         返回 ``(row, stage)`` 或 ``(None, reason)``。
+
+        ⚠️ **已知边界（BUG-B1-05，降级为 P3）**：三段窗口都是从 ``first_seen``
+        往前推的 —— 超过 :data:`RECORD_WIDE_LOOKBACK`（30 分钟）才结束的**长局**
+        在 one-shot/legacy 抓取时够不到 `started_at`（真库 `duration_sec > 1800`
+        当前 **0 行**，无现场证据）。要彻底修得按 `ended_at` 反推起点，但那会
+        动到「同局唯一性/歧义放弃」那套判据 —— 没有真样本之前**不改**。
         """
         if not first_seen:
             # 坏目录（目录名不合规 + manifest 缺 saved_at）没有锚点：
@@ -1318,11 +1373,22 @@ class Storage:
                     actions[col] = 'kept'
 
             conflict_note = None
-            #: 判据 = **人工 + 有值**：`result_src='manual'` 但 `result` 是空的行
-            #: （实测库里就有一行，10-44 那局）不许被锁死 —— 空值没有「人工结论」
-            #: 可保护，锁了它反而**永远填不上**。
-            manual = (row.get('result_src') == MANUAL_RESULT_SRC
-                      and row.get('result') is not None)
+            #: 判据 = **有值 且 来源属人工侧**（BUG-B1-01，2026-10-18）。
+            #:
+            #: 🔴 原实现只认字面量 `result_src == 'manual'` —— 而
+            #: `_build_insert_sql()` 的 `_result_keep` 用的是更宽的
+            #: 「src 非空 且 NOT IN AUTO_RESULT_SRCS」。两处口径不一致导致：
+            #: `manual-fix-*` / `untapped-api-*` 这类人工来源在**本函数**里
+            #: 不被当成人工值 → 走到下面的 `unchanged` 分支 → 被无条件戳成
+            #: `winbit` → 该行从此失去人工保护，后续日志重解析可以随意覆盖它
+            #: （与「人工修复不许被自动解析冲掉」的契约相反）。
+            #:
+            #: 现在与 `_result_keep` **同口径**：src 非空且不在自动集合里。
+            #: 仍保留「结果非空」这个前置 —— `src='manual'` 但 `result` 为空
+            #: 的行（实测库里有一行）没有「人工结论」可保护，锁了反而永远填不上。
+            _src = row.get('result_src')
+            manual = bool(_src) and _src not in AUTO_RESULT_SRCS \
+                and row.get('result') is not None
             if result and manual:
                 old = row.get('result')
                 actions['result'] = 'kept:manual'
@@ -1731,6 +1797,36 @@ class Storage:
             rows = conn.execute(sql, args).fetchall()
         return [_row_to_dict(r) for r in rows]
 
+    def get_matches_between(self, since=None, until=None, limit=500,
+                            account=None):
+        """**时间窗内**最近的 `limit` 局（DESC）；窗条件下推 SQL（BUG-B1-09）。
+
+        与 :meth:`get_recent_matches` 的唯一区别是多了 ``since`` / ``until``
+        （定宽文本、含首含尾；`until` 建议以 ``.999`` 结尾）。
+
+        ⚠️ 为什么要它：「先取 500 行、再在 Python 里按月筛」在库超过 500 行后
+        会**静默少算**（月报少几局）。真库当前 340 行、暂不触发，但这是迟早的事。
+        口径与 `get_recent_matches` 完全一致：**不套统计口径**（含活动/回放）。
+        """
+        where, args = [], []
+        if account:
+            where.append('account_name = ?')
+            args.append(account)
+        if since:
+            where.append('started_at >= ?')
+            args.append(since)
+        if until:
+            where.append('started_at <= ?')
+            args.append(until)
+        sql = 'SELECT * FROM matches'
+        if where:
+            sql += ' WHERE ' + ' AND '.join(where)
+        sql += ' ORDER BY started_at DESC LIMIT ?'
+        args.append(int(limit))
+        with self._open() as conn:
+            rows = conn.execute(sql, args).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
     def get_marked_matches(self, limit=20):
         """已标注队列：``opp_deck_id IS NOT NULL``，按时间**倒序**。
 
@@ -1758,6 +1854,13 @@ class Storage:
 
         返回 ``(inserted, updated, pruned)``。
         """
+        rows = list(rows or ())
+        # ★ BUG-B1-02：**本次抓到 0 条 = 疑似抓取失败，拒绝清空整表**。
+        #   原逻辑会把旧的站内条目全部 prune 掉（104 条 → 只剩 custom），
+        #   而调用方 `fetch_meta_decks` 在「站点改版 / 网络抖动 / 解析空页」
+        #   时正会走到这里。宁可这次不更新，也不许一次抖动抹掉整张表。
+        if prune and not rows:
+            return 0, 0, 0
         now = int(time.time())
         ins = upd = 0
         with self._open() as conn:
@@ -1895,9 +1998,9 @@ class Storage:
         with self._open() as conn:
             cur = conn.execute(
                 'UPDATE meta_decks SET tier = ?'
-                ' WHERE name = ? AND (tier IS NULL OR tier = ""'
+                ' WHERE name = ? AND (tier IS NULL OR tier = ?'
                 '                     OR tier NOT IN (%s))' % marks,
-                (tier, name) + VALID_TIERS)
+                (tier, name, '') + VALID_TIERS)
             return cur.rowcount
 
     def set_meta_deck_cn(self, name, name_cn, kind=None):
@@ -2023,6 +2126,11 @@ class Storage:
         ``rows`` 每条：``announce_id / card_mdm_id / card_en / from_status /
         to_status / effective / announced / url``。
         """
+        rows = list(rows or ())
+        # ★ BUG-B1-02：同 `replace_meta_decks` —— 空抓取拒绝清空。
+        #   禁限变更史是**整表覆盖**（420 条），一页空响应就会把它全删掉。
+        if not rows:
+            return 0, 0
         now = int(time.time())
         seen = set()
         with self._open() as conn:

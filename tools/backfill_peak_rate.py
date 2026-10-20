@@ -31,10 +31,11 @@ import json
 import os
 import sys
 
-from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
+
+from core import paths
 
 from core.memread.peak_rate import decode_peak_value, decode_season  # noqa: E402
 from core.storage import Storage                                    # noqa: E402

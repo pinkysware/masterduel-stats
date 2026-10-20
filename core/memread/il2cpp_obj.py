@@ -58,16 +58,32 @@ def class_name_of(proc, obj):
         return ''
 
 
+#: 装箱基元按**类名**决定的读取宽度（★ BUG-B3-09：原来 Int32 也按 8 字节读，
+#: `+0x14` 是对齐填充、不保证为 0，会把邻字节算进值里）。
+#: 范本是 `peak_rate._val`（:110-115）。
+BOXED_WIDTHS = {
+    'Int64': (8, '<q'),
+    'UInt64': (8, '<Q'),
+    'Int32': (4, '<i'),
+    'UInt32': (4, '<I'),
+}
+
+
 def boxed_int(proc, obj):
-    """装箱 Int64/Int32 -> 数值；其它类型返回 None（不硬猜）。"""
+    """装箱整数 -> 数值；其它类型返回 None（不硬猜）。宽度按类名取。"""
     if not obj or obj < MIN_ADDR:
         return None
-    if class_name_of(proc, obj) not in ('Int64', 'Int32'):
+    spec = BOXED_WIDTHS.get(class_name_of(proc, obj))
+    if spec is None:
         return None
+    size, fmt = spec
     try:
-        return struct.unpack('<q', proc.read(obj + 0x10, 8))[0]
+        raw = proc.read(obj + 0x10, size)
     except Exception:
         return None
+    if not raw or len(raw) < size:
+        return None
+    return struct.unpack(fmt, raw)[0]
 
 
 def _fields_of(proc, mirror, obj):
@@ -101,8 +117,15 @@ def dict_items(proc, mirror, obj):
             raw = proc.read(base, DICT_ENTRY_STRIDE)
         except Exception:
             continue
-        key = read_string(proc, struct.unpack_from('<Q', raw, 8)[0], 80)
-        val = struct.unpack_from('<Q', raw, 16)[0]
+        # ★ BUG-B3-08：短读时 unpack_from 会抛 struct.error 逃出本函数
+        #   （契约是「读不到给 None / []，不抛」；所有调用方都得自己兜）。
+        if not raw or len(raw) < DICT_ENTRY_STRIDE:
+            continue
+        try:
+            key = read_string(proc, struct.unpack_from('<Q', raw, 8)[0], 80)
+            val = struct.unpack_from('<Q', raw, 16)[0]
+        except struct.error:
+            continue
         out.append((key, val))
     return out
 
@@ -126,17 +149,27 @@ def list_items(proc, mirror, obj):
         try:
             out.append(proc.read_ptr(items + 0x20 + i * 8))
         except Exception:
-            out.append(0)
+            # ★ BUG-B3-10：读失败给 **None 占位**（不是 0）—— 0 与「这张卡 id
+            #   真是 0」无法区分，而 None 一眼能看出是"没读到"。
+            out.append(None)
     return out
 
 
 def int_list(proc, mirror, obj):
-    """``List<boxed Int64>`` -> [数值]（读不出按 0 记，与 tmp 内核口径一致）。"""
+    """``List<boxed Int64>`` -> [数值]（读不出的项**丢掉**，不再填 0）。
+
+    ★ BUG-B3-10：原来读失败填 0，`client_work.flatten_ids` 原样透传，于是
+    ``my_deck_snapshot.ids`` 里混进 0 —— `infer_seat` 拿它做交集时永远不匹配，
+    而且无法区分「读失败」与「卡 id 是 0」。现在失败项直接跳过。
+    """
     its = list_items(proc, mirror, obj) if obj and obj >= MIN_ADDR else None
     if not its:
         return []
     out = []
     for it in its:
+        if not it or it < MIN_ADDR:
+            continue
         v = boxed_int(proc, it)
-        out.append(v if v is not None else 0)
+        if v is not None:
+            out.append(v)
     return out

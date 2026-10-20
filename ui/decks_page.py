@@ -269,3 +269,13 @@ class DecksPage(QWidget):
     def _on_names_saved(self) -> None:
         """卡组名存盘 → 清单变了，让窗口刷新构成页的下拉 / 显示名。"""
         self.saved.emit()
+
+    def shutdown(self) -> None:
+        """宿主销毁前的收口（BUG-B7-07）：把「卡组名管理」里在跑的
+        `fetch_meta_decks --cn-only` 掐掉，别留孤儿 QProcess。"""
+        stop_fn = getattr(self.names_page, 'shutdown', None)
+        if callable(stop_fn):
+            try:
+                stop_fn()
+            except Exception:                                # noqa: BLE001
+                pass

@@ -125,9 +125,15 @@
 from __future__ import annotations
 
 import struct
+import time
 from typing import Iterator, List, NamedTuple, Optional, Tuple
 
 from .reader_base import TypeInfoReader
+
+#: 定位扫描的墙钟预算（秒）。与 `end_message.SCAN_TIME_BUDGET_SEC` 同口径 ——
+#: 全进程扫 TypeInfo 指针在没有私有堆过滤时会走 1-4 分钟（2026-09-26 事故）；
+#: `locate()` 是**一次性**发现，超时返回 False 让调用方下一拍重试。
+LOCATE_TIME_BUDGET_SEC = 10.0
 
 #: 一条 ShowAction 载荷的字节数（离线校准，见模块 docstring）
 ENTRY_SIZE = 32
@@ -591,7 +597,16 @@ class DuelLogReader(TypeInfoReader):
             raise ValueError(
                 'DuelLogController 字段表里没有 m_DataList_ShowAction —— 不猜偏移'
                 '（字段表：%s）' % (', '.join(sorted(fields)) or '(空)'))
-        for hit in self.proc.scan(struct.pack('<Q', typeinfo)):
+        # ★ 收口（BUG-B3-13，与 `end_message._candidates` 同款）：
+        #   ① 只扫私有堆（C# 实例必在 GC 托管堆上）；假进程没实现该方法时回退全扫。
+        #   ② 墙钟预算 —— 扫描开销不能跟着目标进程内存涨。
+        regions = None
+        private = getattr(self.proc, 'private_regions', None)
+        if private is not None:
+            regions = private() or None
+        deadline = time.monotonic() + LOCATE_TIME_BUDGET_SEC
+        for hit in self.proc.scan(struct.pack('<Q', typeinfo),
+                                  regions=regions, deadline=deadline):
             if hit < 0x10000:
                 continue
             try:

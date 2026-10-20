@@ -60,10 +60,10 @@ never touched by the patch. Installed copies should just run the new `Setup` ins
 
 | Asset | Size | Requirements |
 |---|---|---|
-| `masterduel-stats-Setup-1.0.8.exe` | ~29 MB | **One-click installer (recommended)** — install and run. Game data lives next to the program by default; under `Program Files` it moves to `%LOCALAPPDATA%\MasterDuelStats` |
-| `masterduel-stats-v1.0.8-win64-full.zip` | ~39 MB | **None** — Python & all deps bundled; unzip anywhere and run `MDStats.exe` |
-| `masterduel-stats-v1.0.8-patch-win64.zip` | **~0.7 MB** | **Upgrade for existing portable installs** — program code only; unzip over the old folder. Your duel data is not touched |
-| `masterduel-stats-v1.0.8-win64-lite.zip` | ~6 MB | Python 3.13 installed; `MDStats.exe` installs the dependencies on first run |
+| `masterduel-stats-Setup-1.1.0.exe` | ~29 MB | **One-click installer (recommended)** — install and run. Game data lives next to the program by default; under `Program Files` it moves to `%LOCALAPPDATA%\MasterDuelStats` |
+| `masterduel-stats-v1.1.0-win64-full.zip` | ~39 MB | **None** — Python & all deps bundled; unzip anywhere and run `MDStats.exe` |
+| `masterduel-stats-v1.1.0-patch-win64.zip` | **~0.7 MB** | **Upgrade for existing portable installs** — program code only; unzip over the old folder. Your duel data is not touched |
+| `masterduel-stats-v1.1.0-win64-lite.zip` | ~6 MB | Python 3.13 installed; `MDStats.exe` installs the dependencies on first run |
 | Source code (zip / tar.gz) | auto | for developers — attached automatically by GitHub for each tag |
 
 **The easy way:** install [Python 3.13](https://www.python.org/downloads/)

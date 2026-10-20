@@ -80,11 +80,23 @@ def main(argv=None) -> int:
                                               x.get('opp_deck') or '未知卡组',
                                               x.get('dir') or '无目录'))
             print()
-        if issues['orphan_dirs']:
-            print('◆ 整局漏记（磁盘上有对局、库里没有 —— 跑「刷新数据」可补入部分）')
-            for x in issues['orphan_dirs']:
+        #: ★ A3-结论-C：漏记分两组 —— 「窗口内有 log/api 行」才是真漏记；
+        #: 「一行都没有」几乎都是观战/单人局（日志侧本来就不写 `Starting Duel`），
+        #: 报成漏记只会狼来了（真样本里 14 个孤儿 12 个属这类）。
+        real = issues.get('orphan_pair_exists')
+        if real is None:                    # 老接口（没有分组字段）回落原样
+            real = issues.get('orphan_dirs') or []
+        if real:
+            print('◆ 整局漏记（日志/API 有对应行、但没能并档 —— 跑「刷新数据」可补）')
+            for x in real:
                 print('   %s（%d 条事件，state=%s）' % (x['dir'], x['n_entries'],
                                                        x.get('state')))
+            print()
+        soft = issues.get('orphan_no_pair') or []
+        if soft:
+            print('◇ 观战/单人/判不出模式的目录（日志侧无对手，不算漏记）')
+            for x in soft:
+                print('   %s（%d 条事件）' % (x['dir'], x['n_entries']))
             print()
         if issues['open_dirs']:
             print('◆ 未收口（采集器中途被杀；跑「刷新数据」或 --finalize-stale）')

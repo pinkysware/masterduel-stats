@@ -44,10 +44,11 @@ import hashlib
 from collections import Counter, defaultdict
 from datetime import datetime, date
 
-from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
+
+from core import paths
 
 from core.storage import (Storage, day_range, counted_clause,  # noqa: E402
                           MODE_PVP, MODE_SOLO, MODE_LIVE, MODE_UNKNOWN,
@@ -70,6 +71,18 @@ OPP_DECKS = os.path.join(ARCHIVE_DIR, 'opp_decks.json')   # 对手卡组字典�
 
 RE_LINE = re.compile(r'^\[([\d\-]+ [\d:.]+)\]\s+\[(\w+)\]\s+\[([\w.]+)\]\s+(.*)')
 RE_ACT = re.compile(r'^(\w+): cardId=(\d+) source=(\S+) target=(\S+)')
+
+#: ★ BUG-B8-13：回扫区硬币行距本局开局的最远容忍秒数。
+#: 实测（2026-10-17 真实日志）本局硬币行距 `Starting Duel` 只有 4~5 秒；
+#: 60 行回扫窗口里上一局的硬币行会落在 25~50 秒前（22:21:43 → 22:22:12 只差
+#: 29 秒，所以阈值不能取太宽）。超过这个值 = 多半是上一局残影，宁缺勿错。
+COIN_MAX_AGE_SEC = 20.0
+
+#: ★ BUG-B8-14：座位「visibility 退化判据」的最小 margin ——
+#:   多者至少出现这么多次、且 ≥ 少者 ×2 才敢判;
+#:   否则 returned seat=None（判不出比猜反强：seat 反了 `opp_revealed_ids`
+#:   会取到我方卡表）。
+SEAT_VIS_MARGIN = 3
 
 #: 「进入对局」的那次界面跳转：<来源界面> -> <某个 DuelClient>。
 #: 用它区分天梯 / 单人 / 观战回放 —— 实测这是唯一可靠的判据，
@@ -216,6 +229,18 @@ def resolve_deck(seg):
     return None, 'unknown'
 
 
+def _coin_age_sec(coin_ts, start_ts):
+    """硬币时刻距本局开局的秒数；任一时间认不出给 None（= 放行）。"""
+    if not coin_ts or not start_ts:
+        return None
+    try:
+        a = datetime.strptime(str(coin_ts)[:19], '%Y-%m-%d %H:%M:%S')
+        b = datetime.strptime(str(start_ts)[:19], '%Y-%m-%d %H:%M:%S')
+    except (TypeError, ValueError):
+        return None
+    return abs((b - a).total_seconds())
+
+
 def parse_seg(seg, lines):
     """解析一局的完整事件与统计。"""
     did, src = resolve_deck(seg)
@@ -229,6 +254,13 @@ def parse_seg(seg, lines):
     #    混入了 12:01 的 HANDOPEN/SPSUMMON（33 对相邻局里 3 对中招）。
     lo = max(0, seg['start_line'] - 60)
     events = []
+    #: 回扫区（start_line 之前的 60 行）里采到的硬币行 —— **单独收一份**。
+    #: ★ BUG-B8-13：原来从 events 里取「第一条 COIN」当本局硬币，而回扫区可能
+    #:   扫进**上一局/重排残留**的硬币行（2026-10-17 22:22 局实测记反：本局是
+    #:   `Player`，前 60 行里还躺着 22:21:43 那局的 `Opponent`）。判据改成
+    #:   「取**离本局最近**的那条」= 回扫区里行号最大的那条（本局硬币实测就在
+    #:   `Starting Duel` 前几行），并且时间必须落在本局开局前 :data:`COIN_MAX_AGE_SEC` 内。
+    back_coins = []
     for i, l in enumerate(lines[lo:seg['end_line'] + 1]):
         cur = lo + i
         m = RE_LINE.match(l)
@@ -236,7 +268,12 @@ def parse_seg(seg, lines):
             continue
         ts, lvl, mod, msg = m.groups()
         if 'is deciding whether to go first' in msg:
-            events.append(('COIN', ts, 'Player' if msg.startswith('Player') else 'Opponent'))
+            side = 'Player' if msg.startswith('Player') else 'Opponent'
+            if cur < seg['start_line']:
+                back_coins.append((ts, side, cur))
+            else:
+                # 主体里出现硬币行 = 同一局的重排/回放，先留着（取第一条）
+                events.append(('COIN', ts, side))
         elif cur < seg['start_line']:
             continue                      # 回扫区只认 COIN（见上）
         elif re.search(r'Turn \d+ for player \d+', msg):
@@ -276,8 +313,19 @@ def parse_seg(seg, lines):
         seat = 0 if hits[0] >= hits[1] else 1
         seat_src = 'deck-hit P0=%d/%d P1=%d/%d' % (hits[0], tot[0], hits[1], tot[1])
     elif vis[0] or vis[1]:
-        seat = 0 if vis[0] >= vis[1] else 1
-        seat_src = 'visibility P0=%d P1=%d' % (vis[0], vis[1])
+        # ★ BUG-B8-14：退化判据要 **margin** —— 平票（P0=P1）时原来直接取 0，
+        #   而蹲坑判错的代价很大：`opp_revealed_ids` 会反向取到我方卡表。
+        #   现在要求「明显一边倒」：多者 ≥ :data:`SEAT_VIS_MARGIN` 次、
+        #   且 ≥ 少者 ×2。达不到就**判不出**（seat=None）。
+        #   真库现状：14 行 visibility 全是 5:0/6:0/7:0/0:6/0:9 这种，
+        #   0 平票 —— 当前不触发，但缺了这条就会在「双方都只亮 1 张」时猜错。
+        hi, lo = (0, 1) if vis[0] >= vis[1] else (1, 0)
+        if vis[hi] >= SEAT_VIS_MARGIN and vis[hi] >= vis[lo] * 2:
+            seat = hi
+            seat_src = 'visibility P0=%d P1=%d' % (vis[0], vis[1])
+        else:
+            seat, seat_src = None, 'ambiguous-visibility P0=%d P1=%d' % (
+                vis[0], vis[1])
     else:
         seat, seat_src = 0, 'unknown'
 
@@ -304,7 +352,25 @@ def parse_seg(seg, lines):
     #   因此这里**两个概念分开存**，不要混：
     #       won_initiative : 我方是否获得先后手选择权（稀疏，常 null）
     #       went_first     : 我方是否实际先攻（Turn 1 归属，可靠）
+    #: ★ BUG-B8-13（2026-10-17 22:22 局实测记反）：不能取「回扫窗口里的第一条
+    #: COIN」—— 回扫区是 `start_line - 60` 行，很容易扫进**上一局的硬币行**
+    #: （实测 22:22:12 本局 `Player`，而 22:21:43 上一局的 `Opponent` 也在窗口里，
+    #: 且行号更小 → 旧代码取到 `Opponent`，硬币记反）。
+    #:
+    #: 新判据（按优先级）：
+    #:   1. 主体区（`start_line` 之后）出现硬币行 → 取**第一条**（重排/回放口径）；
+    #:   2. 否则取回扫区里**行号最大**（离本局最近）的那条；
+    #:   3. 且它的时间必须落在本局开局前 :data:`COIN_MAX_AGE_SEC` 秒内 ——
+    #:      距开局太远的多半是上一局的残影，宁缺勿错。
     coin = next((p for k, t, p in events if k == 'COIN'), None)
+    coin_src = 'main' if coin is not None else None
+    if coin is None and back_coins:
+        ts, side, ln = max(back_coins, key=lambda x: x[2])
+        age = _coin_age_sec(ts, seg.get('start_time'))
+        if age is None or age <= COIN_MAX_AGE_SEC:
+            coin, coin_src = side, 'backscan-latest'
+        else:
+            coin_src = 'stale(%s, %.0fs)' % (side, age)
     won_initiative = None
     if coin == 'Player':
         won_initiative = True
@@ -318,7 +384,9 @@ def parse_seg(seg, lines):
             first_player = p[1]
             break
     went_first = None
-    if first_player is not None:
+    #: ★ BUG-B8-14 连带：seat 判不出（None）时**不许**拿 None 去比 —— 否则
+    #: `first_player == None` 恒 False，会把「先攻」写成「后攻」。
+    if first_player is not None and seat is not None:
         went_first = (first_player == seat)
 
     # --- 回合数 ---
@@ -332,7 +400,9 @@ def parse_seg(seg, lines):
             continue
         act, cid, s, t = p
         side = 0 if s.startswith('P0') else 1
-        if side != seat and cid and cid not in seen:
+        #: ★ BUG-B8-14 连带：seat=None（判不出）时**不收**对手露出卡 ——
+        #: 取反就成了「两边都收」/「收错边」，宁缺。
+        if seat is not None and side != seat and cid and cid not in seen:
             seen.add(cid)
             opp_cards.append(cid)
 
@@ -362,6 +432,10 @@ def parse_seg(seg, lines):
         seat=seat,
         seat_evidence=seat_src,
         won_initiative=won_initiative,
+        #: 硬币取自哪条口径（main / backscan-latest / stale(..., Ns) / None）——
+        #: **诊断用，不入库**（`storage.MATCH_FIELDS` 里没有这个键，`upsert_match`
+        #: 按白名单取字段，多出来的会被忽略）。看它请直接调 `parse_seg`。
+        won_initiative_src=coin_src,
         went_first=went_first,
         first_player=first_player,
         total_turns=max_turn,

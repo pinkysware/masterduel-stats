@@ -332,6 +332,9 @@ class SetImageDialog(QDialog):
         self.choice = None      #: 'card' / 'site' / 'reset'
         self.card_id = None     #: 'card' 分支选中的游戏内卡 id
         self.image_path = ''    #: 'card' 分支取到的图（临时文件）
+        #: ★ BUG-B6-04：确认时把图**交到这里**（`done()` 只清理没被采用的，
+        #: 调用方 `take_image_path()` 优先取这份）—— 不然 `done()` 会先删掉它。
+        self.handoff_path = ''
         self.site_name = ''
         #: 站内下拉候选：``[(显示名, 站内英文名)]``（由调用方喂，UI 不查库）
         self._options = list(deck_options or [])
@@ -549,15 +552,25 @@ class SetImageDialog(QDialog):
     def done(self, code: int) -> None:                          # noqa: N802
         """关窗（确认 / 取消 / Esc / 点 ×）都走这里 —— 顺带收掉**没被采用**的临时图。
 
-        `choice == 'card'` 且已确认时，那张图由 `take_image_path()` 先取走
-        （本对象置空），所以这里 `image_path` 非空 = 用户取了图又取消 -> 删掉。
+        ★ BUG-B6-04（2026-10-19 审查点名）：**确认时不许在这里删图**。
+        旧行为：`_save()` -> `accept()` -> `done()` -> `_cleanup_tmp()` 把
+        临时卡图删掉，而调用方 `set_deck_image()` 是 `exec()` 返回**之后**才
+        `take_image_path()` —— 拿到的路径已经不存在，于是它 `os.path.exists()`
+        判假、**重新联网下一遍**（网络抖一下就是「预览成功、保存失败」）。
+        现在：确认分支（`choice == 'card'`）把路径交到 :attr:`handoff_path`，
+        `done` 只清理真正没被采用的那些；`take_image_path` 优先取 handoff。
         """
+        if self.choice == 'card' and code == QDialog.Accepted:
+            #: 交给调用方的那一份（`done` 清理时跳过它）
+            self.handoff_path = self.image_path
+            self.image_path = ''
         self._cleanup_tmp()
         super().done(code)
 
     def take_image_path(self) -> str:
         """把已取好的卡图路径**交出去**（调用方接手清理责任）。"""
-        p = self.image_path
+        p = getattr(self, 'handoff_path', '') or self.image_path
+        self.handoff_path = ''
         self.image_path = ''
         return p
 
@@ -811,10 +824,19 @@ class OppDeckManager(QWidget):
         self._runner_factory = runner_factory or (
             lambda script, args: ScriptRunner(script, args))
         self._runner = None
+        #: ★ BUG-B6-01（2026-10-18）：表**读没读成功**必须记下来。
+        #: 读失败时下面退化成「标准表头 + 0 行」，界面照开；但随后点「保存」
+        #: 就会把**只剩表头**的内容写回真源 —— 用户手填的 125 行（中文名 /
+        #: 日文名 / 别名 / 分组）全部消失，且没有任何提示（覆盖表不可再生）。
+        #: 所以 save() 一开头就用这个标志拦住写入。
+        self._load_ok = True
+        self._load_error = ''
         try:
             self.header, self.rows = deck_csv.read(self.csv_path)
-        except Exception:                                    # noqa: BLE001
-            #: 表读不出来（被占 / 权限）也别炸构造 —— 界面照开，保存时会再报
+        except Exception as exc:                             # noqa: BLE001
+            #: 表读不出来（被占 / 权限）也别炸构造 —— 界面照开，但**不许写**
+            self._load_ok = False
+            self._load_error = '%s: %s' % (type(exc).__name__, exc)
             self.header, self.rows = list(deck_csv.COLUMNS), []
         self.idx = deck_csv.index_map(self.header)
 
@@ -1013,6 +1035,14 @@ class OppDeckManager(QWidget):
         name = deck_csv.get(item.csv_row, self.idx, '站内英文名')
         row = item.csv_row
         self.rows_ui.remove(item)
+        #: ★ BUG-B6-03：`custom_csv_ui` 是**同一批 QWidget 的第二个列表**（初始化时
+        #: 按「站内 / 自定义」分组建的两份引用）。删掉一行只从 `rows_ui` 里拿掉，
+        #: 对象随后 `deleteLater()` —— `custom_csv_ui` 里仍留着那个**已被销毁**的
+        #: 控件，下一次搜索/筛选 `item.matches()` / `item.isVisibleTo()` 就抛
+        #: `RuntimeError: Internal C++ object already deleted`（用户点删除后
+        #: 再打字必崩）。两个列表必须同步移除。
+        if item in self.custom_csv_ui:
+            self.custom_csv_ui.remove(item)
         if row in self.rows:
             self.rows.remove(row)
         self.col.removeWidget(item)
@@ -1315,17 +1345,52 @@ class OppDeckManager(QWidget):
     # ------------------------------------------------------------ 保存
     def save(self) -> None:
         """写回 CSV（+ 起 `--cn-only` 把表贴进库）。失败**不抛**，状态行说明。"""
+        #: ★ BUG-B6-01 闸门：覆盖表**读失败过**就绝对不许写 —— 否则会把
+        #: 「只剩表头」的空表盖掉用户手填的 125 行（不可再生，且不报错）。
+        if not self._load_ok:
+            self.status.setText(tr('覆盖表读取失败，已禁止写入（%s）；'
+                                   '请先关闭占用它的程序再重开本页。')
+                                % self._load_error)
+            return
         for item in self.rows_ui:
             item.apply_to(item.csv_row, self.idx)
         #: 自定义行（我加的、还没进表的）一并并入 —— 与上方行同格式之后，
-        #: 「保存」就是它们的转正入口（用户 2026-10-12）
-        for item in self.custom_rows_ui:
+        #: 「保存」就是它们的转正入口（用户 2026-10-12）。
+        #: ★ BUG-B6-02：转正后必须**从待转正队列里出队**，否则连点两次「保存」
+        #:   就把同一行 append 两遍（CSV 里出现重复卡组，`--cn-only` 也会把同一
+        #:   条目贴两次）。同时把它们并进 `rows_ui`（界面顺序与「已转正」一致），
+        #:   让下一次保存只走上面那一个循环。
+        pending = self.custom_rows_ui[:]
+        self.custom_rows_ui = []
+        for item in pending:
             item.apply_to(item.csv_row, self.idx)
+            #: ⚠️ 只 append `csv_row`（行数据），**不是** item —— `self.rows` 是
+            #: 「每行一条 list」的数据列表，混进 QWidget 会让 `deck_csv.write`
+            #: 拿控件当行读（`object of type 'OppDeckRow' has no len()`）。
             self.rows.append(item.csv_row)
+            #: 转正后这行的「删除」语义变成「从覆盖表里删」，重连到 `remove_row`
+            #: （原来是 `_remove_custom_row`，它只处理还没进表的那批）。
+            try:
+                item.deleted.disconnect()
+            except (RuntimeError, TypeError):             # 没连接过
+                pass
+            item.deleted.connect(self.remove_row)
+            self.rows_ui.append(item)
+        if pending and self.custom_label.parent() is not None:
+            self.custom_label.setVisible(False)
+        self.custom_divider.setVisible(False)
         try:
-            deck_csv.write(self.csv_path, self.header, self.rows)
+            # ★ `deck_csv.write` 自 BUG-B2A-03 起**不再抛**（原子写失败返回 False），
+            #   所以这里必须看返回值：失败要提示并 return，不能继续起 `--cn-only`
+            #   子进程（否则表现为「保存没反应却跑了脚本」）。
+            ok = deck_csv.write(self.csv_path, self.header, self.rows)
         except Exception as exc:                             # noqa: BLE001
-            self.status.setText(tr('写盘失败：%s') % exc)
+            ok = False
+            self._last_write_error = '%s: %s' % (type(exc).__name__, exc)
+        if not ok:
+            self.status.setText(
+                tr('写盘失败：%s') % getattr(self, '_last_write_error',
+                                            '原子写失败（原文件已保留）'))
             return
         self.status.setText(tr('已写入 %s，正在贴进库…') % self.csv_path)
         self.saved.emit()
@@ -1343,3 +1408,17 @@ class OppDeckManager(QWidget):
             self.status.setText(
                 tr('已保存到 CSV，但贴进库失败（退出码 %d）—— 可手动跑 %s %s')
                 % (int(code), PUSH_SCRIPT, ' '.join(PUSH_ARGS)))
+
+    def shutdown(self) -> None:
+        """宿主销毁 / 重建前掐掉在跑的 `--cn-only`（BUG-B7-07）。
+
+        ⚠️ 切语言时看板会把本控件整页销毁重建 —— 不 stop 的话 QProcess
+        变孤儿、`done` 永不回调，保存按钮会永久禁用。
+        """
+        runner = self._runner
+        self._runner = None
+        if runner is not None:
+            try:
+                runner.stop()
+            except Exception:                                # noqa: BLE001
+                pass

@@ -38,10 +38,11 @@ import sys
 from datetime import datetime
 from typing import List
 
-from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
+
+from core import paths
 
 from core.memread.end_message import (                      # noqa: E402
     TEXT_FIELDS, EndMessageReader, default_game_dir, make_record)

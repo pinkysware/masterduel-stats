@@ -111,7 +111,19 @@ _T = {
 
     # ---- 对局分析页 ------------------------------------------------------
     '综合胜率': ('Overall Win Rate', '全体勝率'),
-    '我方卡组': ('My Deck', '自デッキ'),
+    '参照库缺失（data/mdm_deck_cards.json 不在或没内容）—— 去「设置 → 数据工具 → 参照库刷新」跑一次':
+        ('Reference library missing (data/mdm_deck_cards.json is gone or empty) - '
+         'run Settings -> Data tools -> Refresh reference library',
+         '参照ライブラリがありません（data/mdm_deck_cards.json が無いか空）— '
+         '設定 → データツール → 参照ライブラリ更新 を実行してください'),
+    '参照库缺失 —— 去「设置 → 数据工具 → 参照库刷新」跑一次':
+        ('Reference library missing - run Settings -> Data tools -> '
+         'Refresh reference library',
+         '参照ライブラリがありません — 設定 → データツール → '
+         '参照ライブラリ更新 を実行してください'),
+    #: ★ B7-06 连带（2026-10-20）：这里原来还有一条 `'我方卡组'`
+    #: （`('My Deck', '自デッキ')`）—— 与下面那条**重复键**，日文会被覆盖。
+    #: 已合并到下面（保留更完整的 `自分のデッキ`）。
 
     # ---- 卡组页 / 卡组构成 ----------------------------------------------
     '卡组名管理': ('Deck Names', 'デッキ名管理'),
@@ -329,6 +341,19 @@ _T = {
     "关闭": ("Close", "閉じる"),
     "关闭悬浮窗": ("Close Floating Window", "フローティングウィンドウを閉じる"),
     "写盘失败：%s": ("Failed to write: %s", "書き込み失敗: %s"),
+    "导出失败": ("Export failed", "エクスポート失敗"),
+    "导出完成": ("Export complete", "エクスポート完了"),
+    "没有可导出的对局": ("No matches to export", "エクスポートする対戦記録がありません"),
+    "取数失败：%s": ("Failed to read data: %s", "データ取得失敗: %s"),
+    "当前筛选下没有对局，未生成文件。": (
+        "No matches under the current filter, so no file was written.",
+        "現在の絞り込みでは対戦記録がないため、ファイルは生成されませんでした。"),
+    "%d 局已导出到：\n%s": ("%d matches exported to:\n%s", "%d 件の対戦記録を次にエクスポートしました:\n%s"),
+    "覆盖表读取失败，已禁止写入（%s）；请先关闭占用它的程序再重开本页。": (
+        "Could not read the override table, so writing is blocked (%s); "
+        "close whatever is holding it and reopen this page.",
+        "上書き表を読み込めなかったため書き込みを禁止しました（%s）。"
+        "占有しているプログラムを閉じてから、このページを開き直してください。"),
     "删除这一行（保存后才真正从覆盖表移除）": ("Remove this row (only written to the table on Save)", "この行を削除（「保存」で実際に上書き表から消えます）"),
     "别名（多个用 / 分隔）": ("Aliases (separate multiple with /)", "別名（複数は / で区切る）"),
     "刷新": ("Refresh", "更新"),
@@ -532,8 +557,13 @@ _T = {
     '还没有可统计的对局（需要逐卡记录）':
         ('No games to summarize yet (needs per-card records)',
          '集計できる対戦がまだありません（カード別記録が必要）'),
-    '先手': ('Going 1st', '先攻'),
-    '后手': ('Going 2nd', '後攻'),
+    #: ★ BUG-B7-06（2026-10-20）：这里原来还有一条 `'先手': ('Going 1st', '先攻')`
+    #: —— 它是**重复键**，会覆盖上面 `'先手': ('First', '先攻')`，而
+    #: 「Going 1st」实测约 75px，战绩页「先/后」列只有 **56px**（`STATS_COLS`）
+    #: → 英文界面下这一列必被裁字。按用户口径保留 **First**（`后手` 对应
+    #: `Second`），重复键已删。要改文案请只改上面那一处。
+    #: ★ BUG-B7-06（同上）：`后手` 也有重复键 `('Going 2nd', '後攻')` —— 同一个
+    #: 56px 列，长文案照样裁。保留上面那处 `Second`（与 `First` 成对）。
     '先手胜率': ('Going 1st Win Rate', '先攻勝率'),
     '游戏对局数据': ('Game Data', '対戦データ'),
     '更改…': ('Change...', '変更...'),
@@ -614,9 +644,13 @@ def tr(s: str) -> str:
         return s
     pair = _T.get(s)
     if pair is None:
-        if STRICT and s not in MISSES:
-            MISSES.append(s)
-        return '⟦%s⟧' % s
+        if s not in MISSES:
+            MISSES.append(s)          # 开发期查漏名单：跑一次就有数
+        #: ★ BUG-B7-05（2026-10-20）：未收录键**回落中文**（= 本模块 docstring
+        #: 的原话「没收录的键优雅回落中文」）。旧代码无条件返回 `⟦原文⟧` ——
+        #: 英文/日文界面下会冒出大量「⟦…⟧」，用户看到的是噪声而不是中文。
+        #: `⟦⟧` 只在 `MD_I18N_STRICT=1`（开发期查漏）时用。
+        return ('⟦%s⟧' % s) if STRICT else s
     if cur == EN:
         return pair[0]
     if cur == JA:

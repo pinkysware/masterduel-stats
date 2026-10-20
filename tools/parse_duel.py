@@ -27,14 +27,40 @@ def build_cardmap():
         data = json.load(f)
     return {x['id']: x['name'] for x in data}
 
-CMAP = build_cardmap()
+# ★ BUG-B9A-17：原来这里就调 `build_cardmap()`，还在层顶 `json.load(decks.json)`
+# —— 任一文件缺失就在 argparse 启动前崩，`--help` 都看不到。
+# 现在改成**首次使用时加载**（并给人话提示）。
+_CMAP = None
+_DECKS = None
+
+
+def cardmap() -> dict:
+    global _CMAP
+    if _CMAP is None:
+        try:
+            _CMAP = build_cardmap()
+        except OSError as exc:
+            raise SystemExit('卡表读不到：%s\n（%s）' % (CARDS_JSON, exc))
+    return _CMAP
+
+
+def decks() -> dict:
+    global _DECKS
+    if _DECKS is None:
+        try:
+            with open(DECKS_JSON, encoding='utf-8') as fh:
+                _DECKS = json.load(fh)
+        except OSError:
+            #: untapped 没装就没这个文件 —— 降级成「看不到我方卡组」，
+            #: 别把回放工具整个搞挂（日志本身还是能读的）。
+            _DECKS = {}
+    return _DECKS
+
 
 def cname(cid):
     if not cid:
         return '(隐藏)'
-    return CMAP.get(cid, '[未知:%d]' % cid)
-
-DECKS = json.load(open(DECKS_JSON, encoding='utf-8'))
+    return cardmap().get(cid, '[未知:%d]' % cid)
 
 # ---------- 2. 读日志 ----------
 def read_all_lines():
@@ -44,10 +70,19 @@ def read_all_lines():
             lines.extend(open(p, encoding='utf-8', errors='replace').read().splitlines())
     return lines
 
-ALL = read_all_lines()
 re_line = re.compile(r'^\[([\d\-]+ [\d:.]+)\]\s+\[(\w+)\]\s+\[([\w.]+)\]\s+(.*)')
+_ALL = None
+
+
+def all_lines():
+    global _ALL
+    if _ALL is None:
+        _ALL = read_all_lines()
+    return _ALL
+
 
 def collect_duels():
+    ALL = all_lines()
     duels, cur = [], None
     for i, l in enumerate(ALL):
         if 'Starting Duel with deckId=' in l:
@@ -70,6 +105,7 @@ DUELS = collect_duels()
 
 # ---------- 3. 解析单局 ----------
 def parse_duel(d):
+    ALL = all_lines()
     seg = ALL[d['start']:d['end'] + 1]
     events = []
     for l in seg:
@@ -94,8 +130,8 @@ def parse_duel(d):
 
 def decide_seat(events, deck_id):
     my_ids = set()
-    if deck_id and deck_id in DECKS:
-        dk = DECKS[deck_id]
+    if deck_id and deck_id in decks():
+        dk = decks()[deck_id]
         for k in dk.get('main', {}): my_ids.add(int(k))
         for k in dk.get('extra', {}): my_ids.add(int(k))
     hits = {0: 0, 1: 0}; tot = {0: 0, 1: 0}; vis = {0: 0, 1: 0}
@@ -139,7 +175,7 @@ def loc_cn(s, seat):
 def report(d, detail=False):
     ev = parse_duel(d)
     seat, reason = decide_seat(ev, d['deck_id'])
-    dk = DECKS.get(d['deck_id']) if d['deck_id'] else None
+    dk = decks().get(d['deck_id']) if d['deck_id'] else None
     W = 76
 
     print('=' * W)
@@ -204,7 +240,7 @@ if args.all:
     print('共 %d 局:' % len(DUELS))
     print('%-4s %-20s %-16s %s' % ('#', '时间', '卡组', '结果'))
     for i, d in enumerate(DUELS):
-        dk = DECKS.get(d['deck_id']) if d['deck_id'] else None
+        dk = decks().get(d['deck_id']) if d['deck_id'] else None
         print('%-4d %-20s %-16s %s' % (i, d['time'][:19], (dk or {}).get('name', '-'), d['result']))
     sys.exit(0)
 

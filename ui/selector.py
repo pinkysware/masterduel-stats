@@ -610,16 +610,35 @@ class DeckSelectorPanel(QWidget):
         self.chosen = self._pre_deck()
 
     def _meta_by_name(self, name: str) -> Optional[dict]:
-        """按**站内名**在 meta 清单里找一条；找不到时回落到「我自己加过的卡组」。
+        """按名字在 meta 清单里找一条；找不到时回落到「我自己加过的卡组」。
 
         ⚠️ 悬浮窗「自定义卡组名」只写 `opp_decks`（不碰覆盖表 CSV）—— 那些名字
         不在 meta 清单里，原来一律回落 `None`，于是**预填 / 常选都看不到它们**
         （用户 2026-10-08 报「搜不到我添加的自定义卡组」的一条链路）。
+
+        ★ BUG-B6-11（2026-10-19 审查点名）：**`opp_decks.name` 存的是显示名**，
+        不是站内英文名 —— 标注时 `ui_actions.mark_meta_deck` 用的是
+        `deck_display(...)`（中文界面下就是中文名，如「烙印」「Atlantean」）。
+        旧代码只比 `d['name']`（站内英文名 `Branded` / `Mermail Atlantean`），
+        这些行打开时 `_pre_deck()` 一律返回 None -> **预填丢失**（用户看到
+        「已标注」提示却选不中，一确认就把标注盖成别的卡组）。
+        现在按 **meta 的所有叫法**（站内名 / 中文名 / 显示名 / 日文名 / 别名，
+        与 `_meta_keys()` 同一份口径）比对。
         """
-        hit = next((d for d in self._decks if d.get('name') == name), None)
+        key = (name or '').strip()
+        if not key:
+            return None
+        hit = next((d for d in self._decks if d.get('name') == key), None)
         if hit is not None:
             return hit
-        return own_deck(name) if self._is_own_deck(name) else None
+        low = key.lower()
+        for d in self._decks:
+            fields = [d.get('name'), d.get('name_cn'), d.get('name_display'),
+                      d.get('name_ja')]
+            fields += list(d.get('aliases') or [])
+            if any(str(f or '').strip().lower() == low for f in fields):
+                return d
+        return own_deck(key) if self._is_own_deck(key) else None
 
     def _ensure_caches(self) -> None:
         """懒建两个缓存（一次算好，别每次敲键都查库）。

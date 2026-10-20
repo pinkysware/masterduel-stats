@@ -28,15 +28,29 @@ from __future__ import annotations
 
 import os
 
-#: 要保留的 Qt6 dll（**10 个**，2026-10-18 实测合计 36MB）
-QT_DLLS = ('Qt6Core', 'Qt6Gui', 'Qt6Widgets', 'Qt6Network', 'Qt6Svg',
-           'Qt6Concurrent', 'Qt6DBus', 'Qt6OpenGL', 'Qt6OpenGLWidgets',
-           'Qt6PrintSupport')
+#: 要保留的 Qt6 dll（**5 个**）。
+#:
+#: ★ BUG-B2A-18（2026-10）：原先这里还列着 ``Qt6Concurrent`` / ``Qt6DBus`` /
+#:   ``Qt6OpenGL`` / ``Qt6OpenGLWidgets`` / ``Qt6PrintSupport`` —— 而这 5 个
+#:   **同时在 :data:`QT_RETIRED_TOP` 里**（「只留 .pyd，dll 不保留」）。
+#:   一个文件既在「要删」又在「要拷」的白名单里，补丁 / 增量场景必然误判。
+#:   现在以退役名单为准：**这 5 个 dll 不再复制**（模块级断言盯着，见文件尾）。
+#:
+#: ★ 2026-10-19 用户拍板「确认是无用文件就删」：对应 pyd 也一并从
+#:   :data:`QT_PYDS` 移除（**10 个 -> 6 个**，约省 9.6MB）。
+#:   实测（无这 5 个 dll）：``QtDBus / QtOpenGL / QtOpenGLWidgets /
+#:   QtPrintSupport`` 的 pyd 会 ``DLL load failed``；本项目**从不 import**
+#:   它们（全项目 grep 0 命中，只有本文件与测试的白名单断言提到）。
+#:   ``QtConcurrent.pyd`` 虽仍可 import（只依赖 Qt6Core），但同样零引用 ——
+#:   一并删掉，少一个「能 import 但没人用」的迷惑项。
+#:   ⚠️ 将来若真要用这几个模块：把 dll 从 ``QT_RETIRED_TOP`` 拿掉 + pyd 加回这里，
+#:      模块级断言会立刻提示两边冲突。
+QT_DLLS = ('Qt6Core', 'Qt6Gui', 'Qt6Widgets', 'Qt6Network', 'Qt6Svg')
 
-#: 要保留的 PySide6 绑定模块（**10 个**，22MB）
-QT_PYDS = ('QtCore', 'QtGui', 'QtWidgets', 'QtNetwork', 'QtSvg',
-           'QtConcurrent', 'QtDBus', 'QtOpenGL', 'QtOpenGLWidgets',
-           'QtPrintSupport')
+#: 要保留的 PySide6 绑定模块（**6 个**，约 12.4MB）。
+#: 只保留**本项目真正 import 的**：QtCore / QtGui / QtWidgets / QtNetwork /
+#: QtSvg + 它们绕不开的依赖。别的模块 import 了也是死重量。
+QT_PYDS = ('QtCore', 'QtGui', 'QtWidgets', 'QtNetwork', 'QtSvg')
 
 #: PySide6 包里**除白名单外还要保留**的顶层文件
 #: （``__init__.py`` 是入口；``pyside6.abi3.dll`` 是**绑定层的运行时本体** ——
@@ -84,9 +98,11 @@ QT_RETIRED_TOP = (
     'Qt6WebChannel.dll', 'Qt6WebSockets.dll', 'Qt6WebView.dll',
     'Qt6WebViewQuick.dll', 'Qt6Xml.dll', 'Qt6StateMachine.dll',
     'Qt6Scxml.dll', 'Qt6SerialPort.dll', 'Qt6SerialBus.dll',
-    'Qt6Positioning.dll', 'Qt6PrintSupport.dll',      # PrintSupport.dll 保留 pyd，dll 不保留
-    'Qt6OpenGL.dll', 'Qt6OpenGLWidgets.dll',           # 同上：只留 .pyd
-    'Qt6Concurrent.dll', 'Qt6DBus.dll',                # 同上
+    'Qt6Positioning.dll',
+    # ⚠️ 下面这 5 个 dll 与 `QT_DLLS` 曾是「既删又拷」的矛盾体（BUG-B2A-18）。
+    #    注释说「只留 .pyd」，现在白名单也照此执行 —— **别把它们加回 QT_DLLS**。
+    'Qt6PrintSupport.dll', 'Qt6OpenGL.dll', 'Qt6OpenGLWidgets.dll',
+    'Qt6Concurrent.dll', 'Qt6DBus.dll',
     'opengl32sw.dll',
     'pyside6qml.abi3.dll',
 )
@@ -94,6 +110,18 @@ QT_RETIRED_DIRS = ('qml', 'translations', 'resources', 'metatypes')
 
 #: 打包时要排除的 PySide6 顶层文件模式（**按后缀**）
 QT_SKIP_SUFFIX = ('.pyi', '.lib')
+
+
+#: ★ BUG-B2A-18 的模块级断言：**同一个 dll 不能既在「要拷」又在「要删」清单里**。
+#: 放在模块级（而不只在单测里）是因为打包脚本 import 本模块就会执行它 ——
+#: 自相矛盾必须**当场响亮失败**，不能等打出一个少 dll 的安装包才发现。
+#: （用 raise 而不是 `assert`：`python -O` 会把 assert 整段删掉。）
+_RETIRED_STEMS = frozenset(os.path.splitext(n)[0] for n in QT_RETIRED_TOP)
+_BOTH = tuple(sorted(set(QT_DLLS) & _RETIRED_STEMS))
+if _BOTH:
+    raise AssertionError(
+        'core.qt_trim 自相矛盾：这些 dll 同时在 QT_DLLS（要拷）与 '
+        'QT_RETIRED_TOP（要删）里：%s' % '、'.join(_BOTH))
 
 
 def wanted_top_file(name: str) -> bool:

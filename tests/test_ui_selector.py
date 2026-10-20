@@ -816,6 +816,25 @@ class SelectorTest(unittest.TestCase):
         dlg = self._dlg(_row(opp_deck_id=999))
         self.assertIsNone(dlg.chosen)
 
+    def test_prefill_by_chinese_display_name(self):
+        """★ BUG-B6-11：`opp_decks.name` 存的是**显示名**（中文界面下「烙印」）。
+
+        旧代码只按站内英文名（`Branded`）比 —— 中文名条目的预填全丢，
+        用户看到「已标注：烙印」却选不中任何卡组。
+        """
+        #: 桩：opp_decks 里这条叫「烙印」（= Branded 的中文名），id=9
+        self.st._opp = [(9, '烙印', None, 3)]
+        dlg = self._dlg(_row(opp_deck_id=9))
+        self.assertIsNotNone(dlg.chosen, '中文名条目必须预填上')
+        self.assertEqual(dlg.chosen['name'], 'Branded')
+
+    def test_prefill_by_alias(self):
+        """别名同样算（`Swordsoul` 是 `Mitsurugi` 的别名）。"""
+        self.st._opp = [(10, 'Swordsoul', None, 2)]
+        dlg = self._dlg(_row(opp_deck_id=10))
+        self.assertIsNotNone(dlg.chosen)
+        self.assertEqual(dlg.chosen['name'], 'Mitsurugi')
+
     # ------------------------------------------------------------ 选择
     def test_pick_sets_chosen_and_enables_ok(self):
         dlg = self._dlg(_row(opp_deck_id=None, opp_known=False,

@@ -43,9 +43,29 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
+from typing import Optional
 from core import paths
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _log(msg: str) -> None:
+    """写一行日志到 `DATA_DIR/archive/ui_collector_ctl.log`（失败静默）。
+
+    为什么必须有：`start_collector()` 成功拉起进程后要留痕 —— 少了它，
+    调用方（`ui/app.py` 的 `_ensure_collector`）只能用 `except: pass` 吞掉一切，
+    「到底拉起来没有」无从判断（2026-10-18 BUG-003）。
+    """
+    try:
+        d = os.path.join(paths.data_path('archive'))
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, 'ui_collector_ctl.log'), 'a',
+                  encoding='utf-8', newline='') as f:
+            f.write('%s  %s\n' % (time.strftime('%Y-%m-%d %H:%M:%S'), msg))
+    except OSError:
+        pass
+
 
 #: 采集器写的 pid 文件（与 `tools/duel_collector.py` 的 `PID_PATH` 同一份）
 #: ⚠️ 文件名是 `duel_collector.pid`（**不是** `collector_pid.json`）

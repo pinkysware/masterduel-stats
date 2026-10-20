@@ -267,6 +267,41 @@ class TestIsPublicZone(unittest.TestCase):
 
 # ------------------------------------------------------------------ 底层读表
 
+class TestDictCountCap(unittest.TestCase):
+    """★ BUG-B3-07：`Dictionary<int,int>` 的 count 必须有上限。"""
+
+    def test_garbage_count_is_ignored(self):
+        """半死对象 / 垃圾 `_count` -> 空表（不是 GB 级分配）。"""
+        from core.memread.public_cards import _read_dict_int_int
+        mem = FakeMem()
+        d = mem.alloc(0x28)
+        entries = mem.alloc(0x40)
+        mem.put_u64(d, 0x18, entries)
+        mem.put_i32(d, 0x20, 0x7FFFFFFF)          # count = 2^31-1
+        self.assertEqual(_read_dict_int_int(FakeProc(mem), d), {})
+
+    def test_normal_count_still_reads(self):
+        """正常 count 照读（`DICT_EXTRA` 会让读取越过最后一条，块要给够）。"""
+        from core.memread.public_cards import (DICT_EXTRA, DICT_ENTRY_STRIDE,
+                                               _read_dict_int_int)
+        mem = FakeMem()
+        d = mem.alloc(0x28)
+        entries = mem.alloc(0x20 + DICT_ENTRY_STRIDE * (2 + DICT_EXTRA))
+        mem.put_u64(d, 0x18, entries)
+        mem.put_i32(d, 0x20, 2)
+        for i, (k, v) in enumerate({1: 2, 3: 4}.items()):
+            e = 0x20 + i * DICT_ENTRY_STRIDE
+            mem.put_i32(entries, e + 0x00, 0x1234_5678)
+            mem.put_i32(entries, e + 0x08, k)
+            mem.put_i32(entries, e + 0x0C, v)
+        self.assertEqual(_read_dict_int_int(FakeProc(mem), d), {1: 2, 3: 4})
+
+    def test_cap_value_is_sane(self):
+        from core.memread.public_cards import DICT_MAX_COUNT
+        self.assertGreaterEqual(DICT_MAX_COUNT, 1000)   # 一局卡表远小于这个
+        self.assertLessEqual(DICT_MAX_COUNT, 100000)
+
+
 class TestReadCardTable(unittest.TestCase):
 
     def test_scene(self):

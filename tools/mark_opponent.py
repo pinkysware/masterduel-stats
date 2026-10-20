@@ -49,6 +49,17 @@ LANG = 'cn'
 #: 队列里每局最多列几张对手露出的卡（再多也看不出所以然，还刷屏）
 MAX_REVEAL_SHOWN = 10
 
+#: ★ BUG-B9A-05 / B9A-06：**序号只有一套口径**。
+#:
+#: 序号 = `--list` 那份列表（默认 :data:`DEFAULT_LIST_LIMIT` 条）里的位置。
+#: `--set` / `--clear` / `--guess` 都按**同一个 limit** 取列表 —— 原先分别是
+#: 1000 / 50 / 1000，用户照 `--list` 屏幕上的序号点会绑错局（尤其 `--clear`：
+#: `--list --marked` 只显示 20 条，`--clear 25` 却会在看不见的第 25 条上生效）。
+#:
+#: 要看更长的队列就**同一条命令里**给 `--list N`（如 ``--list 100 --set 60``），
+#: 三个子命令会自动跟着用 N。
+DEFAULT_LIST_LIMIT = 20
+
 #: `--guess` 默认打印几条候选
 GUESS_TOP = 3
 
@@ -307,11 +318,14 @@ def _pad(s, n):
     return s + ' ' * max(0, n - _width(s))
 
 
-def match_any_by_token(st, token):
+def match_any_by_token(st, token, limit=DEFAULT_LIST_LIMIT):
     """`--guess` 的目标：**数字 = 待标注队列序号**，其余 = match_id 前缀（全库）。
 
     跟 `--set` 的差别：`--set` 只在待标注队列里找，而反推要能指到**任意一局**
     （不在统计口径里的局根本不进队列，见反推计划 §四 P2-4）。
+
+    ``limit`` 必须与用户看到的 `--list` 一致（★ BUG-B9A-05）—— 序号的语义是
+    「那份列表里的第几条」，不是「全库第几条」。
 
     另有 ``last``（也认「最新」）—— **库里最新一局有露出卡的**，专门给
     「看完回放马上验一把」用：回放是 `mode='live'`、`game_mode` 为空，
@@ -326,7 +340,7 @@ def match_any_by_token(st, token):
             return None, '库里还没有带露出卡的对局'
         return rows[-1], None                  # list_matches 是升序，最后一条最新
     if tok.isdigit() and len(tok) <= 3:
-        return match_by_token(st.get_unmarked_matches(1000), tok)
+        return match_by_token(st.get_unmarked_matches(limit), tok)
     hits = [r for r in st.list_matches(limit=None)
             if (r.get('match_id') or '').startswith(tok)]
     if len(hits) == 1:
@@ -379,9 +393,13 @@ def _verdict(cands, names=None):
     return '证据不足（%s）—— 只列不填，请手标。' % '，'.join(miss)
 
 
-def cmd_guess(st, token, index, groups, limit=GUESS_TOP):
-    """`--guess <序号|match_id 前缀>`：打印一局的候选。"""
-    row, err = match_any_by_token(st, token)
+def cmd_guess(st, token, index, groups, limit=GUESS_TOP, queue_limit=None):
+    """`--guess <序号|match_id 前缀>`：打印一局的候选。
+
+    ``queue_limit`` 与 `--list` 的 limit 同一口径（★ BUG-B9A-05）。
+    """
+    row, err = match_any_by_token(
+        st, token, DEFAULT_LIST_LIMIT if queue_limit is None else queue_limit)
     if err:
         print('✘ ' + err)
         return 1
@@ -618,6 +636,13 @@ EPILOG = """\
   --decks                    我的对手卡组表
   --unknown-before 2026-09-06  把该日期之前的待标注局全标成「未知卡组」
                              （游戏内记录已过期、永远查不回来；配 --dry-run 先看）
+
+★ 序号口径（只有一套）：序号 = `--list` 那份列表里的位置，默认 20 条。
+  要看更长的队列就**同一条命令**里带 `--list N`：
+      --list 100 --set 60 烙印      （第 60 条 = `--list 100` 屏幕上的第 60 条）
+      --list 100 --clear 60
+  序号会随新对局漂移（队列按时间倒序）—— 拿不准就用 match_id 前缀
+  （每行末尾 `#xxxxxxxx` 那 8 位）。
 """
 
 
@@ -708,13 +733,15 @@ def main(argv=None):
         return 1
 
     st = Storage(args.db) if args.db else Storage()
+    #: ★ BUG-B9A-05 / B9A-06：**一个 limit 贯穿所有按序号取行的命令**。
+    list_limit = (args.list if args.list is not None else DEFAULT_LIST_LIMIT)
     rc = 0
     if args.unknown_before:
         rc = cmd_unknown_before(st, args.unknown_before, args.dry_run) or rc
     if args.set:
         token, rest = args.set[0], args.set[1:]
         if args.clear:
-            rows = st.get_marked_matches(50)
+            rows = st.get_marked_matches(list_limit)
             row, err = match_by_token(rows, token)
             if err:
                 print('✘ ' + err)
@@ -726,7 +753,7 @@ def main(argv=None):
             if not deck_name:
                 print('✘ --set 需要「目标 + 卡组名」，比如 --set 3 烙印')
                 return 1
-            rows = st.get_unmarked_matches(1000)
+            rows = st.get_unmarked_matches(list_limit)
             row, err = match_by_token(rows, token)
             if err:
                 print('✘ ' + err)
@@ -751,7 +778,8 @@ def main(argv=None):
             print('✘ --guess 需要目标（序号或 match_id 前缀）；只跑回测请加 --backtest')
             rc = 1
         else:
-            rc = cmd_guess(st, args.guess, index, groups) or rc
+            rc = cmd_guess(st, args.guess, index, groups,
+                           queue_limit=list_limit) or rc
     if args.interactive:
         index, groups = load_guesser(args.reference)
         rc = cmd_interactive(st, index, groups) or rc

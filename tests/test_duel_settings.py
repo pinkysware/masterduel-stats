@@ -122,6 +122,28 @@ class TestReadDuelSettings(unittest.TestCase):
         duel_settings.find_typeinfo = lambda *a, **k: []
         self.assertIsNone(duel_settings.read_duel_settings(proc, None, 'tbl'))
 
+    def test_missing_field_offset_is_none_not_zero(self):
+        """★ BUG-B3-06：字段查不到给 None，**绝不退回偏移 0**。
+
+        偏移 0 在 IL2CPP 里是对象头的 klass 指针 —— 真机上它是个有效地址，
+        两道地址校验都会放过，最后会返回「全是 None 的 dict」冒充「读到了」。
+        """
+        self.assertIsNone(
+            duel_settings._offset({}, INIT_FIELD))
+        self.assertIsNone(
+            duel_settings._offset({'<别的字段>k__BackingField': 0x10}, INIT_FIELD))
+        self.assertEqual(
+            duel_settings._offset({INIT_FIELD: 0x10}, INIT_FIELD), 0x10)
+
+    def test_missing_field_returns_none_not_partial_dict(self):
+        """字段名变了 -> None（不是「names 全 None 的 dict」）。"""
+        mem = FakeMem()
+        proc, dti = build_scene(mem, names=['A'])
+        # 把 DuelClient 的字段表换成一个不含 initializer 的（模拟游戏更新改名）
+        other = build_named_typeinfo(mem, 'DuelClient', [('someOtherField', 0x10)])
+        got = duel_settings.read_duel_settings(proc, None, 'tbl', dc_ti=other)
+        self.assertIsNone(got)
+
 
 if __name__ == '__main__':
     unittest.main()

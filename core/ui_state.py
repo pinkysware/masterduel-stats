@@ -25,7 +25,9 @@ import os
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 # ⚠️ 唯一来源：口径常量与伪条目名单都**不在这里重写**（S6 审查 P2-2 的同源要求）。
-from core.storage import MODE_SCOPE_DUEL, MODE_SELECT_NONE, mode_group
+from core import paths
+from core.storage import (MODE_GROUP_ALL, MODE_SCOPE_DUEL,
+                           MODE_SELECT_NONE, mode_group)
 from core.ui_actions import NON_DECK_LABELS
 
 #: 项目根 —— 读 `data/card_names.json` 这种**真源文件**时要拼绝对路径
@@ -270,7 +272,11 @@ def _recent_row(m, nxt, decks, disp_name=None) -> dict:
     #   → 升段那行不显示新段位（实机踩到：升到白金1 而界面还是旧段位）。
     if group == 'ranked' and m.get('my_rank_after') is not None:
         r_after = (m.get('my_rank_after'), m.get('my_rate_after'))
-    elif nxt is not None and group == 'ranked':
+    elif nxt is not None and group == 'ranked' and M.group(nxt.get('game_mode')) == 'ranked':
+        # ★ BUG-B1-08：倒推源那一局**也必须是天梯局**。原判据只查本局，
+        #   于是「天梯局之后紧跟一局 DC/活动」时，把 DC 局补回来的假段位
+        #   （`my_rank_before` 是别处填的，不是真天梯段位）当成局后段位，
+        #   算出错的升降段。10 月数据：DC/活动 51 行，全在天梯连打之间。
         r_after = (nxt.get('my_rank_before'), nxt.get('my_rate_before'))
     badge_icon, badge_text = M.badge(m.get('game_mode'),
                                      r_before[0], r_before[1])
@@ -403,6 +409,11 @@ def current_rank(storage, scan: int = 200, account=None) -> Optional[dict]:
     except Exception:
         return None
     for m in rows:
+        # ★ BUG-B1-08：**只看天梯局**。DC 杯 / 活动局的 `my_rank_*` 是别处
+        #   补回来的值（不是天梯段位），拿它当「当前段位」会顶掉真的那条。
+        #   10 月实测：非天梯行里 74 行带段位列（DC 51 行占多数）。
+        if mode_group(m.get('game_mode')) != 'ranked':
+            continue
         # ★ 优先用内存的局后段位（最新一局的「当前段位」才是真的当前）
         rank, rate = m.get('my_rank_after'), m.get('my_rate_after')
         if not R.rank_name(rank):
@@ -461,32 +472,57 @@ def snapshot(storage, boot_rowid: Optional[int] = None,
     ``all``（见 :func:`stats_since`）。
     """
     snap = UiSnapshot(mode=MODE_IDLE)
+    # ⚠️ **逐块 try**（BUG-B1-11）：原来全段共用一个 try，任一查询炸掉
+    #    （典型：库被采集器锁住一瞬）后面的块**整排变空** —— 用户看到的是
+    #    「本局统计 0-0 / 最近对局空白」，而不是「只有一块读挂了」。
+    #    现在一块失败只丢那一块（默认值），其余照常填。
     try:
         snap.probe = probe(storage)
-        # ⚠️ 界面口径（用户 2026-09-16）：总览 / 先后攻统计要算**天梯 + 巅峰 + 活动**
-        #（打活动局时两块全 0 就是这条引起的）；主口径与 CLI 不受影响。
-        # ⚠️ 本轮结束（隔 ≥60 分钟没打）-> 拿**不可能命中的起点**去查 =>
-        #    零值结构（计数 0 / 比率 None）—— 界面显示「**新一轮还没开打**」
-        #    （胜负 `0-0`、先攻/后攻 `0`、比率 `-`），用户 2026-09-16 晚定。
-        #    不能把「本轮结束」当成 `since=None` 丢给 get_stats —— 那是「不限时间」，
-        #    会变成**全库统计**（数字反而更大，实机踩到）。
+    except Exception:
+        snap.probe = None                            # 探针失败 -> 上层按「无数据」处理
+    # ⚠️ 界面口径（用户 2026-09-16）：总览 / 先后攻统计要算**天梯 + 巅峰 + 活动**
+    #（打活动局时两块全 0 就是这条引起的）；主口径与 CLI 不受影响。
+    # ⚠️ 本轮结束（隔 ≥60 分钟没打）-> 拿**不可能命中的起点**去查 =>
+    #    零值结构（计数 0 / 比率 None）—— 界面显示「**新一轮还没开打**」
+    #    （胜负 `0-0`、先攻/后攻 `0`、比率 `-`），用户 2026-09-16 晚定。
+    #    不能把「本轮结束」当成 `since=None` 丢给 get_stats —— 那是「不限时间」，
+    #    会变成**全库统计**（数字反而更大，实机踩到）。
+    try:
         since = stats_since(storage, stats_scope)
         snap.stats = storage.get_stats(
             since=(NO_SESSION_SINCE if since is SESSION_EXPIRED else since),
             mode_scope='duel', account=account) or {}
+    except Exception:
+        snap.stats = {}
+    try:
         snap.today = storage.get_today_stats() or {}
+    except Exception:
+        snap.today = {}
+    try:
         snap.by_deck = list(storage.get_stats_by_deck(account=account) or [])
+    except Exception:
+        snap.by_deck = []
+    try:
         snap.heatmap = dict(storage.get_daily_stats(account=account) or {})
+    except Exception:
+        snap.heatmap = {}
+    try:
         snap.unmarked = list(
             storage.get_unmarked_matches(limit=unmarked_limit) or [])
+    except Exception:
+        snap.unmarked = []
+    try:
         _lng = _ui_lang()
         snap.recent = build_recent(storage, limit=recent_limit,
                                    account=account,
                                    disp_name=(_name_resolver(storage, _lng)
                                               if _lng != 'cn' else None))
+    except Exception:
+        snap.recent = []
+    try:
         snap.my_rank = current_rank(storage, account=account)
     except Exception:
-        return snap                                  # 部分成功也算数
+        snap.my_rank = None
 
     try:
         anchor = boot_anchor(storage) if boot_rowid is None else int(boot_rowid)
@@ -577,8 +613,15 @@ def _mode_sel(mode_group):
     if not mode_group:
         return None
     if isinstance(mode_group, str):
-        return {mode_group}
+        # ★ BUG-B1-10：`'all'` 在 SQL 端（`storage.mode_group_clause`）是
+        #   「**不加模式条件**」= 不过滤 → Python 端也必须回 None。
+        #   原来返回 `{'all'}`，`g in {'all'}` 恒假 → cross_matrix 有数据、
+        #   match_groups 全空（同一筛选三处结果不一致）。
+        return None if mode_group == MODE_GROUP_ALL else {mode_group}
     keys = set(mode_group)
+    # 列表里带 'all' 与 SQL 端同一语义：整条筛选取消（不做模式过滤）
+    if MODE_GROUP_ALL in keys:
+        return None
     #: 「一个模式都没选」哨兵 -> 用哨兵本身当集合，`g in sel` 恒假（= 全筛掉）。
     if MODE_SELECT_NONE in keys:
         return {MODE_SELECT_NONE}
@@ -798,6 +841,42 @@ def split_datetime(started_at) -> Tuple[str, str]:
     return (s[5:10], s[11:16])
 
 
+def _recent_in_window(storage, limit: int = 500, since=None, until=None,
+                      account=None) -> List[dict]:
+    """时间窗内的最近 `limit` 局（DESC）—— **窗条件下推 SQL**（BUG-B1-09）。
+
+    * 有 :meth:`Storage.get_matches_between` 就直接下推（首选；库超过窗口外
+      的行数时也**不会截断**）；
+    * 测试替身只实现了 `get_recent_matches` → 退回「取一批再在 Python 里筛」。
+      回退路径的 `limit` 放大到 `max(limit, 5000)`：它只服务替身/老接口，
+      放大一点换来「不会少算」，而真库永远走上面那条。
+    * **不抛异常** —— 取数失败返回 `[]`（与各调用方原有的 try/except 同语义）。
+    """
+    fn = getattr(storage, 'get_matches_between', None)
+    if callable(fn):
+        try:
+            return list(fn(since=since, until=until, limit=limit,
+                           account=account) or [])
+        except Exception:                                    # noqa: BLE001
+            return []
+    try:
+        rows = list(storage.get_recent_matches(
+            limit=max(int(limit), 5000), account=account) or [])
+    except Exception:                                        # noqa: BLE001
+        return []
+    out = []
+    for m in rows:
+        at = m.get('started_at') or ''
+        if since and at < since:
+            continue
+        if until and at > until:
+            continue
+        out.append(m)
+        if len(out) >= int(limit):
+            break
+    return out
+
+
 def _page_row(m) -> dict:
     """一局 -> 对局记录的一行（字段就是界面那几列要用的，不多不少）。
 
@@ -820,6 +899,10 @@ def _page_row(m) -> dict:
     date, time = split_datetime(m.get('started_at'))
     return {
         'match_id': m.get('match_id'),
+        #: 完整时刻（`YYYY-MM-DD HH:MM:SS`）—— **只给导出排序用**：
+        #: `date` 是 `MM-DD`，跨年时字符串比较会把 12 月排到 1 月后面
+        #: （BUG-B1-12）。界面列仍用 date/time，别拿这个去显示。
+        'started_at': m.get('started_at') or '',
         'date': date,
         'time': time,
         'result': m.get('result'),
@@ -880,10 +963,10 @@ def match_groups(storage, limit: int = 500, since=None, until=None,
     * 查不动（库里炸了）返回 `[]` —— 不抛。
     """
     from core import modes as M
-    try:
-        rows = list(storage.get_recent_matches(limit=limit,
-                                               account=account) or [])
-    except Exception:
+    # ★ BUG-B1-09：since/until 下推 SQL（同上；回退路径见 `_recent_in_window`）
+    rows = _recent_in_window(storage, limit=limit, since=since, until=until,
+                             account=account)
+    if not rows:
         return []
     sel = _mode_sel(mode_group)          # None = 不筛；集合 = 只留勾选的模式
     keep = []
@@ -1007,9 +1090,12 @@ def month_window(day=None) -> Tuple[str, str, str]:
     first = d.replace(day=1)
     nxt = (first + _dt.timedelta(days=32)).replace(day=1)
     last = nxt - _dt.timedelta(days=1)
+    # ★ BUG-B1-07：上界必须带毫秒（与 `storage.day_range` 的 `.999` 同口径）。
+    #   原来写 `23:59:59`，字符串比较下 `23:59:59.800` > `23:59:59` ——
+    #   月末最后一局（带毫秒的日志行）被整月漏算。10 月真数据有 2 行带毫秒。
     return ('%04d-%02d' % (first.year, first.month),
             first.strftime('%Y-%m-%d 00:00:00'),
-            last.strftime('%Y-%m-%d 23:59:59'))
+            last.strftime('%Y-%m-%d 23:59:59.999'))
 
 
 def stats_page_data(storage, limit: int = 500, mode_group=None,
@@ -1064,10 +1150,16 @@ def stats_page_data(storage, limit: int = 500, mode_group=None,
     data['daily'] = merged_daily(storage, account=account)  # 自己已 catch
     data['months'] = months_of(data['daily'])
     try:
-        rows = list(storage.get_recent_matches(limit=limit,
-                                               account=account) or [])
+        # ★ BUG-B1-09：时间窗**下推到 SQL**（原来先取 `limit=500` 行再在
+        #   Python 里按月筛 —— 库超过 500 行后月报会静默少算；真库 340 行
+        #   当前不触发）。
+        rows = _recent_in_window(storage, limit=limit, since=m_since,
+                                 until=m_until, account=account)
         #: 全库最近一局的开始时间 —— 空态文案要告诉用户「上一轮停在什么时候」
-        if rows:
+        newest = _recent_in_window(storage, limit=1, account=account)
+        if newest:
+            data['last_match_at'] = newest[0].get('started_at')
+        elif rows:
             data['last_match_at'] = rows[0].get('started_at')
         from core import modes as M
         from core import ranks
@@ -1076,8 +1168,11 @@ def stats_page_data(storage, limit: int = 500, mode_group=None,
         #: `my_rank_after` 是假段位，不该参与"最高"；筛选到非天梯模式时自然为 None
         #: （界面那格显示 `-`，不是错误）。
         sel = _mode_sel(mode_group)
+        # ★ BUG-B1-06：**上下界都要卡**。原来只卡下界，看 9 月时会把这个月
+        #   （10 月）的段位也算进「本月最高段位」。上界与 since 同源（`m_until`，
+        #   带 `.999` 见 BUG-B1-07）。
         mine = [m for m in rows
-                if (m.get('started_at') or '') >= m_since
+                if m_since <= (m.get('started_at') or '') <= m_until
                 and M.group(m.get('game_mode')) == 'ranked'
                 and (sel is None or M.group(m.get('game_mode')) in sel)]
         pairs = [((m.get('my_rank_after'), m.get('my_rate_after'))) for m in mine]
@@ -1154,9 +1249,9 @@ def hand_trap_summary(storage, month=None, mode_group=None) -> Dict[str, object]
     empty = {'traps': traps, 'second_my': [], 'first_opp': [],
              'n_games': 0, 'n_calibre': 0, 'month': month,
              'mode_group': mode_group}
-    try:
-        rows = list(storage.get_recent_matches(limit=5000) or [])
-    except Exception:                                        # noqa: BLE001
+    # ★ BUG-B1-09：按月筛的那一版原来取 5000 行再在 Python 里卡窗口
+    rows = _recent_in_window(storage, limit=5000, since=since, until=until)
+    if not rows:
         return empty
 
     from core import modes as M
@@ -1297,8 +1392,9 @@ def month_bounds(ym: str) -> Tuple[str, str]:
     first = _dt.date(y, m, 1)
     nxt = (first + _dt.timedelta(days=32)).replace(day=1)
     last = nxt - _dt.timedelta(days=1)
+    # ★ BUG-B1-07：上界带毫秒（同 `month_window` / `storage.day_range`）
     return (first.strftime('%Y-%m-%d 00:00:00'),
-            last.strftime('%Y-%m-%d 23:59:59'))
+            last.strftime('%Y-%m-%d 23:59:59.999'))
 
 
 def cross_matrix(storage, went_first=None, hide_pseudo: bool = True,
@@ -1496,10 +1592,16 @@ def tier_page_data(storage, lang=None) -> Dict[str, object]:
         return data
     by_tier = {s['tier']: s for s in data['sections']}
     for m in decks:
-        # ★ 分组只认**站内 power**：没有 power 的（自定义残留 / 站内当期没给档）
-        #   一律落 TRENDING —— Tier 表要和 masterduelmeta 保持一致
-        #   （2026-09-20 用户拍板；tier 字段可能是旧榜 / 覆盖表的陈旧值，不作数）
-        t = 'Trending' if m.get('power') is None else m.get('tier')
+        # ★ 分组口径（AGENTS.md 铁律 7）：
+        #   * **站内条目**只认站内 power —— 没有 power 的一律落 TRENDING
+        #     （2026-09-20 用户拍板；tier 字段可能是旧榜的陈旧值，不作数）；
+        #   * **自定义条目**（`source='custom'`，站内没有）没有 power 可依，
+        #     分组以覆盖表的「分组」列为准（BUG-B1-12）—— 否则手填的
+        #     `Tier2` / `Tier3` 全被压成 Trending，等于忽略用户分组。
+        if m.get('source') == 'custom' and m.get('tier') in by_tier:
+            t = m.get('tier')
+        else:
+            t = 'Trending' if m.get('power') is None else m.get('tier')
         if t not in by_tier:
             continue                          # 脏 tier（合法值见 storage.VALID_TIERS）
         by_tier[t]['decks'].append({
@@ -1659,6 +1761,23 @@ def _reference_decks(reference=None) -> Dict[str, dict]:
     """参照库的 `decks` 段 —— **99 副**（拿不到给空 dict）。"""
     decks = _reference(reference).get('decks')
     return decks if isinstance(decks, dict) else {}
+
+
+def _reference_missing(reference=None) -> bool:
+    """参照库整份缺失？（`reference` 参数注入时按注入的内容判，不读磁盘）
+
+    ★ BUG-A6-02：`deck_composition()` 里 `has_ref=False` 有两种完全不同的原因 ——
+    ① 参照库没建/被删（该提示用户去刷新）；② 参照库有，但**这副**卡组没样本
+    （正常的空态）。混在一起用户只会看到「暂无该卡组构成」，无从判断该做什么。
+    """
+    if reference is not None:
+        decks = (reference or {}).get('decks') if isinstance(reference, dict) else None
+        return not (isinstance(decks, dict) and decks)
+    try:
+        from core import deck_guess
+        return bool(deck_guess.reference_missing())
+    except Exception:                                    # noqa: BLE001
+        return True
 
 
 def _ref_fetched_at(reference=None) -> Optional[str]:
@@ -1884,7 +2003,9 @@ def data_status(storage=None) -> Dict[str, object]:
 
     def _read_card_table() -> Dict[str, object]:
         """`data/card_names.json` 的顶层 `generated_at` + `counts.total`。"""
-        path = os.path.join(_PROJ_ROOT, 'data', 'card_names.json')
+        # ★ BUG-B1-03：既有随包基线、又会被「卡表更新」改写 —— 用 resolve()
+        #   （DATA_DIR 优先、缺失回落 ASSET_DIR），别写死 PROJ/data
+        path = paths.resolve('card_names.json')
         out: Dict[str, object] = {'count': None, 'generated_at': None,
                                   'path': path}
         try:
@@ -1988,8 +2109,8 @@ def collector_status(now=None) -> Dict[str, object]:
                 'in_duel': False, 'game_pid': None}
 
     try:
-        path = os.path.join(_PROJ_ROOT, 'data', 'archive',
-                            'collector_heartbeat.json')
+        # ★ BUG-B1-03：心跳由采集器写，走 paths.data_path
+        path = paths.data_path('archive', 'collector_heartbeat.json')
         with open(path, encoding='utf-8') as f:
             raw = json.load(f)
     except Exception:                                        # noqa: BLE001
@@ -2060,9 +2181,11 @@ def export_months(storage, limit: int = 5000) -> List[Tuple[str, str]]:
     except Exception:                                        # noqa: BLE001
         months = []
     out = [('', '全部月份')]
-    for m in months:
-        if m:
-            out.append((str(m), str(m)))
+    # ⚠️ `stats_page_data()['months']`（= `months_of()`）是**升序**（旧→新），
+    #    而本函数契约是「**最近的在前**」（BUG-B6-12 / B1-12）。这里显式倒序，
+    #    别改成依赖上游顺序。
+    for m in sorted((str(x) for x in months if x), reverse=True):
+        out.append((m, m))
     return out
 
 
@@ -2107,10 +2230,16 @@ def export_rows(storage, mode_group=None, limit: int = 5000,
     #: 值跟界面语言走（2026-10-04 用户：导出表也要能读懂）；cn 恒等
     lang = _ui_lang()
     resolve = _name_resolver(storage, lang) if lang != 'cn' else None
+    #: 排序键跟着行走（BUILD 时留一份，不塞进导出行 —— JSON 导出的
+    #: `rows` 要和 `columns` 一一对应，多一个键就是脏数据）
+    _sort_keys = []
     for deck_name, _stats, rows in groups:
         for r in rows or []:
             r = r if isinstance(r, dict) else {}
             od = r.get('opp_deck') or ''
+            _sort_keys.append(r.get('started_at')
+                              or ('%s %s' % (r.get('date') or '',
+                                             r.get('time') or '')))
             out.append({
                 'date': r.get('date') or '',
                 'time': r.get('time') or '',
@@ -2132,10 +2261,14 @@ def export_rows(storage, mode_group=None, limit: int = 5000,
                 'opp_traps': _trap_names_cell(r.get('opp_traps')),
                 'match_id': r.get('match_id') or '',
             })
-    #: 按日期 + 时间**倒序**（近的在上，与战绩页一致）
-    out.sort(key=lambda r: ('%s %s' % (r.get('date') or '', r.get('time') or '')),
-             reverse=True)
-    return out
+    #: 按**完整时刻**倒序（近的在上，与战绩页一致）。
+    #  ⚠️ 用 `started_at` 而不是 `date`+`time`：`date` 只有 `MM-DD`，
+    #     跨年时字符串比较会把 12 月排到次年 1 月之后（BUG-B1-12）。
+    #     行里没有 `started_at` 的（老调用方自己拼的行）退回 date+time。
+    # ⚠️ 排序键**不能**从 `out` 里取 —— 导出行只有 EXPORT_COLUMNS 那些键，
+    #    没有 `started_at`（上面 `_sort_keys` 就是为此留的）。
+    order = sorted(range(len(out)), key=lambda i: _sort_keys[i], reverse=True)
+    return [out[i] for i in order]
 
 
 def export_default_name(fmt: str = 'csv', now=None) -> str:
@@ -2299,6 +2432,10 @@ def deck_composition(storage, ref_name=None, per_min: int = 0,
         'main': [], 'extra': [], 'unknown': 0,
         'options': _ref_options(storage, decks, lang),
         'ref_fetched_at': _ref_fetched_at(reference),
+        #: ★ BUG-A6-02：参照库**整份缺失**（没跑过 / 被删 / 读不出）——
+        #: 页面据此提示「去跑一次参照库刷新」，而不是只显示「暂无该卡组构成」
+        #: （两者对用户是不同的事：一个是数据没建，一个是这个卡组没样本）。
+        'ref_missing': _reference_missing(reference),
     }
     by_name: Dict[str, tuple] = {}
     unknown = 0
@@ -2343,7 +2480,11 @@ def deck_composition(storage, ref_name=None, per_min: int = 0,
 
 # ===================================================== 数据体检（用户 2026-09-23）
 #: 「数据体检」检测的记录目录根（与采集器/`duel_record` 同一份磁盘事实）
-_AUDIT_RECORDS = os.path.join(_PROJ_ROOT, 'data', 'archive', 'duel_records')
+# ★ BUG-B1-03：走 paths.data_path（安装版 Program Files 下 PROJ/data 不可写）
+_AUDIT_RECORDS = paths.data_path('archive', 'duel_records')
+
+#: 体检取历史行时的上限 —— **不是分页**，只是防无穷；500 会漏（BUG-B1-12）。
+AUDIT_ROW_LIMIT = 100000
 
 
 def audit_issues(storage=None, records_dir=None) -> Dict[str, object]:
@@ -2364,9 +2505,19 @@ def audit_issues(storage=None, records_dir=None) -> Dict[str, object]:
         storage = Storage()
     root = records_dir or _AUDIT_RECORDS
     out: Dict[str, object] = {'missing_result': [], 'orphan_dirs': [],
-                              'open_dirs': [], 'n_issues': 0}
+                              'open_dirs': [], 'n_issues': 0,
+                              #: ★ A3-结论-C：把「整局漏记」按**能不能配上对**分成两组。
+                              #: * ``orphan_no_pair``：窗口内**根本没有 log/api 行**
+                              #:   （观战 / 单人 / 判不出模式的历史局）—— 日志侧本来就没有
+                              #:   对手 → 不是漏记，**不再算进 n_issues**；
+                              #: * ``orphan_pair_exists``：窗口内**有** log/api 行却没并上
+                              #:   —— 这才是真漏记（要人工看）。
+                              'orphan_no_pair': [], 'orphan_pair_exists': []}
     try:
-        rows = list(storage.get_recent_matches(limit=500) or [])
+        # ⚠️ **不能截断**（BUG-B1-12）：原来 `limit=500`，超出的历史行既查不到
+        #    「缺结果」，那些行的 `record_dir` 也不进 `in_db` —— 磁盘上的老目录
+        #    会被误报成「漏记」。体检要的是全量，取一个大到用不完的上限。
+        rows = list(storage.get_recent_matches(limit=AUDIT_ROW_LIMIT) or [])
     except Exception:                                        # noqa: BLE001
         rows = []
 
@@ -2410,14 +2561,90 @@ def audit_issues(storage=None, records_dir=None) -> Dict[str, object]:
         real = any(e.get('label') == 'ShowFirstPlayer' for e in entries)
         state = man.get('state')
         if state == 'open':
+            # ⚠️ **正在打的那局不算问题**（BUG-B1-12）：采集器开局就建 open 目录、
+            #    打完才 live 终局化 —— 体检在「对局进行中」跑会把当前这局报成
+            #    「未收口」。判据与 `import_duel_records --finalize-stale` 同源：
+            #    最后一次落盘距今 < `STALE_OPEN_SEC`（6h）= 可能还在打，跳过。
+            #    ⚠️ 拿不到时间戳的老 manifest 无从判断 -> 照旧报（宁可多报）。
+            if _open_dir_still_running(man):
+                continue
             out['open_dirs'].append({'dir': name, 'n_entries': len(entries)})
             continue                      # open 且没入库 = ③ 的一种，只报一次
         if real:
-            out['orphan_dirs'].append({'dir': name, 'n_entries': len(entries),
-                                       'state': state})
+            item = {'dir': name, 'n_entries': len(entries), 'state': state}
+            #: ★ A3-结论-C：13 个孤儿目录里绝大多数是**观战/单人局**
+            #: （窗口内一行 log/api 都没有，`find_record_pair` 结构性地找不到东西）
+            #: —— 旧代码一律报「漏记」，用户每次体检都看到一堆假问题（狼来了）。
+            #: 按「窗口内有没有 log/api 行」分组：有 = 真漏记；没有 = 观战/单人。
+            item['pair_hint'] = ('pair-exists-but-not-merged'
+                                 if _has_pair_candidate(rows, man)
+                                 else 'no-pair-object')
+            if item['pair_hint'] == 'pair-exists-but-not-merged':
+                out['orphan_pair_exists'].append(item)
+                out['orphan_dirs'].append(item)
+            else:
+                out['orphan_no_pair'].append(item)
     out['n_issues'] = (len(out['missing_result']) + len(out['orphan_dirs'])
                        + len(out['open_dirs']))
     return out
+
+
+def _has_pair_candidate(rows, man) -> bool:
+    """这个孤儿目录的**时间窗内**有没有 log/api 行 —— 有 = 真漏记。
+
+    ★ A3-结论-C：`find_record_pair` 只认 `origin IN ('log','api')`；观战/单人局
+    日志侧根本不写 `Starting Duel`，所以那些目录永远配不上对 —— 那不是 bug。
+    判据与 `Storage.find_record_pair` 同源（宽窗 = `RECORD_WIDE_LOOKBACK`），
+    但这里只回答「有没有东西可并」，所以用**双向 ±30 分钟**（宁可宽一点，
+    少报假漏记）：真对局的 log 行 `started_at` 完全可能落在目录 `first_seen`
+    之后（采集器先抓到控制器、日志后写）。
+    """
+    try:
+        import datetime as _dt
+        from core.storage import Storage
+        cap = (man or {}).get('capture') or {}
+        stamp = cap.get('first_seen_at') or (man or {}).get('saved_at')
+        base = _parse_dt(stamp)
+        if base is None:
+            # 判不出时间 -> 无从判断，按「有可能」处理（宁可多报，别掩盖真漏记）
+            return True
+        wide = Storage.RECORD_WIDE_LOOKBACK
+        lo = (base - _dt.timedelta(seconds=wide)).strftime('%Y-%m-%d %H:%M:%S')
+        hi = (base + _dt.timedelta(seconds=wide)).strftime('%Y-%m-%d %H:%M:%S.999')
+        for m in rows or []:
+            if m.get('origin') not in ('log', 'api'):
+                continue
+            started = str(m.get('started_at') or '')
+            if lo <= started <= hi:
+                return True
+            ended = str(m.get('ended_at') or '')
+            if ended and lo <= ended <= hi:
+                return True
+        return False
+    except Exception:                                        # noqa: BLE001
+        return True                       # 判不出 = 照报（别用异常掩盖漏记）
+
+
+def _open_dir_still_running(man) -> bool:
+    """manifest 像是**正在采集**还没收口（最后一次落盘距今 < 6 小时）。"""
+    try:
+        from core.memread.record_capture import STALE_OPEN_SEC
+    except Exception:                                        # noqa: BLE001
+        STALE_OPEN_SEC = 6 * 3600
+    cap = (man or {}).get('capture') or {}
+    stamp = cap.get('last_saved_at') or (man or {}).get('saved_at')
+    dt = _parse_dt(stamp)
+    if dt is None:
+        return False                      # 判不出 = 当成 stale（照报，别掩盖问题）
+    return (datetime.datetime.now() - dt).total_seconds() < STALE_OPEN_SEC
+
+
+def _parse_dt(s):
+    """定宽时刻文本 -> datetime；认不出给 None（本模块不 import storage，避免环）。"""
+    try:
+        return datetime.datetime.strptime(str(s)[:19], '%Y-%m-%d %H:%M:%S')
+    except (TypeError, ValueError):
+        return None
 
 
 def audit_issues_line(issues) -> str:
@@ -2432,8 +2659,14 @@ def audit_issues_line(issues) -> str:
         opens = len(issues.get('open_dirs') or [])
     except AttributeError:
         return '数据体检：读不懂的体检结果'
+    try:
+        #: ★ A3-结论-C：观战/单人目录（日志侧没有对手）**不计入问题**，但要交代一句
+        skip = len(issues.get('orphan_no_pair') or [])
+    except AttributeError:
+        skip = 0
+    tail = ('；另有 %d 个观战/单人局目录（日志侧无对手，不计入）' % skip) if skip else ''
     if not (mr or orphan or opens):
-        return '体检通过：结果完整、没有漏记、没有未收口的目录'
+        return '体检通过：结果完整、没有漏记、没有未收口的目录' + tail
     parts = []
     if mr:
         parts.append('缺结果 %d 局' % mr)
@@ -2441,5 +2674,5 @@ def audit_issues_line(issues) -> str:
         parts.append('漏记 %d 局' % orphan)
     if opens:
         parts.append('未收口 %d 个' % opens)
-    return '发现问题：%s —— 共 %d 项（详情见下方日志）' % (' / '.join(parts),
-                                                    mr + orphan + opens)
+    return ('发现问题：%s —— 共 %d 项（详情见下方日志）%s'
+            % (' / '.join(parts), mr + orphan + opens, tail))

@@ -98,3 +98,69 @@ class TestBackscanContamination(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class TestCoinBackscanPicksLatest(unittest.TestCase):
+    """★ BUG-B8-13：回扫区里的硬币行要取**离本局最近**的那条。
+
+    实测事故（2026-10-17 22:22:07 那局）：60 行回扫窗口里同时躺着
+    22:21:43 上一局的 `Opponent` 和 22:22:12 本局的 `Player`，
+    旧代码取第一条 → 硬币记反。
+    """
+
+    def setUp(self):
+        self.saved = am.DECKS
+        am.DECKS = {'48171157': {'name': '闪刀姬', 'main': {'11111': 3}, 'extra': {}}}
+
+    def tearDown(self):
+        am.DECKS = self.saved
+
+    def _lines(self, prev_coin_ts=None, own_coin_ts='22:22:12.000',
+               prev_gap_lines=30):
+        lines = []
+        if prev_coin_ts:
+            lines.append(L(prev_coin_ts, 'Opponent is deciding whether to go first'))
+            # 中间填一些上一局的收尾行（真实日志里还有几十行 debug）
+            lines += [L('22:22:00.000', 'DRAW: cardId=1 source=P0-Deck target=P0-Hand')
+                      for _ in range(max(0, prev_gap_lines))]
+        if own_coin_ts:
+            lines.append(L(own_coin_ts, 'Player is deciding whether to go first'))
+        lines.append(L('22:22:17.000', 'Starting Duel with deckId=48171157'))
+        lines.append(L('22:22:25.000', 'Turn 1 for player 1'))
+        lines.append(L('22:23:00.000', 'Game ended: result=Win deckId=48171157'))
+        return lines
+
+    def _seg(self, lines):
+        start = next(i for i, l in enumerate(lines)
+                     if 'Starting Duel with deckId=' in l)
+        return {'start_line': start, 'end_line': len(lines) - 1,
+                'start_time': '2026-09-13 22:22:17.000',
+                'end_time': '2026-09-13 22:23:00.000',
+                'deck_id_raw': '48171157'}
+
+    def test_previous_game_coin_does_not_win(self):
+        """本局 `Player` 必须压过窗口里更早的上一局 `Opponent`。"""
+        lines = self._lines('22:21:43.000')
+        row = am.parse_seg(self._seg(lines), lines)
+        self.assertIs(row['won_initiative'], True,
+                      '取到了上一局的硬币（BUG-B8-13 回归）')
+        self.assertEqual(row['won_initiative_src'], 'backscan-latest')
+
+    def test_stale_coin_beyond_age_is_rejected(self):
+        """只剩一条很远的硬币行（> COIN_MAX_AGE_SEC）= 上一局残影，宁缺。"""
+        lines = self._lines('22:21:43.000', own_coin_ts=None)
+        lines.insert(0, L('22:21:43.000', 'Opponent is deciding whether to go first'))
+        row = am.parse_seg(self._seg(lines), lines)
+        self.assertIsNone(row['won_initiative'])
+        self.assertTrue(str(row['won_initiative_src']).startswith('stale('),
+                        row['won_initiative_src'])
+
+    def test_coin_in_main_body_still_counts(self):
+        """主体区（Starting Duel 之后）出现硬币行时照旧采（重排/回放口径）。"""
+        lines = self._lines(None, own_coin_ts=None)
+        idx = next(i for i, l in enumerate(lines) if 'Starting Duel' in l)
+        lines.insert(idx + 1, L('22:22:18.000',
+                                'Opponent is deciding whether to go first'))
+        row = am.parse_seg(self._seg(lines), lines)
+        self.assertIs(row['won_initiative'], False)
+        self.assertEqual(row['won_initiative_src'], 'main')
+

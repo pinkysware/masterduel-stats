@@ -67,6 +67,27 @@ def _rmtree(path):
     import shutil
     shutil.rmtree(path, True)
 
+class TestFetchAtomic(unittest.TestCase):
+    """★ BUG-B9A-12：落盘原始 JSON 要原子。"""
+
+    def test_bad_json_never_touches_file(self):
+        import fetch_untapped_api as fa
+        d = tempfile.mkdtemp(prefix='untapped_')
+        self.addCleanup(__import__('shutil').rmtree, d, True)
+        p = os.path.join(d, 'raw.json')
+        with open(p, 'w', encoding='utf-8') as f:
+            f.write('[1,2]')
+        before = open(p, 'rb').read()
+        old = fa.http_get
+        fa.http_get = lambda url: '这不是 json'
+        self.addCleanup(setattr, fa, 'http_get', old)
+        #: 坏 JSON 在 **落盘前**就被 `parse_games` 拦下（JSONDecodeError / RuntimeError）
+        with self.assertRaises(Exception):
+            fa.fetch(p)
+        self.assertEqual(open(p, 'rb').read(), before)
+
+
+
 
 if __name__ == '__main__':
     unittest.main()

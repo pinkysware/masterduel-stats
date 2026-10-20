@@ -44,6 +44,7 @@ from html import unescape
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJ)
 
+from core import atomic                   # noqa: E402
 from core import deck_csv                 # noqa: E402
 from core.deck_match import split_aliases  # noqa: E402
 from core.storage import Storage, SOURCE_CUSTOM  # noqa: E402
@@ -177,15 +178,21 @@ def fetch_site_deck_names():
 
 
 def write_site_names(names, path=SITE_NAMES_PATH):
-    """落盘站内名单（幂等整文件覆盖）。"""
+    """落盘站内名单（幂等整文件覆盖）。
+
+    ★ BUG-B9A-10：改成**原子写**（`core.atomic`，.tmp + os.replace）。
+    原先 `open('w')` 直接截断 —— 写到一半崩就把名单写坏，管理页会把
+    所有条目误判成「自定义」。目录不存在仍是失败（与 `open()` 同语义）。
+    """
     import datetime
     payload = {'version': 1,
                'fetched_at': datetime.datetime.now().isoformat(timespec='seconds'),
                'source': 'masterduelmeta /api/v1/deck-types?limit=3000',
                'names': sorted(set(names))}
-    with io.open(path, 'w', encoding='utf-8', newline='') as f:
-        json.dump(payload, f, ensure_ascii=False, indent=1)
-        f.write(chr(10))
+    text = json.dumps(payload, ensure_ascii=False, indent=1) + chr(10)
+    if not atomic.write_text(path, text):
+        #: 返回 False 就**响亮失败** —— 静默失败的话调用方会以为写成功了
+        raise OSError('写站内名单失败：%s（原文件未改动）' % path)
     return path
 
 
@@ -452,6 +459,21 @@ def _norm_tier(s):
     if m:
         return 'Tier' + m.group(1)
     return v
+
+
+def _stale_custom_image(img_file):
+    """库里的 `img_file` 是否指向 `deck_images_custom/` 里**已不存在**的文件。
+
+    ★ BUG-B9A-03：`--cn-only` 原先对「没有覆盖图」传 `img_file=None`，
+    而 `None` 在 `set_meta_deck_override` 里的语义是「**这一项不动**」——
+    用户把覆盖图删掉后，库里的旧路径**永在**，界面一直显示破图。
+    """
+    p = (img_file or '').strip().replace(chr(92), '/')
+    if not p or 'deck_images_custom/' not in p:
+        return False
+    full = p if os.path.isabs(p) else os.path.join(
+        PROJ, p.replace('/', os.sep))
+    return not os.path.exists(full)
 
 
 def custom_image_for(name):
@@ -819,13 +841,23 @@ def main():
 
         hit = 0
         img_ovr = 0
+        stale_img = 0
         for r in site:
             o = ovr.get(r['name'])
             if o is None:
                 continue
             # 覆盖目录里有同名图 = 用户手动换过图 —— 换掉库里的 img_file
             ov = custom_image_for(r['name'])
-            img = _rel_or_abs(ov) if ov is not None else None
+            if ov is not None:
+                img = _rel_or_abs(ov)
+            elif _stale_custom_image(r.get('img_file')):
+                #: ★ BUG-B9A-03：覆盖图**被删了** —— 传空串「清空」，
+                #: 让 `DeckImages.resolve` 重新走站内图。传 None 是「不动」，
+                #: 会把一个破图路径永久留在库里。
+                img = ''
+                stale_img += 1
+            else:
+                img = None               # 从来就没有覆盖图 -> 这一项不动
             if img and img != r['img_file']:
                 img_ovr += 1
             st.set_meta_deck_override(r['name'], name_cn=o['cn'],
@@ -854,6 +886,9 @@ def main():
         if img_ovr:
             print('[换图] %d 个站内条目的图来自 deck_images_custom/（手动替换）'
                   % img_ovr)
+        if stale_img:
+            print('[清图] %d 个条目的覆盖图已被删，库里旧路径已清空（回到站内图）'
+                  % stale_img)
 
         # ---- 清掉历史污染：img_file 指向默认图的（2026-10-10 修的真事故）----
         # `find_image_file` 以前拿默认图兜底，`custom_rows` 分不清「找到真图」与

@@ -151,7 +151,14 @@ class MatrixCell(QWidget):
 
         if self._kind == 'avg':
             main = _rate_text((c or {}).get('rate'))
-            main_color = theme.win_rate_color((c or {}).get('rate'))
+            # ★ BUG-B6-05：`cross_matrix` 的 `col_avgs[].rate` 是 **0–100**
+            #   （`w/n*100`），而 `win_rate_color` 的契约是 **0–1**。
+            #   直接传 0-100 会让任何胜率都 > 0.5 → **汇总格恒绿**
+            #   （12% 也显示成"胜率高"），而同一页的格子本体用
+            #   `_bucket_color`（按 0-100、70/50 阈值）是对的 —— 视觉自相矛盾。
+            _rate = (c or {}).get('rate')
+            main_color = theme.win_rate_color(
+                None if _rate is None else float(_rate) / 100.0)
             f_main = widgets.font(theme.PAGE_F_OVER_TITLE,
                                   weight=QFont.Weight.Bold)
             p.setPen(QColor(main_color))

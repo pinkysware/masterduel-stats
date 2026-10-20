@@ -254,6 +254,27 @@ class RealCharsetCoverageTest(unittest.TestCase):
         miss = [c for c in JP_SAMPLE if ord(c) not in covered]
         self.assertEqual(miss, [], '日文缺：%s' % ''.join(miss))
 
+class FontDirTest(unittest.TestCase):
+    """★ BUG-B7-04：自带字体是**只读随包素材** —— 走 `paths.resolve`。
+
+    安装版的 `data_path('fonts')` 指向 %LOCALAPPDATA%，那份字体不在那儿 →
+    全界面字体回落、列宽漂移。
+    """
+
+    @unittest.skipUnless(HAVE_QT, 'need PySide6 for ui.fonts')
+    def test_font_dir_resolves_to_bundled_assets(self):
+        from core import paths
+        self.assertEqual(
+            os.path.normcase(fonts.FONT_DIR),
+            os.path.normcase(paths.resolve('fonts')))
+
+    @unittest.skipUnless(HAVE_QT, 'need PySide6 for ui.fonts')
+    def test_bundled_font_is_found(self):
+        """默认（便携模式）下就能找到 `data/fonts/` 里的 Inter。"""
+        self.assertTrue(fonts.has_app_font(), fonts.FONT_DIR)
+
+
+
 
 if __name__ == '__main__':
     unittest.main()

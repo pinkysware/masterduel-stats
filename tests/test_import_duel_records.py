@@ -644,3 +644,31 @@ class TestSingleDirAndStale(Base):
 
 if __name__ == '__main__':
     unittest.main()
+
+class RecordDurationTest(unittest.TestCase):
+    """★ BUG-B8-17：record 行的「时长」列不再恒为 None。
+
+    record 来源没有日志的 `Game ended`，但「开始」与
+    `capture.last_saved_at`（≈ 结束）都在手上 —— 时长可以算。
+    """
+
+    def test_duration_from_capture_last_saved(self):
+        import import_duel_records as idr
+        got = idr._duration_sec('2026-10-17 23:30:00', '2026-10-17 23:32:30')
+        self.assertEqual(got, 150)
+
+    def test_duration_none_when_missing(self):
+        import import_duel_records as idr
+        self.assertIsNone(idr._duration_sec(None, '2026-10-17 23:32:30'))
+        self.assertIsNone(idr._duration_sec('2026-10-17 23:30:00', None))
+
+    def test_duration_none_when_unparsable(self):
+        import import_duel_records as idr
+        self.assertIsNone(idr._duration_sec('not-a-time', '2026-10-17 23:32:30'))
+
+    def test_duration_none_when_negative(self):
+        """结束早于开始（时钟回拨 / 数据错）= 不编。"""
+        import import_duel_records as idr
+        self.assertIsNone(idr._duration_sec('2026-10-17 23:32:30',
+                                            '2026-10-17 23:30:00'))
+
