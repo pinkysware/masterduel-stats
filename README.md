@@ -52,7 +52,11 @@ and the collector completely (tray icon -> exit), then unzip `master-duel-stats`
 from the archive over your existing folder. Your duel data lives in `data/` and is
 never touched by the patch. Installed copies should just run the new `Setup` instead.
 
-**Where your duel data lives —** the installer keeps it **next to the program** (`<install>\data`) so you can move the whole folder to another PC. If you install somewhere read-only like `Program Files`, it automatically falls back to `%LOCALAPPDATA%\MasterDuelStats`. Either way you can switch to any folder in **dashboard → Settings → Interface → Game Data** (restart the UI to apply).
+**Where your duel data lives —** the installer keeps it **next to the program** (`<install>\data`) so you can move the whole folder to another PC.
+
+> **Do not install into `Program Files`.** It is read-only for normal users: patch/update files cannot overwrite the program code there without administrator rights, and the duel data then gets redirected to `%LOCALAPPDATA%\MasterDuelStats` instead of staying with the program. Pick a normal writable folder (e.g. `C:\MasterDuelStats`).
+
+Either way you can switch to any folder in **dashboard → Settings → Interface → Game Data** (restart the UI to apply).
 
 ## Install & Run
 
@@ -60,7 +64,7 @@ never touched by the patch. Installed copies should just run the new `Setup` ins
 
 | Asset | Size | Requirements |
 |---|---|---|
-| `masterduel-stats-Setup-1.1.0.exe` | ~29 MB | **One-click installer (recommended)** — install and run. Game data lives next to the program by default; under `Program Files` it moves to `%LOCALAPPDATA%\MasterDuelStats` |
+| `masterduel-stats-Setup-1.1.0.exe` | ~27 MB | One-click installer. **Do not install into `Program Files`** — that folder is read-only for normal users, so updates and patch files cannot overwrite the program code; the data also moves away to `%LOCALAPPDATA%\MasterDuelStats`. Install to a normal folder such as `C:\MasterDuelStats` and the data stays next to the program (`<install>\data`) |
 | `masterduel-stats-v1.1.0-win64-full.zip` | ~39 MB | **None** — Python & all deps bundled; unzip anywhere and run `MDStats.exe` |
 | `masterduel-stats-v1.1.0-patch-win64.zip` | **~0.7 MB** | **Upgrade for existing portable installs** — program code only; unzip over the old folder. Your duel data is not touched |
 | `masterduel-stats-v1.1.0-win64-lite.zip` | ~6 MB | Python 3.13 installed; `MDStats.exe` installs the dependencies on first run |
