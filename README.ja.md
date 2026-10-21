@@ -54,10 +54,10 @@
 
 | アセット | サイズ | 必要なもの |
 |---|---|---|
-| `masterduel-stats-Setup-1.1.0.exe` | 約27 MB | ワンクリックインストール。**`Program Files` にはインストールしないでください** —— 通常ユーザーには読み取り専用で、パッチでプログラムコードを上書きできず、対戦データも `%LOCALAPPDATA%\MasterDuelStats` に移ります。通常のフォルダー（例: `C:\MasterDuelStats`）なら、データは `<インストール先>\data` に置かれます |
-| `masterduel-stats-v1.1.0-win64-full.zip` | 約39 MB | **不要** —— Python と全依存を同梱。解凍して `MDStats.exe` を実行するだけ |
-| `masterduel-stats-v1.1.0-patch-win64.zip` | **約0.7 MB** | **既存ユーザーの更新用**（ポータブル版）—— プログラム本体のみ。元のフォルダーに上書き解凍するだけ。対戦データには触れません |
-| `masterduel-stats-v1.1.0-win64-lite.zip` | 約6 MB | Python 3.13 のインストールが必要。初回の `MDStats.exe` が依存関係を自動インストール |
+| `masterduel-stats-Setup-1.1.1.exe` | 約27 MB | ワンクリックインストール。**`Program Files` にはインストールしないでください** —— 通常ユーザーには読み取り専用で、パッチでプログラムコードを上書きできず、対戦データも `%LOCALAPPDATA%\MasterDuelStats` に移ります。通常のフォルダー（例: `C:\MasterDuelStats`）なら、データは `<インストール先>\data` に置かれます |
+| `masterduel-stats-v1.1.1-win64-full.zip` | 約39 MB | **不要** —— Python と全依存を同梱。解凍して `MDStats.exe` を実行するだけ |
+| `masterduel-stats-v1.1.1-patch-win64.zip` | **約0.7 MB** | **既存ユーザーの更新用**（ポータブル版）—— プログラム本体のみ。元のフォルダーに上書き解凍するだけ。対戦データには触れません |
+| `masterduel-stats-v1.1.1-win64-lite.zip` | 約6 MB | Python 3.13 のインストールが必要。初回の `MDStats.exe` が依存関係を自動インストール |
 | Source code (zip / tar.gz) | 自動 | 開発者向け。各 tag に GitHub が自動添付 |
 
 **ポータブル版の更新**：`patch.zip`（1 MB 未満）をダウンロードし、

@@ -134,11 +134,15 @@ class TierPage(QWidget):
         head.setSpacing(theme.S_MD)
         head.addWidget(_lab(tr('Tier 表'), 'body', size=theme.PAGE_F_TITLE))
         head.addStretch(1)
-        src = _lab(tr('数据源：masterduelmeta（每月手动跑 fetch_meta_decks 刷新）'),
-                   'body', size=theme.PAGE_F_SMALL)
-        src.setStyleSheet('color: %s; background: transparent;'
-                          % theme.INK_MUTED)
-        head.addWidget(src)
+        #: ★ 2026-10-21（用户：「Tier 表过期了，但我没找到更新按钮」）——
+        #: 页头**必须显示快照日期**，否则看不出数据新旧（原本文案只说
+        #: 「每月手动刷新」，等于没有时间信息）。日期由 `set_data()` 按
+        #: `tier_page_data()['fetched_at']` 填。
+        self.src_label = _lab(tr('数据源：masterduelmeta（每月手动跑 fetch_meta_decks 刷新）'),
+                              'body', size=theme.PAGE_F_SMALL)
+        self.src_label.setStyleSheet('color: %s; background: transparent;'
+                                     % theme.INK_MUTED)
+        head.addWidget(self.src_label)
         outer.addLayout(head)
 
         self.scroll = QScrollArea()
@@ -157,7 +161,20 @@ class TierPage(QWidget):
     # ------------------------------------------------------------ 数据
     def set_data(self, data: dict) -> None:
         self._data = dict(data or {})
+        self._apply_snapshot_label()
         self._rebuild()
+
+    def _apply_snapshot_label(self) -> None:
+        """页头那行带上**快照日期** —— 用户据此判断要不要重抓。
+
+        没日期时保留原文案（不是「数据缺失」，是这份库没有 `fetched_at`）。
+        """
+        stamp = str(self._data.get('fetched_at') or '').strip()
+        if not stamp:
+            return
+        self.src_label.setText(
+            tr('数据源：masterduelmeta · 快照 %s（每月手动跑 fetch_meta_decks 刷新）')
+            % stamp)
 
     def _clear(self):
         while self.col.count():

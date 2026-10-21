@@ -39,6 +39,11 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: 参照库（`tools/fetch_mdm_decks.py` 产出，gitignore）
 DEFAULT_REFERENCE = paths.resolve('mdm_deck_cards.json')
 
+#: **自定义参照库**（`tools/build_custom_ref.py` 产出）—— 键是用户自己的卡组名
+#: （如「狱神耀圣」），不随月度刷新被冲掉（AGENTS 铁律 7「自定义条目不被月度清理」）。
+#: ⚠️ 与站内快照**分开两个文件**：`fetch_mdm_decks.py --all` 会整表覆盖前者。
+DEFAULT_CUSTOM_REFERENCE = paths.resolve('mdm_deck_cards_custom.json')
+
 #: `data/card_data.json`（卡 id → 中文名），分组时的兜底源
 CARD_DATA = os.path.join(PROJ, 'data', 'card_data.json')
 
@@ -107,6 +112,15 @@ def load_reference(path=None):
     旧代码两种情况都静默返回 `{}`，界面上表现为「AI 建议全空」且**没有任何提示**
     （用户以为「这局本来就没建议」，实际是参照库没跑过 / 被删了）。
     缺失判据见 :func:`reference_missing`。
+
+    ★ 2026-10-21（C 阶段一）：**自动合并自定义参照库**
+    （:data:`DEFAULT_CUSTOM_REFERENCE`，由 `tools/build_custom_ref.py` 从卡组截图生成）。
+    支持它之后，游戏内自组的卡组名（「狱神耀圣」）就有了**自己的**逐卡卡表，
+    反推能直接判到它 —— 这是「自定义卡组名也是反推候选」的唯一入口。
+
+    * 显式传 `path` 时**不合并**（测试 / 回测要确定性，别被磁盘上的自定义库干扰）；
+    * 合并语义 = 名字撞车时**自定义赢**（用户亲手给的卡表比站内统计更权威）；
+    * 自定义条目带 ``custom=True`` 标记，供 :func:`sort_candidates` 定档位。
     """
     path = path or DEFAULT_REFERENCE
     if path in _DATA_CACHE:
@@ -117,8 +131,54 @@ def load_reference(path=None):
             data = json.load(f)
     if not isinstance(data, dict):
         data = {}
+    if path == DEFAULT_REFERENCE:
+        data = _merge_custom(data)
     _DATA_CACHE[path] = data
     return data
+
+
+def _read_custom_reference(path=None):
+    """读自定义参照库 → ``{卡组名: 条目}``；没有/坏了 → ``{}``（不抛）。
+
+    ⚠️ 自定义库与站内库**同构**（顶层 `version/source/fetched_at/skipped/decks`），
+    所以取 ``['decks']``。也兼容早期「顶层直接是名字表」的旧文件 ——
+    那种没有 `decks` 键，整份就是名字表。
+    """
+    path = path or DEFAULT_CUSTOM_REFERENCE
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    decks = data.get('decks')
+    return decks if isinstance(decks, dict) else data
+
+
+def _merge_custom(reference):
+    """把自定义库并进参照库（**返回新 dict**，不动入参）。
+
+    ⚠️ 自定义条目的 `tier` 一律清成 ``None``：自定义卡组不在 tier 榜上
+    （交接文档 §1.7「不要塞 tier」），硬填一个会污染排序。档位由
+    :func:`sort_candidates` 按 ``custom`` 标记单独处理（见 `CUSTOM_TIER_RANK`）。
+    """
+    custom = _read_custom_reference()
+    if not custom:
+        return reference
+    decks = dict(reference.get('decks') or {})
+    for name, d in custom.items():
+        if not isinstance(d, dict) or not (d.get('cards')):
+            continue
+        item = dict(d)
+        item['tier'] = None
+        item['custom'] = True
+        decks[name] = item                     # 名字撞车时自定义赢
+    out = dict(reference)
+    out['decks'] = decks
+    return out
 
 
 def reference_missing(path=None) -> bool:
@@ -262,6 +322,8 @@ def build_index(reference, groups):
         out[name] = {'tier': d.get('tier'),
                      'source_name': d.get('source_name') or name,
                      'total': d.get('total'),
+                     #: ★ 自定义参照库的条目（`tools/build_custom_ref.py` 建）
+                     'custom': bool(d.get('custom')),
                      'cards': cards}
     # ★ 共用参照数据的独立条目也进候选（2026-10-11 用户拍板）：
     #   卡表与原条目完全一致 -> 打分必然同分 -> 由 `sort_candidates` 的
@@ -371,6 +433,10 @@ def _fold_engines(decks):
         #: 合成参照库里 `Elfnote Engine` 的 source_name 就是它自己）。
         if target == name:
             continue
+        #: ★ 自定义条目**永不被 engine 归并**（2026-10-21）：它的 `source_name`
+        #: 可能是用户自己写的名字，撞上 engine 条目就等于被吞掉。
+        if d.get('custom'):
+            continue
         src_cards = d.get('cards') or {}
         if not src_cards:
             continue
@@ -381,7 +447,20 @@ def _fold_engines(decks):
             out[target] = {'tier': d.get('tier'),
                            'source_name': target,
                            'total': d.get('total'),
+                           'custom': bool(d.get('custom')),
                            'cards': dict(src_cards)}
+            continue
+        #: ★ 2026-10-21：目标条目**存在但卡表为空**时，同样整份接管 engine 的
+        #: 卡表（不是走下面的 merge —— 那会得到一个空卡表然后让 engine 条目
+        #: 被删掉，等于这副牌的数据整个消失）。
+        #: 实测来源：`Mitsurugi Yummy`（`source_name=None`、`cards={}`）
+        #: 对应 `Yummy Engine`（`source_name='Mitsurugi Yummy'`）。
+        if not (base.get('cards') or {}):
+            filled = dict(base)
+            filled['cards'] = dict(src_cards)
+            filled['total'] = base.get('total') or d.get('total')
+            filled['source_name'] = base.get('source_name') or target
+            out[target] = filled
             continue
         merged = dict(base.get('cards') or {})
         for cid, info in src_cards.items():
@@ -412,12 +491,21 @@ def prepare(reference, groups=None, keep=None):
         keep = known_deck_names()
     # ⚠️ keep 是**空集**也要过滤（= 全滤 = 无候选）—— 首跑播种窗口期的口径
     #    见 `known_deck_names`。所以这里判 `is not None`，不能 `if keep:`。
+    #: ★ 2026-10-21（C 阶段一）：**自定义条目豁免 keep 过滤**。
+    #:
+    #: `keep` 的语义是「用户在 `meta_decks` 里认可的条目」，用来剔掉参照库里
+    #: 已删除的孤儿。但自定义库条目（`tools/build_custom_ref.py` 从截图建的）
+    #: **就是用户亲手建的** —— 不存在「不认可」，被滤掉只会让刚建好的库静默失效
+    #: （实测：只在 `opp_decks`、不在 `meta_decks` 的名字，`prepare()` 后一条不剩）。
     if keep is not None:
         decks = reference.get('decks') or {}
-        dropped = [k for k in decks if k not in keep]
+        dropped = [k for k in decks
+                   if k not in keep and not (decks[k] or {}).get('custom')]
         if dropped:
             reference = dict(reference)
-            reference['decks'] = {k: v for k, v in decks.items() if k in keep}
+            reference['decks'] = {
+                k: v for k, v in decks.items()
+                if k in keep or (v or {}).get('custom')}
     #: ★★ 2026-10-20（用户实报「倒数第二局判成 Elfnote Engine」）：
     #: engine 条目不进候选，但它的**卡表要归到具体卡组名下**。
     #:
@@ -545,7 +633,14 @@ def guess_deck(revealed_ids, index, groups, prefill_tiers=PRE_FILL_TIERS):
             'name': name, 'tier': tier,
             'source_name': d.get('source_name') or name,
             'shared': bool(d.get('shared')),
-            'in_prefill_set': tier in (prefill_tiers or ()),
+            #: 自定义参照库条目（用户从卡组截图建的）—— 排序时按 `CUSTOM_TIER_RANK`
+            'custom': bool(d.get('custom')),
+            #: ★ 自定义条目**永远在预填口径内**（2026-10-21）：`PRE_FILL_TIERS`
+            #: 是「只预填 Tier1-3」的老口径，自定义卡组天然没有 tier ——
+            #: 不豁免的话它会排到第一却不预填（`prefill=False`），
+            #: 界面不标「建议」、CLI 回车也不采纳，等于白排。
+            'in_prefill_set': (bool(d.get('custom'))
+                               or tier in (prefill_tiers or ())),
             'hits': hits, 'bayes': score, 'confidence': conf,
             'explained': hits, 'revealed': n,
             'sample': d.get('total'),
@@ -622,6 +717,73 @@ HITS_TOLERANCE = 1
 TIER_TRUST_CONF = 0.8
 
 TIER_RANK = {'Tier1': 4, 'Tier2': 3, 'Tier3': 2, 'Trending': 1}
+
+
+#: **自定义参照库条目的排序档位** = 与 `Tier3` 同权（2026-10-21 用户拍板：
+#: 「自定义卡组很难是主流卡组本就不在 tier 表」）。
+#:
+#: 为什么必须有这一条：`tier_rank(None) == 0`（榜外），而排序第一层是
+#: `eff_hits` 分档、**层内 tier 先于 bayes** —— 自定义条目没有 tier 就永远
+#: 沉在所有站内条目之后。实测（露出耀圣系 6 张、自定义卡表 per 全 100）：
+#: 它的 bayes 是 **+0.00**（比第一名 `Elfnote` 的 −0.06 还好），但仍排**第 4**；
+#: 给它一个 Tier2 就立刻第 1。
+#:
+#: **自定义条目与 `Tier2` 同档**（2026-10-21 用户口径 + 全量回测标定）。
+#:
+#: 用户原话：「自定义卡组很难是主流卡组本就不在 tier 表」—— 所以不能拿
+#: `tier_rank(None)=0`（榜外）去判它输。
+#:
+#: ⚠️⚠️ **但档位本身是个钝器，实测两次翻车，最终只用它做「不垫底」**：
+#:
+#: | 档位取值 | 全量回测（273 局，官方口径） |
+#: |---|---|
+#: | 高于全部 tier | 候选内 **80/136**（比基线 110 掉 30 局） |
+#: | 与 Tier2 同档 | 候选内 **114/195**（`in_prefill_set` 分母变大，仍偏低） |
+#: | **基线（不含自定义）** | 候选内 **136/183** |
+#:
+#: 根因：**自定义库是「整个卡组的并集」**，卡表比站内单一条目更大、覆盖面更宽，
+#: 于是命中数天然虚高一点点。实测「耀圣」（11 副并集，94 张卡）vs 站内
+#: `Elfnote Kewl Tune`（51 张卡）在真身是「耀圣杀手旋律」的 19 局上：
+#:
+#:   耀圣 命中 14/15、bayes **−17.21**   |  KewlTune 15/15、bayes **−0.78**
+#:
+#: bayes 差 20 倍（卡表大 → 未命中项多 → 惩罚重），但命中数只差 1 张 ——
+#: 而 `HITS_TOLERANCE=1` 把差 1 张算**同档**，同档内 tier 先说话，自定义就赢了。
+#:
+#: → **结论：`custom` 不进 tier 档位**。它只在 `eff_hits` **严格领先**时
+#: 才该赢（那是它确实多解释了卡），平局时按原有 tier/bayes 规则走。
+#: 保留本常量只为「自定义条目别落到 rank 0」，实际由
+#: :func:`sort_candidates` 的 tiebreak 决定（见那里）。
+#:
+#: 顺带：这也修掉了 `in_prefill_set` 的副作用 —— 自定义条目曾因为
+#: 「永远在预填口径内」把 183 局的分母撑到 195，稀释了可比的统计口径。
+CUSTOM_TIER_RANK = TIER_RANK['Tier2']
+
+
+#: 自定义条目的档位**只在这个命中数及以上才生效**（2026-10-21 实测标定）。
+#:
+#: 为什么需要这条下限：档位抬到「高于全部 tier」之后，**0 命中的自定义条目**
+#: 会在「所有候选都是 0 命中」的场合靠档位赢下 top1。
+#: 实测 30 组随机露出卡（每组 6 张，与自定义卡表零关系）：
+#: **11/30 组的 top1 变成了「狱神耀圣」且 hits=0** ——
+#: `suggest()` 的 `MIN_SUGGEST_HITS` 会滤掉它，但 CLI 的 `--guess` 与回测
+#: 走的是 `guess_deck` 直通，会看到这个假第一名。
+#:
+#: 2 = `MIN_SUGGEST_HITS`（「至少解释 2 张露出卡」才算候选）——
+#: 档位只在**够格当候选**之后才说话，语义一致。
+CUSTOM_RANK_MIN_HITS = 2
+
+
+def _sort_tier_rank(c):
+    """候选的**排序档位** —— 自定义条目**不靠 tier 抬档**。
+
+    见 `CUSTOM_TIER_RANK` 的实测：自定义库是「并集卡表」，命中数天然虚高，
+    给它 tier 档位会让它抢走真身（19 局「耀圣杀手旋律」全被判成「耀圣」）。
+    所以这里**只返回真实 tier**（自定义条目是 ``None`` → rank 0 = 榜外），
+    自定义的优先权交给 :func:`sort_candidates` 的 tiebreak ——
+    那一步只影响**完全同分**（同档、同 tier、同 bayes）的情形，风险小得多。
+    """
+    return tier_rank(c.get('tier'))
 
 
 def tier_rank(tier):
@@ -785,10 +947,13 @@ def sort_candidates(cands, mode='hits'):
             #: ★ 第一键用**有效命中**（`eff_hits`，缺字段时已砍过）——
             #: 见 `FIELD_MISS_CUT`。旧候选没有该键时退化成 hits（兼容回测/老调用）。
             head = (-(int(c.get('eff_hits', c['hits'])) // bucket),)
-            mid = ((-tier_rank(c.get('tier')), -c['bayes'])
+            mid = ((-_sort_tier_rank(c), -c['bayes'])
                    if (c.get('confidence') or 0.0) >= TIER_TRUST_CONF
-                   else (-c['bayes'], -tier_rank(c.get('tier'))))
-            return head + mid + (-c['hits'], not c.get('shared'), c['name'])
+                   else (-c['bayes'], -_sort_tier_rank(c)))
+            #: tiebreak 里 `custom` 排在最前（2026-10-21）：用户亲手给的卡表
+            #: 比站内统计更权威 —— 同档同 bayes 时先出「狱神耀圣」而不是「耀圣」。
+            return head + mid + (-c['hits'], not c.get('custom'),
+                                 not c.get('shared'), c['name'])
     cands.sort(key=key)
     return cands
 

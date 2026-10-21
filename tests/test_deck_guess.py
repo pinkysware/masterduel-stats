@@ -734,7 +734,14 @@ class EngineFoldTest(unittest.TestCase):
                 self.assertNotIn(name, folded, 'engine 条目必须被归并掉')
 
     def test_empty_target_gets_the_engine_cards(self):
-        """目标条目卡表为空（`Mitsurugi Yummy`）时，用 engine 的卡表新建。"""
+        """目标条目**存在但卡表为空**时，整份接管 engine 的卡表。
+
+        ⚠️ 这条测试原来**依赖真实库状态**（靠 `engine_kinds()` 从
+        `meta_decks` 里读到 `Yummy Engine`）—— 但那条已被改名为
+        `Mitsurugi Yummy`，`engine_kinds()` 读不到它，测试就永远测不到
+        它想测的分支（2026-10-21 实测：`_fold_engines` 里空卡表走 merge，
+        结果 engine 条目被删、卡表丢失）。现在**显式打桩**，不碰真库。
+        """
         decks = {
             'Yummy Engine': {'tier': 'Trending', 'total': 5,
                              'source_name': 'Mitsurugi Yummy',
@@ -742,7 +749,12 @@ class EngineFoldTest(unittest.TestCase):
             'Mitsurugi Yummy': {'tier': 'Trending', 'total': None,
                                 'source_name': None, 'cards': {}},
         }
-        out = dg._fold_engines(decks)
+        orig = dg.engine_kinds
+        dg.engine_kinds = lambda: {'Yummy Engine'}
+        try:
+            out = dg._fold_engines(decks)
+        finally:
+            dg.engine_kinds = orig
         self.assertNotIn('Yummy Engine', out)
         self.assertEqual(len(out['Mitsurugi Yummy']['cards']), 2,
                          '巳剑黯蜜该拿到 Yummy Engine 的卡表')

@@ -1582,6 +1582,9 @@ def tier_page_data(storage, lang=None) -> Dict[str, object]:
         'sections': [{'tier': t, 'title': ti, 'desc': d, 'decks': []}
                      for t, ti, d in TIER_SECTIONS],
         'deck_total': 0,
+        #: 快照时间 —— **键恒定存在**（拿不到就是 None），否则空库/异常时
+        #: 返回结构的键集合会和正常时不同，调用方（与 demo 的键比对）会裂。
+        'fetched_at': None,
     }
     try:
         # hidden 的 **engine 行要进**（Tier 表要列出全部混轴，2026-09-20 用户拍板）；
@@ -1592,16 +1595,28 @@ def tier_page_data(storage, lang=None) -> Dict[str, object]:
         return data
     by_tier = {s['tier']: s for s in data['sections']}
     for m in decks:
-        # ★ 分组口径（AGENTS.md 铁律 7）：
-        #   * **站内条目**只认站内 power —— 没有 power 的一律落 TRENDING
-        #     （2026-09-20 用户拍板；tier 字段可能是旧榜的陈旧值，不作数）；
-        #   * **自定义条目**（`source='custom'`，站内没有）没有 power 可依，
-        #     分组以覆盖表的「分组」列为准（BUG-B1-12）—— 否则手填的
-        #     `Tier2` / `Tier3` 全被压成 Trending，等于忽略用户分组。
-        if m.get('source') == 'custom' and m.get('tier') in by_tier:
-            t = m.get('tier')
-        else:
-            t = 'Trending' if m.get('power') is None else m.get('tier')
+        # ★ 分组口径（**2026-10-21 用户再次明确，覆盖 BUG-B1-12 的旧做法**）：
+        #   **没有 power 的卡组一律落 TRENDING，一条都不许进 Tier1/2/3** ——
+        #   不管它是站内条目还是自定义条目。
+        #
+        #   用户原话：「没有 power 的卡组不要出现在 tier123 上，放到 trending，
+        #   之前改过现在又复现了」。
+        #
+        #   ⚠️ 旧实现（BUG-B1-12，2026-10-19）为了「让自定义条目手填的分组生效」，
+        #   让 `source='custom'` 的条目**跳过 power 检查**直接用覆盖表的「分组」列：
+        #
+        #       if m.get('source') == 'custom' and m.get('tier') in by_tier:
+        #           t = m.get('tier')              # ← 绕过了 power 检查
+        #
+        #   后果（实测复现）：Tier2 出现「妖精传姬」（power=—）、
+        #   Tier3 出现「纠罪巧 / 王家 / 天杯龙 / 巳剑黯蜜 / 狱神耀圣」（power 全空）。
+        #   满屏 `Power: —` 挂在 Tier123 上，看起来就是「表格坏了」。
+        #
+        #   现在：power 是 Tier 表的**唯一准入条件**。自定义条目想上榜就给它
+        #   power（覆盖表填 / 手工写库），否则它只在 Trending。
+        #   —— 这也与「Tier 表 = 站内赛事榜」的语义一致：我们自己编的分组
+        #   本来就不该冒充赛事排名。
+        t = 'Trending' if m.get('power') is None else m.get('tier')
         if t not in by_tier:
             continue                          # 脏 tier（合法值见 storage.VALID_TIERS）
         by_tier[t]['decks'].append({
@@ -1610,7 +1625,33 @@ def tier_page_data(storage, lang=None) -> Dict[str, object]:
             'power': m.get('power'),
         })
     data['deck_total'] = sum(len(s['decks']) for s in data['sections'])
+    #: ★ 2026-10-21（用户：「Tier 表过期了，但我没找到更新按钮」）——
+    #: 页头要能看出**这份榜单是哪天抓的**。原来只有一句「每月手动刷新」，
+    #: 看不出新旧；卡组构成页早有同款快照日期（`ref_fetched_at`）。
+    #: 取 `meta_decks.fetched_at` 的最大值（整批同时写，理论上全表一致）。
+    data['fetched_at'] = _meta_fetched_at(decks)
     return data
+
+
+def _meta_fetched_at(rows) -> Optional[str]:
+    """`meta_decks.fetched_at`（unix 秒）→ ``'YYYY-MM-DD HH:MM'``；拿不到 ``None``。
+
+    ⚠️ 库里存的是 **unicode 秒**（`typeof(fetched_at)='integer'`，如 1792591251），
+    不是 ISO 文本 —— 别直接当字符串切。
+    """
+    import datetime as _dt
+    vals = []
+    for m in rows or ():
+        try:
+            vals.append(int(m.get('fetched_at')))
+        except (TypeError, ValueError):
+            continue
+    if not vals:
+        return None
+    try:
+        return _dt.datetime.fromtimestamp(max(vals)).strftime('%Y-%m-%d %H:%M')
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 # ===================================================== 禁限表页（D3 第二刀）
@@ -1935,14 +1976,20 @@ def match_ref_key(name, decks, storage=None) -> Optional[str]:
     name = (name or '').strip()
     if not name or not decks:
         return None
-    #: ★ 先问「共用表」（2026-10-10）：`狱神耀圣` 读 `Elfnote` 的卡表。
-    #: 必须在下面那些匹配**之前** —— 它在参照库里没有自己的键，
-    #: 否则 `search_meta_decks` 会把它模糊匹配到别的条目上去。
+    #: ★★ 2026-10-21（C 阶段一）：**参照库自己有的键优先于「共用表」**。
+    #:
+    #: 起因：自定义参照库（`tools/build_custom_ref.py`）建出 `狱神耀圣` 这一条后，
+    #: `REF_SHARED_WITH` 仍然抢在前面返回 `Elfnote` —— 卡组构成页永远显示站内那副，
+    #: 用户新识别出来的卡表看不见（实测过）。
+    #:
+    #: 新顺序：精确键 → 共用表 → 忽略大小写 → …。
+    #: 语义上「有这个卡组自己的卡表」当然比「借别人的」更准确；
+    #: 共用表退化成**没有自己卡表时的兜底**。
+    if name in decks:
+        return name
     shared = REF_SHARED_WITH.get(name)
     if shared and shared in decks:
         return shared
-    if name in decks:
-        return name
     low = name.lower()
     for k in decks:
         if k.lower() == low:

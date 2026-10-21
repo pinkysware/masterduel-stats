@@ -1,0 +1,2476 @@
+{
+ "decks": {
+  "K9VS": {
+   "avgMainSize": null,
+   "built_at": "2026-10-21T21:15:43",
+   "cards": {
+    "10658": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "10659": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "11078": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "11829": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12950": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "13419": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15296": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15520": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17041": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17042": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17762": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18151": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18727": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "18729": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "18730": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "18732": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18733": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "18734": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19160": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "19184": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19220": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20040": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20206": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20500": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21376": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "21377": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21378": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21379": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21380": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21382": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21384": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21385": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21433": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "21477": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21791": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21813": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22146": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22747": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22932": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "3891": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "9279": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "9455": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    }
+   },
+   "name_cn": "K9VS",
+   "provisional": true,
+   "samples": 2,
+   "source_name": "K9VS",
+   "src": "screenshot",
+   "tier": null,
+   "total": 2
+  },
+  "刻魔": {
+   "avgMainSize": null,
+   "built_at": "2026-10-21T21:15:43",
+   "cards": {
+    "11708": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12843": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "12851": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "12852": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12950": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "13631": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "14627": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15296": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15619": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "16386": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19932": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20225": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20226": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20240": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "20427": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20471": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20490": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20521": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22559": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22966": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "22979": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22980": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22981": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22982": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "23002": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "23003": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "3194": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "3409": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "8092": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "8933": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "9279": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "9455": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    }
+   },
+   "name_cn": "刻魔",
+   "provisional": true,
+   "samples": 1,
+   "source_name": "刻魔",
+   "src": "screenshot",
+   "tier": null,
+   "total": 1
+  },
+  "妖精传姬": {
+   "avgMainSize": null,
+   "built_at": "2026-10-21T21:15:43",
+   "cards": {
+    "10942": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12441": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12950": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "12952": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "13454": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13587": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14114": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14443": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "14830": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15613": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15614": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "15616": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15618": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15619": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "17746": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20206": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20471": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "20500": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20732": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21072": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21073": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21074": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "21220": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22321": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22498": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "22499": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22525": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22542": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22543": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22556": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22571": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22573": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22927": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "6901": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "7445": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "9279": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "9455": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    }
+   },
+   "name_cn": "妖精传姬",
+   "provisional": true,
+   "samples": 1,
+   "source_name": "妖精传姬",
+   "src": "screenshot",
+   "tier": null,
+   "total": 1
+  },
+  "小丑戏帮": {
+   "avgMainSize": null,
+   "built_at": "2026-10-21T21:15:43",
+   "cards": {
+    "11384": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12950": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "13346": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17746": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18666": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19497": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20206": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20500": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21444": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22524": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "22533": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "22541": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "22549": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "22555": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "22568": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "22569": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22570": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "22582": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22583": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22991": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "23025": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "3891": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "6888": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "7445": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "8492": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "8933": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "9279": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "9455": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    }
+   },
+   "name_cn": "小丑戏帮",
+   "provisional": true,
+   "samples": 1,
+   "source_name": "小丑戏帮",
+   "src": "screenshot",
+   "tier": null,
+   "total": 1
+  },
+  "炎王": {
+   "avgMainSize": null,
+   "built_at": "2026-10-21T21:15:43",
+   "cards": {
+    "10345": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "10347": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "11708": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12763": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "13245": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13346": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14125": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14133": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14338": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18666": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19076": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19397": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "19398": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "19403": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19404": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "19497": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19507": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19825": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "20555": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20927": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "20929": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "22533": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "22747": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22823": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "3891": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "3892": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "8577": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "9279": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "9455": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "9801": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    }
+   },
+   "name_cn": "炎王",
+   "provisional": true,
+   "samples": 1,
+   "source_name": "炎王",
+   "src": "screenshot",
+   "tier": null,
+   "total": 1
+  },
+  "烙印": {
+   "avgMainSize": null,
+   "built_at": "2026-10-21T21:15:43",
+   "cards": {
+    "10942": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "11708": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "12078": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12465": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12801": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12950": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "13631": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "14741": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15245": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15272": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15286": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "15296": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15299": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "15584": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15729": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15994": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "16016": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "16195": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "16197": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "16243": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "16493": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "16541": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "16543": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "16555": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "17062": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17063": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17064": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17066": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17067": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17068": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "17070": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17071": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17146": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17762": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17765": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18178": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18179": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18199": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "18474": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18498": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18504": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18507": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18534": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19014": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "19015": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "19016": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19018": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "19021": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20206": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "20500": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "20510": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20555": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "20567": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20568": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20569": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "20570": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21448": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22089": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22090": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "22127": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "22128": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22144": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22148": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22335": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22356": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22510": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22511": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "22533": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "22545": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22546": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22551": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22561": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22580": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22693": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22722": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22723": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22811": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22823": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "3891": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "5236": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "6161": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "6980": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "7445": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "7735": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "9279": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "9455": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    }
+   },
+   "name_cn": "烙印",
+   "provisional": true,
+   "samples": 3,
+   "source_name": "烙印",
+   "src": "screenshot",
+   "tier": null,
+   "total": 3
+  },
+  "烙印星辰": {
+   "avgMainSize": null,
+   "built_at": "2026-10-21T21:15:43",
+   "cards": {
+    "11708": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 67
+    },
+    "12950": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "13587": {
+     "aboveThresh": false,
+     "at": 2,
+     "per": 33
+    },
+    "14741": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 67
+    },
+    "14944": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 83
+    },
+    "15245": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 33
+    },
+    "15272": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 83
+    },
+    "15729": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 17
+    },
+    "15994": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "16195": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 17
+    },
+    "16223": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 17
+    },
+    "16493": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 67
+    },
+    "16541": {
+     "aboveThresh": false,
+     "at": 3,
+     "per": 33
+    },
+    "17066": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 50
+    },
+    "17069": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 50
+    },
+    "17070": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 50
+    },
+    "17146": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 50
+    },
+    "17762": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 33
+    },
+    "17767": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 50
+    },
+    "18178": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 50
+    },
+    "18179": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18474": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 17
+    },
+    "18498": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20206": {
+     "aboveThresh": false,
+     "at": 2,
+     "per": 33
+    },
+    "20500": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "20510": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 83
+    },
+    "20567": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 67
+    },
+    "20568": {
+     "aboveThresh": false,
+     "at": 2,
+     "per": 33
+    },
+    "20569": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 33
+    },
+    "20570": {
+     "aboveThresh": false,
+     "at": 2,
+     "per": 50
+    },
+    "21354": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21355": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "21356": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 67
+    },
+    "21357": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 83
+    },
+    "21358": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21359": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21360": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 83
+    },
+    "21361": {
+     "aboveThresh": false,
+     "at": 2,
+     "per": 50
+    },
+    "21362": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 67
+    },
+    "21363": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 50
+    },
+    "21364": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 50
+    },
+    "21448": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 67
+    },
+    "21789": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21843": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 33
+    },
+    "22089": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 83
+    },
+    "22090": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22127": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "22144": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22811": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 33
+    },
+    "23492": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 17
+    },
+    "3891": {
+     "aboveThresh": false,
+     "at": 1,
+     "per": 33
+    },
+    "8933": {
+     "aboveThresh": false,
+     "at": 2,
+     "per": 50
+    },
+    "9279": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 83
+    },
+    "9455": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    }
+   },
+   "name_cn": "烙印星辰",
+   "provisional": false,
+   "samples": 6,
+   "source_name": "烙印星辰",
+   "src": "screenshot",
+   "tier": null,
+   "total": 6
+  },
+  "码丽丝": {
+   "avgMainSize": null,
+   "built_at": "2026-10-21T21:15:43",
+   "cards": {
+    "12950": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "13034": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13082": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13506": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13631": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "13698": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14121": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14301": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "14338": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14627": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14740": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14904": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14962": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15032": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15034": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15296": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17263": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17762": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17764": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18149": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18497": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18664": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19188": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19723": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20065": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20500": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "20555": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "20582": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20583": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20584": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20586": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20587": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20588": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20589": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20590": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20591": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21138": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21139": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "21160": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "21188": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21779": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21780": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21827": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21829": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22586": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "22747": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22823": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "3891": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "4909": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "6161": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "7570": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "9279": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "9455": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    }
+   },
+   "name_cn": "码丽丝",
+   "provisional": true,
+   "samples": 2,
+   "source_name": "码丽丝",
+   "src": "screenshot",
+   "tier": null,
+   "total": 2
+  },
+  "耀圣杀手旋律": {
+   "avgMainSize": null,
+   "built_at": "2026-10-21T21:15:43",
+   "cards": {
+    "11722": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12074": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12950": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "13587": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "14627": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "16256": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "16386": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17253": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "18666": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19497": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21953": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21954": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21955": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21956": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21957": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21958": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21960": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21961": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21962": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "22143": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22145": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22173": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22533": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "22550": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22551": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "7898": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "8933": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "9279": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "9455": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    }
+   },
+   "name_cn": "耀圣杀手旋律",
+   "provisional": true,
+   "samples": 1,
+   "source_name": "耀圣杀手旋律",
+   "src": "screenshot",
+   "tier": null,
+   "total": 1
+  },
+  "闪刀姬": {
+   "avgMainSize": null,
+   "built_at": "2026-10-21T21:15:43",
+   "cards": {
+    "10942": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "11708": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "12465": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "12668": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "12950": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "13668": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13669": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13670": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13671": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13674": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13675": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "13677": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14829": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "14947": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15296": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "15299": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "15994": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "17034": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "18214": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "18448": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19011": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19188": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19933": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20040": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21227": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21228": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21460": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "21480": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21600": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21779": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21780": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21827": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "21829": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22089": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "22144": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22169": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "22747": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "23010": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "3433": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "3434": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "3891": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "3899": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "4895": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "4909": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "9279": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "9455": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    }
+   },
+   "name_cn": "闪刀姬",
+   "provisional": true,
+   "samples": 4,
+   "source_name": "闪刀姬",
+   "src": "screenshot",
+   "tier": null,
+   "total": 4
+  },
+  "黄金柜自奏": {
+   "avgMainSize": null,
+   "built_at": "2026-10-21T21:15:43",
+   "cards": {
+    "11708": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "12950": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "13731": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13902": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13903": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "13904": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13930": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "13931": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13944": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "13945": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14098": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14288": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14324": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14906": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "14952": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "15010": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "16850": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19188": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "19892": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "19895": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "20500": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "20555": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "20947": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "20948": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "21141": {
+     "aboveThresh": true,
+     "at": 3,
+     "per": 100
+    },
+    "21167": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    },
+    "9279": {
+     "aboveThresh": true,
+     "at": 2,
+     "per": 100
+    },
+    "9455": {
+     "aboveThresh": true,
+     "at": 1,
+     "per": 100
+    }
+   },
+   "name_cn": "黄金柜自奏",
+   "provisional": true,
+   "samples": 1,
+   "source_name": "黄金柜自奏",
+   "src": "screenshot",
+   "tier": null,
+   "total": 1
+  }
+ },
+ "fetched_at": "2026-10-21T21:25:06",
+ "skipped": [],
+ "source": "deck-screenshot / YOLO+pHash",
+ "version": 2
+}

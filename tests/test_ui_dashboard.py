@@ -27,7 +27,8 @@ if PROJ not in sys.path:
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')      # 必须在 Qt import 之前
 
 try:
-    from PySide6.QtCore import QObject, QSettings, Qt, Signal
+    from PySide6.QtCore import (QEvent, QObject, QPoint, QSettings,
+                                Qt, Signal)
     from PySide6.QtWidgets import (QApplication, QDialog, QLabel,
                                    QPushButton)
     HAVE_QT = True
@@ -375,7 +376,9 @@ class DashboardShellTest(unittest.TestCase):
         # 2026-10-09 用户定：新增「参照库刷新」（s_refdecks，卡组构成的逐卡使用率）→ 9 项
         # 2026-10-17 用户定：新增「显示我方/对方手坑列」两项（战绩页列开关）→ 11 项
         # 2026-10-18 用户定：新增「游戏对局数据」（数据目录可改）→ 12 项
-        self.assertEqual(len(dashboard.SETTINGS_PAGES), 12)
+        # 2026-10-21 用户定：新增「刷新 Tier 榜单」（s_tierlist —— 之前只有
+        #   「获取新卡组名」顺带刷榜，名实不符，用户找不到更新入口）→ 13 项
+        self.assertEqual(len(dashboard.SETTINGS_PAGES), 13)
         self.assertIn('获取新卡组名', dashboard.PAGE_HINTS['decks'][1] + dashboard.PAGE_HINTS['decks'][0])
 
     # ------------------------------------------------------------ 几何持久化
@@ -3481,28 +3484,35 @@ class SettingsPageFitTest(unittest.TestCase):
         self.assertNotIn("if hint:", src,
                          '页底那句 hint 说明还在（用户要求去掉）')
 
-    def test_no_scrollbar_at_min_height(self):
+    def test_scrollbar_aligns_with_other_pages(self):
+        """★ 2026-10-21 用户改口径：设置页**也要有滚动条**，且与其它页对齐。
+
+        原来（2026-10-17）是 `AlwaysOff`（用户当时要「不要出现拖拽条」）；
+        现在改成 `AsNeeded` —— 内容放不下时才画，且位置要和各页一致。
+        """
         from PySide6.QtWidgets import QScrollArea
         app = _qapp_for_settings()
         win = dashboard.DashboardWindow(loader=lambda **kw: {})
         try:
             #: ⚠️ 用 `setFixedSize` 而不是 `resize`：`DashboardWindow.__init__` 末尾会
-            #: `_restore_geometry()` 从 QSettings 恢复尺寸，把 resize 覆盖掉 ——
-            #: 全量里别的用例存过小窗口，这里就会测到 600 高而不是 620。
-            win.setFixedSize(1200, 620)       # 看板最小高度
+            #: `_restore_geometry()` 从 QSettings 恢复尺寸，把 resize 覆盖掉。
+            win.setFixedSize(1200, 620)
             win.open_page('settings')
             win.show()
             app.processEvents()
             app.processEvents()
             sa = win.pages['settings'].findChildren(QScrollArea)
             self.assertTrue(sa)
-            #: ★ 判据 = **不显示滚动条**（用户口径「不要出现拖拽条」）。
-            #: 内容高度会随字体度量浮动（不同环境差 ±14px），所以只要策略是
-            #: AlwaysOff 就满足；仍可滚轮滚动，信息不丢。
             from PySide6.QtCore import Qt as _Qt
             self.assertEqual(sa[0].verticalScrollBarPolicy(),
-                             _Qt.ScrollBarAlwaysOff,
-                             '设置页还显示拖拽条')
+                             _Qt.ScrollBarAsNeeded,
+                             '设置页该跟其它页一样用 AsNeeded（用户 2026-10-21）')
+            #: 对齐判据：滚动区右缘 = 窗口宽 - S_LG（与其它页同一口径）
+            from ui import theme as _theme
+            g = sa[0].mapTo(win, sa[0].rect().topLeft())
+            self.assertAlmostEqual(g.x() + sa[0].width(),
+                                   win.width() - _theme.S_LG, delta=2,
+                                   msg='设置页滚动区右缘与其它页不一致')
         finally:
             win.hide()
             win.deleteLater()
@@ -3713,4 +3723,154 @@ class ArtBusyResetTest(unittest.TestCase):
                 time.sleep(0.02)
                 return
             time.sleep(0.01)
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class DashboardResizeTest(unittest.TestCase):
+    """★ 2026-10-21 用户：看板要能调高/调宽，但**要有最低尺寸限制**。
+
+    根因：无边框窗（`FramelessWindowHint`）上 `startSystemResize()` 返回 False
+    —— Windows 靠 `WM_NCHITTEST` 分发，Qt 只在自己处理非客户区时才转发，
+    而 `FramelessWindowHint` 没有非客户区。悬浮窗能用是因为它是 `Qt.Tool`，
+    系统仍给了细边框。
+    修法：系统缩放失败时回退到**自己算**（`_manual_resize` 状态机）。
+    """
+
+    def setUp(self):
+        _app()
+        from ui import dashboard
+        self.mod = dashboard
+        self.win = dashboard.DashboardWindow()
+        self.addCleanup(self.win.deleteLater)
+        self.win.resize(1200, 620)
+
+    def _press(self, x, y):
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QMouseEvent
+        ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(x, y),
+                         QPointF(x, y), QPointF(x, y),
+                         Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        self.win.mousePressEvent(ev)
+
+    def _move(self, x, y):
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QMouseEvent
+        ev = QMouseEvent(QEvent.MouseMove, QPointF(x, y),
+                         QPointF(x, y), QPointF(x, y),
+                         Qt.NoButton, Qt.LeftButton, Qt.NoModifier)
+        self.win.mouseMoveEvent(ev)
+
+    def test_min_size_constants(self):
+        """最低尺寸仍是 1200×620（用户口径：要有下限）。"""
+        self.assertEqual((self.mod.MIN_W, self.mod.MIN_H), (1200, 620))
+
+    def test_horizontal_resize_disabled(self):
+        """★ 2026-10-21 用户：「取消横向拉伸，只保留纵向」。
+
+        右/左边缘**不再命中**，宽度恒为 `MIN_W`。
+        """
+        self.win.setGeometry(0, 0, 1200, 620)
+        self.assertIsNone(self.win.edges_at(QPoint(1199, 300)),
+                          '右边缘不该再命中缩放')
+        self.assertIsNone(self.win.edges_at(QPoint(1, 300)),
+                          '左边缘不该再命中缩放')
+        self.assertFalse(self.win.ALLOW_HORIZONTAL_RESIZE)
+
+    def test_manual_resize_grows_height(self):
+        """下边缘往下拖 -> 变高（宽度不变）。"""
+        self.win.setGeometry(0, 0, 1200, 620)
+        self._press(600, 619)           # 下边缘
+        self.assertIsNotNone(self.win._manual_resize, '该进入手动缩放')
+        self._move(600, 819)
+        self.assertGreater(self.win.height(), 620)
+        self.assertEqual(self.win.width(), 1200, '宽度必须锁死在 MIN_W')
+
+    def test_manual_resize_respects_min_width(self):
+        """往里拖到最小宽以下 -> 停在 MIN_W（不许更小）。"""
+        self.win.setGeometry(0, 0, 1400, 620)
+        self._press(1399, 300)
+        self._move(200, 300)            # 大幅往左拖（远超下限）
+        self.assertGreaterEqual(self.win.width(), self.mod.MIN_W)
+
+    def test_manual_resize_respects_min_height(self):
+        """下边缘往上拖 -> 高度不低于 MIN_H。"""
+        self.win.setGeometry(0, 0, 1200, 900)
+        self._press(600, 619)          # 下边缘（局部坐标）
+        self._move(600, 100)
+        self.assertGreaterEqual(self.win.height(), self.mod.MIN_H)
+
+    def test_left_edge_disabled(self):
+        """★ 横向拉伸已取消：左边缘不该再进缩放态。"""
+        self.win.setGeometry(200, 100, 1200, 620)
+        self._press(1, 300)
+        self.assertIsNone(self.win._manual_resize, '左边缘已禁用')
+        self.assertEqual(self.win.x(), 200, '位置不该变')
+
+    def test_non_edge_press_drags_window(self):
+        """按在中间 = 拖动窗口，不该进缩放态。"""
+        self.win.setGeometry(100, 100, 1200, 620)
+        self._press(600, 300)          # 中间（局部坐标）
+        self.assertIsNone(self.win._manual_resize, '中间按下不是缩放')
+        self.assertIsNotNone(self.win._drag_from, '该进入拖动')
+
+    def test_release_clears_resize_state(self):
+        self.win.setGeometry(0, 0, 1200, 620)
+        self._press(600, 619)           # 下边缘（横向已禁用）
+        self.assertIsNotNone(self.win._manual_resize)
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtCore import QPointF
+        ev = QMouseEvent(QEvent.MouseButtonRelease, QPointF(600, 619),
+                         QPointF(600, 619), QPointF(600, 619),
+                         Qt.LeftButton, Qt.NoButton, Qt.NoModifier)
+        self.win.mouseReleaseEvent(ev)
+        self.assertIsNone(self.win._manual_resize, '松手必须出缩放态')
+
+
+@unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class ScrollBarAlignmentTest(unittest.TestCase):
+    """★ 2026-10-21 用户：竖向滚动条在不同页面切换要**视觉上在同一列**。
+
+    根因：滚动条贴在滚动区右缘，各页**顶层边距**不同 -> 位置差一截。
+    实测 `present_page` 原来是 `S_XL`（比其他页的 `S_LG` 大 8px），
+    切页时竖条左右跳 8px。
+    """
+
+    #: 各页顶层统一口径
+    MARGINS = '(theme.S_LG, theme.S_MD, theme.S_LG, theme.S_LG)'
+    PAGES = ('banlist_page.py', 'tier_page.py', 'export_page.py',
+             'deck_view_page.py', 'analysis_page.py', 'present_page.py',
+             'decks_page.py')
+
+    def test_all_pages_use_same_top_margins(self):
+        import io
+        d = os.path.join(PROJ, 'ui')
+        for name in self.PAGES:
+            src = io.open(os.path.join(d, name), encoding='utf-8',
+                          newline='').read()
+            self.assertIn('setContentsMargins' + self.MARGINS, src,
+                          '%s 的顶层边距与其它页不一致（滚动条会跳）' % name)
+
+    def test_present_page_no_xl_margins(self):
+        """`present_page` 不许再用 `S_XL` 顶层边距（原来就是它导致的 8px 偏移）。"""
+        import io
+        src = io.open(os.path.join(PROJ, 'ui', 'present_page.py'),
+                      encoding='utf-8', newline='').read()
+        self.assertNotIn('setContentsMargins(theme.S_XL, theme.S_XL', src)
+
+    def test_stats_page_outer_margins(self):
+        """★ 2026-10-21 用户实报「战绩页的拖动条和其他页没有对齐」。
+
+        `StatsPage` 原来外层是 `0,0,0,0`、边距只放在内容 `col` 上 ——
+        滚动条画在**滚动区右缘**，于是本页竖条往外多出 `S_LG`(16px)。
+        边距必须包住 scroll（放 col 上只是让内容内缩，滚动条仍然贴边）。
+        """
+        import io, re
+        src = io.open(os.path.join(PROJ, 'ui', 'dashboard.py'),
+                      encoding='utf-8', newline='').read()
+        i = src.index('class StatsPage(QWidget)')
+        head = src[i:i + 3000]
+        self.assertIn('setContentsMargins(theme.S_LG, theme.S_MD, '
+                      'theme.S_LG, theme.S_LG)', head,
+                      'StatsPage 外层边距没统一 -> 滚动条会和其他页错位')
+        #: 内容区不该再叠一层边距（否则右边距变成 32px）
+        self.assertIn("self.col.setContentsMargins(0, 0, 0, 0)", head)
 

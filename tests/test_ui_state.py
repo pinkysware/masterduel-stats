@@ -1393,27 +1393,62 @@ class TierPageDataTest(_LangCnMixin, unittest.TestCase):
                                   for x in d['sections'][3]['decks']])
         self.assertEqual(d['deck_total'], 5)       # 脏 tier / hidden deck_type 不计
 
-    def test_custom_entry_keeps_its_own_tier(self):
-        """★ BUG-B1-12：**自定义条目**（`source='custom'`）的分组以覆盖表为准。
+    def test_no_power_never_in_tier123(self):
+        """★ **没有 power 的卡组一律落 TRENDING**，自定义条目也不例外。
 
-        站内条目没 power 就落 TRENDING（用户 2026-09-20 拍板）；
-        但自定义条目本来就没有站内 power，再按那条走就等于把手填的
-        `Tier2` / `Tier3` 全压成 Trending。
+        用户 2026-10-21 再次明确：「没有 power 的卡组不要出现在 tier123 上，
+        放到 trending，之前改过现在又复现了」。
+
+        ⚠️ 这条**推翻**了 BUG-B1-12（2026-10-19）的旧做法 —— 那时为了
+        「让自定义条目手填的分组生效」，让 `source='custom'` 绕过了 power 检查。
+        实测后果：Tier2 出现「妖精传姬」、Tier3 出现「纠罪巧/王家/天杯龙/
+        巳剑黯蜜/狱神耀圣」，power 全显示 `—`，看起来就是表格坏了。
+
+        现在 power 是 Tier 表的**唯一准入条件**；想上榜就给 power。
         """
         meta = [
+            # 自定义条目 + 手填 Tier2 但**没有 power** -> 进 Trending
             {'name': 'MyCustomT2', 'name_cn': '自组T2', 'tier': 'Tier2',
              'power': None, 'kind': 'deck_type', 'hidden': 0,
              'source': 'custom'},
+            # 站内条目 + 旧 tier 但没 power -> 也进 Trending（老口径，不变）
             {'name': 'SiteNoPower', 'name_cn': '站内无power',
              'tier': 'Tier2', 'power': None, 'kind': 'deck_type',
              'hidden': 0, 'source': 'masterduelmeta'},
+            # 自定义条目**有** power -> 才准进 Tier2
+            {'name': 'MyCustomPowered', 'name_cn': '自组有power',
+             'tier': 'Tier2', 'power': 8.0, 'kind': 'deck_type',
+             'hidden': 0, 'source': 'custom'},
         ]
         d = ui_state.tier_page_data(FakeStorage(meta_decks=meta))
         t2 = [x['display'] for x in d['sections'][1]['decks']]
         trend = [x['display'] for x in d['sections'][3]['decks']]
-        self.assertIn('自组T2', t2)
-        self.assertNotIn('自组T2', trend)
-        self.assertIn('站内无power', trend)   # 站内条目口径不变
+        self.assertIn('自组有power', t2)
+        self.assertNotIn('自组T2', t2)
+        self.assertIn('自组T2', trend)
+        self.assertIn('站内无power', trend)
+
+    def test_tier123_never_shows_empty_power(self):
+        """全量断言：Tier1/2/3 里**不允许**任何一条 `power is None`。
+
+        这是用户看得最直接的一处 —— 满屏 `Power: —` 挂在 Tier123 上就是坏了。
+        """
+        meta = []
+        for i in range(6):
+            meta.append({'name': 'NoPow%d' % i, 'name_cn': '无power%d' % i,
+                         'tier': ['Tier1', 'Tier2', 'Tier3'][i % 3],
+                         'power': None, 'kind': 'deck_type', 'hidden': 0,
+                         'source': 'custom' if i % 2 else 'masterduelmeta'})
+            meta.append({'name': 'Pow%d' % i, 'name_cn': '有power%d' % i,
+                         'tier': ['Tier1', 'Tier2', 'Tier3'][i % 3],
+                         'power': float(i + 1), 'kind': 'deck_type',
+                         'hidden': 0, 'source': 'masterduelmeta'})
+        d = ui_state.tier_page_data(FakeStorage(meta_decks=meta))
+        for sec in d['sections'][:3]:          # 只查 Tier1/2/3
+            for x in sec['decks']:
+                self.assertIsNotNone(
+                    x.get('power'),
+                    '%s 里出现了没有 power 的「%s」' % (sec['tier'], x['display']))
 
     def test_fail_returns_zero_shape(self):
         """库炸了不抛：四节照在、decks 全空。"""

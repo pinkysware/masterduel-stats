@@ -808,8 +808,10 @@ def demo_hand_trap_summary() -> dict:
 # ---------------------------------------------------- D3「Tier 表」页的 demo 数据
 #: 形状与 `storage.list_meta_decks()` 返回一致（dict 行）；数值照 2026-09 真榜缩编
 DEMO_TIER_DECKS = (
+    #: `fetched_at` 是**真实库的形状**（unix 秒）—— 页头快照日期要用它，
+    #: demo 也得有，否则 demo 页头没有日期、真页有（2026-10-21 加）。
     {'name': 'Dracotail', 'name_cn': '烙印星辰', 'name_display': None,
-     'tier': 'Tier1', 'power': 16.5},
+     'tier': 'Tier1', 'power': 16.5, 'fetched_at': 1792591251},
     {'name': 'Kewl Tune', 'name_cn': '酷调', 'name_display': None,
      'tier': 'Tier2', 'power': 9.0},
     {'name': 'Branded', 'name_cn': '烙印', 'name_display': None,

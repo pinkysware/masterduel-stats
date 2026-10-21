@@ -528,7 +528,9 @@ class _LangCnMixin(object):
 class DemoTierPageTest(_LangCnMixin, unittest.TestCase):
     """D3 `demo_tier_page` —— demo 直接吃真函数 `ui_state.tier_page_data`。"""
 
-    KEYS = ('sections', 'deck_total')
+    #: ★ 2026-10-21 加 `fetched_at`（Tier 页页头要显示快照日期 —— 用户报
+    #: 「Tier 表过期了，但我没找到更新按钮」，根因之一是页面看不出数据新旧）。
+    KEYS = ('sections', 'deck_total', 'fetched_at')
 
     def test_keys_match_data_layer(self):
         demo = ui_demo.demo_tier_page()

@@ -232,7 +232,13 @@ class PresentPage(QWidget):
     # ------------------------------------------------------------ 构建
     def _build(self) -> None:
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(theme.S_XL, theme.S_XL, theme.S_XL, theme.S_XL)
+        #: ★ 2026-10-21（B 项）：顶层边距**必须与其他页一致**。
+        #: 这里原来是 `S_XL`（比其他页的 `S_LG` 大 8px），于是本页纵向滚动条
+        #: 比别的页往内缩 8px —— 切页时那条竖条会左右跳。
+        #: 统一口径 = `(S_LG, S_MD, S_LG, S_LG)`，与 `banlist_page` /
+        #: `tier_page` / `export_page` / `deck_view_page` / `analysis_page`
+        #: 的顶层完全一致。改这里之前先跑 `tmp/_measure_sb.py` 量一遍。
+        lay.setContentsMargins(theme.S_LG, theme.S_MD, theme.S_LG, theme.S_LG)
         lay.setSpacing(theme.S_MD)
         lay.addWidget(_lab(tr('礼盒'), theme.F_STAT,
                            weight=QFont.Weight.Medium))

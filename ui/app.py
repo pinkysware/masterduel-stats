@@ -241,6 +241,14 @@ class NewDecksDialog(QDialog):
         self.setStyleSheet(theme.qss())
         self.setFixedWidth(460)
         self.rows = []                       # [(name, 勾选框, 输入框)]
+        #: ★ 2026-10-21（用户：「中文名能不能预填」）—— 每行先按
+        #: `core.deck_name_guess.prefill_cn()` 推一个，**推不出就留空**
+        #: （不猜歪：`Charmer` / `Insect` 这类推不出来的会保持空 + tooltip 说明原因）。
+        try:
+            from core.deck_name_guess import prefill_many
+            self._prefill = prefill_many(names)
+        except Exception:                                # noqa: BLE001
+            self._prefill = {}
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(theme.S_MD, theme.S_MD, theme.S_MD, theme.S_MD)
@@ -274,6 +282,13 @@ class NewDecksDialog(QDialog):
             rl.addWidget(lab)
             edit = QLineEdit()
             edit.setPlaceholderText(tr('中文名（可留空）'))
+            guess, why = (self._prefill.get(name) or (None, ''))
+            if guess:
+                edit.setText(guess)
+                edit.setToolTip(tr('自动预填：%s') % why)
+            elif why:
+                #: 推不出来也要说清**为什么** —— 否则用户以为功能坏了
+                edit.setToolTip(tr('未预填：%s') % why)
             rl.addWidget(edit, 1)
             cb = widgets.TickBox('')
             cb.setChecked(True)              # 默认全勾：新上的基本都是要收的
@@ -1388,6 +1403,45 @@ class MasterDuelUiApp(object):
             dlg.fetch_status.setText(tr('没有新卡组 —— 顺手补缺失的卡图…'))
             self._push_cover_table(dlg)
             return
+        #: ★ 2026-10-21（用户：「获取新卡组名 都没有卡图」）——
+        #: 弹窗里那几行的图是 `DeckImages.resolve(name)`，走的是**库里已有的
+        #: `img_file`**。而 Q17 抓榜单用的是 `--no-images`，新条目的 `img_file`
+        #: 全空 → 弹窗里整列都是默认的悠悠图。
+        #:
+        #: 补图原本排在「用户点了加入覆盖表之后」（`_push_cover_table` 里的
+        #: `--missing-images`），也就是**弹窗展示时图还没有**。
+        #:
+        #: ⚠️ 必须**异步**（QProcess）：`fetch_missing_images()` 是同步联网，
+        #: 直接调会把界面冻住几十秒，用户以为卡死。跑完再弹窗。
+        self._prefetch_images_then(dlg, lambda: self._open_new_decks(dlg, fresh))
+
+    def _prefetch_images_then(self, dlg, then) -> None:
+        """先跑 `--missing-images`（异步），完成后调用 ``then()``。
+
+        补图失败**不阻断** —— 失败的条目照旧显示默认图，选名流程继续。
+        ``dlg`` 不是 QObject 时（单测用的假对话框 / 没有 Qt 环境的裸调用）
+        **直接走 ``then()``**，不为了补图把主流程卡住。
+        """
+        from PySide6.QtCore import QObject, QProcess
+
+        if not isinstance(dlg, QObject):
+            then()
+            return
+
+        dlg.fetch_status.setText(tr('正在补新卡组的卡图…'))
+        proc = QProcess(dlg)
+        proc.setWorkingDirectory(PROJ)
+        proc.setProcessChannelMode(QProcess.MergedChannels)
+        proc.finished.connect(lambda _c, _s: then())
+        proc.start(sys.executable,
+                   [os.path.join('tools', 'fetch_meta_decks.py'),
+                    '--missing-images'])
+        self._prefetch_proc = proc
+
+    def _open_new_decks(self, dlg, fresh) -> None:
+        """弹「新卡组」勾选窗（卡图已经补过）。"""
+        from core.deck_csv import index_map, read, set_cell, write
+
         picker = NewDecksDialog(fresh, DeckImages(self.storage), parent=dlg)
         if picker.exec() != QDialog.Accepted:
             dlg.fetch_status.setText(tr('已取消（%d 个新卡组没收录）') % len(fresh))

@@ -22,8 +22,8 @@ from __future__ import annotations
 import os
 from typing import Optional, Tuple
 
-from PySide6.QtCore import (QPoint, QPointF, QRectF, QSettings, QSize, Qt,
-                            QTimer, Signal)
+from PySide6.QtCore import (QEvent, QPoint, QPointF, QRectF, QSettings,
+                            QSize, Qt, QTimer, Signal)
 from PySide6.QtGui import (QActionGroup, QColor, QFont, QFontMetrics,
                            QPainter, QPainterPath, QPen)
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFrame,
@@ -84,6 +84,7 @@ SETTINGS_PAGES: Tuple[Tuple[str, str], ...] = (
     ('数据体检', 's_audit'),
     ('抓禁限表', 's_banlist'),
     ('卡表更新', 's_cardtable'),
+    ('刷新 Tier 榜单', 's_tierlist'),
     ('参照库刷新', 's_refdecks'),
     ('语言', 's_lang'),
     ('游戏对局数据', 's_datadir'),
@@ -132,7 +133,7 @@ def float_hidden_cols() -> tuple:
 #: ⚠️ 「刷新数据」（s_refresh）2026-10-05 用户拍板移除 —— 常驻采集器自动做；
 #:    工具本体 tools/import_duel_records.py 保留（--apply 仍可手动跑）。
 SETTING_GROUPS = (
-    ('数据工具', ('s_audit', 's_banlist', 's_cardtable', 's_refdecks')),
+    ('数据工具', ('s_audit', 's_tierlist', 's_banlist', 's_cardtable', 's_refdecks')),
     ('界面', ('s_lang', 's_datadir', 's_show_my_traps',
               's_show_opp_traps')),
     ('行为', ('s_autoshow', 's_close', 's_autostart', 's_restart')),
@@ -143,6 +144,7 @@ SETTING_NOTES = {
     's_audit': '检查库 / 卡表 / 记录目录的一致性',
     's_banlist': '从 masterduelmeta 抓禁限变更史（每月一次）',
     's_cardtable': '上游卡表比对与更新（三语卡名）',
+    's_tierlist': '重抓 Tier 榜 / 使用率 / 新卡组（卡组页那张表的数据）',
     's_refdecks': '卡组构成的参照库（每张卡的使用率，每月一次）',
     's_lang': '卡名 / 卡组名的显示语言（匹配一律走卡 id）',
     's_datadir': '数据库 / 对局记录 / 卡图缓存放哪儿（可换到其它磁盘）',
@@ -586,8 +588,10 @@ class SettingsIndexPage(QWidget):
         self._runner = None
         self._tool_btns = []          # 运行中的互斥禁用
         lay = QVBoxLayout(self)
-        #: ★ 2026-10-18 恢复原边距（上一轮为塞进一屏收紧过）
-        lay.setContentsMargins(theme.S_XL, theme.S_XL, theme.S_XL, theme.S_XL)
+        #: ★★ 2026-10-21：边距改成与其它页一致（原来是 `S_XL`，比 `S_LG` 大 8px
+        #: —— 滚动条画在滚动区右缘，于是本页竖条比别的页往里缩 8px，
+        #: 切页时会左右跳）。用户口径：「设置页也加上拖动条，保持对齐」。
+        lay.setContentsMargins(theme.S_LG, theme.S_MD, theme.S_LG, theme.S_LG)
         lay.setSpacing(theme.S_MD)
         lay.addWidget(_lab(tr('设置'), 'title', size=theme.F_STAT,
                            weight=QFont.Weight.Medium))
@@ -596,10 +600,11 @@ class SettingsIndexPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        #: ★ 2026-10-17 用户：「不要出现拖拽条」。默认布局已能一屏放下；
-        #: 万一换了字体/缩放到装不下（实测差 14px 那种），**也不显示那条竖条**
-        #: —— 滚轮照样能滚（内容仍可滚，只是不画滚动条）。
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        #: ★★ 2026-10-21（用户改口径）：「设置页也加上拖动条吧，保持对齐」。
+        #: 原来（2026-10-17）是 `AlwaysOff` —— 用户当时要「不要出现拖拽条」，
+        #: 现在改成**跟其它页一样显示**，让切页时竖条位置连续。
+        #: 内容一屏放得下时不出现（`AsNeeded` 的自然行为），放不下才画。
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         host = QWidget()
         col = QVBoxLayout(host)
@@ -885,6 +890,15 @@ class SettingsIndexPage(QWidget):
             if key == 's_refdecks':
                 from core import ui_state
                 ui_state.clear_reference_cache()
+            #: ★ 2026-10-21：刷完 **Tier 榜**要立刻重读「卡组 → Tier 表」页，
+            #: 否则用户跑完回头看还是旧的那张表（`meta_decks` 已经变了，
+            #: 但页面只在切页/重开看板时取数）。`_reload_tier()` 本身就是
+            #: 单页重取，且带指纹去重 —— 数据没变时不动页面。
+            if key == 's_tierlist':
+                try:
+                    self._reload_tier()
+                except Exception:                        # noqa: BLE001
+                    pass        # 刷新失败不该把「脚本跑成功」变成失败
             self.reload_hint()                         # 跑完了 → 提醒数据已更新
 
     def reload_hint(self):
@@ -1776,7 +1790,13 @@ class StatsPage(QWidget):
         super().__init__(parent)
         self._data = {}
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
+        #: ★★ 2026-10-21（用户实报「战绩页的拖动条和其他页没有对齐」）：
+        #: 这里原来是 `0,0,0,0` —— 滚动区直接贴窗口边缘，而滚动条是画在
+        #: **滚动区右缘**的，于是本页的竖条比别的页往外多出 `S_LG`(16px)。
+        #: 边距必须提到**外层**（包住 scroll），不能只放在内容 `col` 上：
+        #: 放 col 上只是让内容内缩，滚动条仍然贴边。
+        #: 统一口径 = 与 `banlist_page` / `tier_page` / `present_page` 等一致。
+        outer.setContentsMargins(theme.S_LG, theme.S_MD, theme.S_LG, theme.S_LG)
         outer.setSpacing(0)
         self.scroll = QScrollArea()
         self.scroll.setObjectName('rowsScroll')       # 无边框（复用 theme.qss 规则）
@@ -1786,7 +1806,8 @@ class StatsPage(QWidget):
         self.host.setAttribute(Qt.WA_StyledBackground, True)
         self.host.setStyleSheet('background: %s;' % theme.CANVAS)
         self.col = QVBoxLayout(self.host)
-        self.col.setContentsMargins(theme.S_LG, theme.S_MD, theme.S_LG, theme.S_LG)
+        #: 外层已经给了边距，内容区只留行距（否则右边距会叠加成 32px）
+        self.col.setContentsMargins(0, 0, 0, 0)
         self.col.setSpacing(theme.S_XL)
         self.scroll.setWidget(self.host)
         outer.addWidget(self.scroll, 1)
@@ -2366,6 +2387,22 @@ class DashboardWindow(QWidget):
         from ui.floating import md_app_icon
         self.setWindowIcon(md_app_icon())
         self.setMinimumSize(MIN_W, MIN_H)
+        #: ★★ 2026-10-21（用户实报「鼠标放到边缘没变化」）：看板的主区
+        #: `QStackedWidget` **铺满整个窗口内部**（外层布局边距为 0），
+        #: 鼠标在窗口边缘时事件先到那个子控件 —— 主窗口的
+        #: `mouseMoveEvent` / `mousePressEvent` 根本收不到，于是：
+        #: ① 光标不变（看不出能拖）；② 按下去是拖动窗口而不是缩放。
+        #: （悬浮窗没这问题：它内部有边距，边缘那几像素是窗口自己的。）
+        #: 修法 = 在**窗口级**装事件过滤器，子控件区域的边缘事件也截下来。
+        #: 必须开 `WA_Hover`，否则 `HoverMove` 不会送到窗口。
+        self.setAttribute(Qt.WA_Hover, True)
+        self.installEventFilter(self)
+        #: ⚠️ 只装在窗口上**不够** —— 实测窗口边缘 8px 全被 `Rail` / `StatsPage`
+        #: 等子控件覆盖（`childAt(2,300)` = `Rail`），事件根本到不了窗口。
+        #: 所以还要递归装到整棵子控件树（`_install_edge_filters`，页面重建后再补装）。
+        self._edge_filtered = set()
+        self._install_edge_filters()
+        self._hover_edge = None        # 当前光标下命中的边缘（游标切换用）
         #: 模式筛选 —— **勾选的分类列表**（**空列表 = 全部模式**）。2026-10-14
         #: 从单值改成列表。⚠️ **别把它归一化成 None** —— 数据层里 `None` 是各页的
         #: 历史默认（分析页 = 主口径只 3/19），而 `[]` 才是「全部模式」= 四组并集。
@@ -2393,6 +2430,13 @@ class DashboardWindow(QWidget):
         self._drag_from = None
         self._resizing = False
         self._cursor_shape = None
+        #: ★ 2026-10-21：**手动缩放回退**的起点快照。
+        #: `startSystemResize()` 在无边框窗上返回 False（Windows 依赖
+        #: `WM_NCHITTEST`，Qt 只在处理非客户区时才转发，而
+        #: `FramelessWindowHint` 没有非客户区）—— 悬浮窗能用是因为它是
+        #: `Qt.Tool`，系统仍给了细边框。看板是 `Qt.Window` + 无边框，
+        #: 必须自己算。存 `{edges, press_global, start_geom}`。
+        self._manual_resize = None
         self._current = ''
         #: 「卡组」页当前页签（`names` / `tier` / `composition`）—— **不再记忆**：
         #: 每次打开都落第一页「卡组名管理」（用户 2026-10-12；QSettings 里的
@@ -2407,6 +2451,9 @@ class DashboardWindow(QWidget):
         self._load_errors = {}
 
         self._build()
+        #: 页面建完后再补装一次边缘过滤器（`__init__` 里那次跑在 `_build` 之前，
+        #: 那时还没有任何页面控件）。见 `_install_edge_filters` 的说明。
+        self._install_edge_filters()
         self._restore_geometry()
         page = str(settings().value('dash/page') or NAV_PAGES[0][1])
         if page == 'deckview':
@@ -3059,13 +3106,123 @@ class DashboardWindow(QWidget):
         self._reload_stats()
 
     # ------------------------------------------------------------ 缩放/拖动
+    def eventFilter(self, obj, ev):                          # noqa: N802
+        """把**子控件区域内**的鼠标事件转成窗口边缘判定。
+
+        为什么必须走过滤器（2026-10-21 用户实报）：主区 `QStackedWidget` 铺满
+        窗口内部，边缘的 `MouseMove` / `MouseButtonPress` 都被它吃掉，
+        窗口自己的 `mouseMoveEvent` 收不到 —— 表现就是「鼠标放到边缘没变化」。
+
+        只处理**命中边缘**的事件，其余原样放行（不干扰子控件的正常交互）。
+
+        ⚠️ 过滤器装到了**所有子控件**（`_install_edge_filters`），所以这里
+        **不能**有 `if obj is not self: return` 那种早退 —— 那会让子控件发来的
+        事件全部直接放行、边缘判定永远不执行（2026-10-21 踩过这一版）。
+        """
+        et = ev.type()
+        if et in (QEvent.HoverMove, QEvent.MouseMove):
+            pos = self._map_to_self(obj, ev)
+            if pos is None:
+                return False
+            #: ⚠️ 用**事件自带的** `buttons()`，不要用 `QApplication.mouseButtons()`
+            #: —— 后者读的是全局真实按键状态，在某些平台/合成事件下与事件本身
+            #: 不一致，条件恒假 => 拖动永远不生效（2026-10-21 踩过）。
+            if (self._manual_resize is not None
+                    and ev.buttons() & Qt.LeftButton):
+                self._apply_manual_resize(ev.globalPosition().toPoint())
+                return True
+            edges = self.edges_at(pos)
+            self._update_cursor(edges)
+            return False
+        if et == QEvent.HoverLeave:
+            self._hover_edge = None
+            self.unsetCursor()
+            return False
+        if et == QEvent.MouseButtonPress and                 ev.button() == Qt.LeftButton:
+            pos = self._map_to_self(obj, ev)
+            edges = self.edges_at(pos) if pos is not None else None
+            if edges:
+                #: ★ 2026-10-21：**一律走手动缩放**，不再先试
+                #: `startSystemResize()` —— 它在无边框窗上会**返回 True 但什么也不做**
+                #: （用户实报「拖边缘没反应」就是这个：`begin_resize()` 拿到 True，
+                #: 我们以为系统接管了，实际窗口一动不动）。
+                #: 手动实现已经覆盖四边+四角+最小尺寸，直接用它更可控。
+                self._manual_resize = {
+                    'edges': edges,
+                    'press': ev.globalPosition().toPoint(),
+                    'geom': self.geometry(),
+                }
+                return True
+        return False
+
+    def _install_edge_filters(self):
+        """把边缘事件过滤器**递归装到所有子控件**（含之后新建的页面）。
+
+        为什么要递归（2026-10-21 实测）：看板的左栏 `Rail` 与主区 `QStackedWidget`
+        铺满整个窗口，窗口边缘那 8px 全归它们 —— 只装在窗口上，
+        `mouseMoveEvent` / `mousePressEvent` **一次都不会触发**，
+        用户看到的就是「鼠标放到边缘没反应、拖不动」。
+        """
+        seen = getattr(self, '_edge_filtered', None)
+        if seen is None:
+            seen = self._edge_filtered = set()
+        for w in self.findChildren(QWidget):
+            if w in seen:
+                continue
+            try:
+                w.installEventFilter(self)
+                #: 鼠标跟踪：没有它，子控件在**没按键**时不会产生 MouseMove，
+                #: 边缘光标就永远不切（`HoverMove` 需要 `WA_Hover`，也补上）。
+                w.setMouseTracking(True)
+                w.setAttribute(Qt.WA_Hover, True)
+            except Exception:                                # noqa: BLE001
+                continue
+            seen.add(w)
+
+    def _map_to_self(self, obj, ev):
+        """事件坐标 -> **本窗口**坐标（子控件发来的要转一层）。
+
+        ⚠️ 不能用 `ev.object()` —— `QMouseEvent` **没有**这个方法
+        （那是 `QChildEvent` 的）。发送者只能从 `eventFilter(obj, ev)` 的
+        `obj` 参数拿（2026-10-21 踩过：直接 `ev.object()` 抛 AttributeError，
+        而异常被 Qt 吞掉 → 表现就是「鼠标放到边缘没反应」）。
+        """
+        try:
+            local = ev.position().toPoint()
+        except Exception:                                    # noqa: BLE001
+            return None
+        if obj is self:
+            return local
+        try:
+            return obj.mapTo(self, local)
+        except Exception:                                    # noqa: BLE001
+            return local
+
+    def _update_cursor(self, edges):
+        self._hover_edge = edges
+        shape = cursor_for(edges) if edges else None
+        if shape != self._cursor_shape:
+            self._cursor_shape = shape
+            if shape is None:
+                self.unsetCursor()
+            else:
+                self.setCursor(shape)
+
+    #: ★★ 2026-10-21 用户：「**取消看板横向拉伸，只保留纵向拉伸**」。
+    #: 宽度固定（`MIN_W` = 1200）—— 各页的列宽/卡图列数都是按这个宽度定的，
+    #: 允许拖宽会让内容留白、拖窄会挤压布局，意义不大。
+    #: 想恢复横向拉伸：把这里改回 `True`（`first_turn_*` 之外唯一的开关）。
+    ALLOW_HORIZONTAL_RESIZE = False
+
     def edges_at(self, pos):
+        """命中的缩放边。**横向已禁用**，只返回上/下边（见类常量）。"""
         m = RESIZE_MARGIN
         edges = None
-        if pos.x() <= m:
-            edges = Qt.LeftEdge
-        elif pos.x() >= self.width() - m:
-            edges = Qt.RightEdge
+        if self.ALLOW_HORIZONTAL_RESIZE:
+            if pos.x() <= m:
+                edges = Qt.LeftEdge
+            elif pos.x() >= self.width() - m:
+                edges = Qt.RightEdge
         if pos.y() <= m:
             edges = (edges | Qt.TopEdge) if edges else Qt.TopEdge
         elif pos.y() >= self.height() - m:
@@ -3076,7 +3233,18 @@ class DashboardWindow(QWidget):
         if ev.button() != Qt.LeftButton:
             return
         edges = self.edges_at(ev.position().toPoint())
-        if edges and self.begin_resize(edges):
+        if edges:
+            if self.begin_resize(edges):
+                ev.accept()
+                return
+            #: ★ 2026-10-21：系统缩放不可用 -> **自己算**（见 `_manual_resize`）。
+            #: 起点快照必须在这一刻取：之后每次 move 都是「按压点位移 + 起始几何」，
+            #: 不能累加，否则会有漂移（跨屏 / DPI 缩放下尤其明显）。
+            self._manual_resize = {
+                'edges': edges,
+                'press': ev.globalPosition().toPoint(),
+                'geom': self.geometry(),
+            }
             ev.accept()
             return
         self._drag_from = (ev.globalPosition().toPoint()
@@ -3084,6 +3252,11 @@ class DashboardWindow(QWidget):
         ev.accept()
 
     def mouseMoveEvent(self, ev):                           # noqa: N802
+        #: ★ 手动缩放态优先（此时左键按着，不能进拖动分支）
+        if self._manual_resize is not None and ev.buttons() & Qt.LeftButton:
+            self._apply_manual_resize(ev.globalPosition().toPoint())
+            ev.accept()
+            return
         if self._drag_from is not None and ev.buttons() & Qt.LeftButton:
             self.move(ev.globalPosition().toPoint() - self._drag_from)
             ev.accept()
@@ -3094,8 +3267,52 @@ class DashboardWindow(QWidget):
             self.setCursor(shape)
 
     def mouseReleaseEvent(self, ev):                        # noqa: N802
+        self._manual_resize = None
         self._drag_from = None
         self.save_geometry()
+
+    def _apply_manual_resize(self, global_pos):
+        """按「起始几何 + 按压点位移」重算窗口矩形（**不累加，防漂移**）。
+
+        - 右侧 / 下侧拖拽：改宽高；
+        - 左侧 / 上侧拖拽：同时改位置（否则会变成「往右拖反而变大」）；
+        - 最后统一夹到 `MIN_W × MIN_H` —— 用户口径：**要有最低尺寸限制**。
+
+        ★ 2026-10-21 用户：「取消横向拉伸，只保留纵向」——
+        `edges_at()` 已不再返回左右边，这里也**显式不动宽度**
+        （`left/right` 直接取起始几何），双重保险。
+        """
+        st = self._manual_resize
+        if not st:
+            return
+        g = st['geom']
+        dx = global_pos.x() - st['press'].x()
+        dy = global_pos.y() - st['press'].y()
+        edges = st['edges']
+        #: 宽度**锁定**在起始值（横向拉伸已取消）
+        left, right = g.left(), g.right()
+        top, bottom = g.top(), g.bottom()
+        if edges & Qt.LeftEdge:
+            left = g.left() + dx
+        if edges & Qt.RightEdge:
+            right = g.right() + dx
+        if edges & Qt.TopEdge:
+            top = g.top() + dy
+        if edges & Qt.BottomEdge:
+            bottom = g.bottom() + dy
+        #: 下限保护：碰到最小尺寸就**固定住那一条边**（继续拖不再缩小，
+        #: 也不会因为钳位把整窗往反方向推）。
+        if right - left + 1 < MIN_W:
+            if edges & Qt.LeftEdge:
+                left = right - MIN_W + 1
+            else:
+                right = left + MIN_W - 1
+        if bottom - top + 1 < MIN_H:
+            if edges & Qt.TopEdge:
+                top = bottom - MIN_H + 1
+            else:
+                bottom = top + MIN_H - 1
+        self.setGeometry(left, top, right - left + 1, bottom - top + 1)
 
     def leaveEvent(self, ev):                               # noqa: N802
         if self._cursor_shape is not None:
@@ -3147,8 +3364,11 @@ class DashboardWindow(QWidget):
     def _restore_geometry(self) -> None:
         s = settings()
         size = s.value('dash/size')
-        if isinstance(size, QSize) and size.width() >= MIN_W and size.height() >= MIN_H:
-            self.resize(size)
+        #: ★ 2026-10-21：横向拉伸已取消 —— **宽度恒为 `MIN_W`**，
+        #: 只从 QSettings 恢复高度。老用户存的更宽的尺寸在这里被收拢
+        #: （否则「取消横向拉伸」对已经存过宽尺寸的机器不生效）。
+        if isinstance(size, QSize) and size.height() >= MIN_H:
+            self.resize(MIN_W, size.height())
         else:
             self.resize(MIN_W, MIN_H)
         pos = s.value('dash/pos')
