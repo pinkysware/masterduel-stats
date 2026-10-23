@@ -273,9 +273,13 @@ class ManualResultRankInferTest(unittest.TestCase):
         rank_state.save({'rank': 6, 'rate': 5, 'win_streak': 0,
                          'lose_streak': 0})          # 钻石5，连胜连败清零
 
-    def _st(self, rank_after=None):
+    def _st(self, rank_after=None, game_mode=3):
         st = FakeStorage()
-        st.rows = {'m1': {'match_id': 'm1', 'my_rank_after': rank_after}}
+        #: ★ 2026-10-22：`game_mode` **必填** —— 手填链现在**只推天梯局**
+        #: （巅峰/DC/活动局打完不改天梯段位，口径同采集器 `_infer_rank_state`）。
+        #: 下面这批用例测的正是「天梯局手填结果 → 推段位」，所以给 3。
+        st.rows = {'m1': {'match_id': 'm1', 'my_rank_after': rank_after,
+                          'game_mode': game_mode}}
         return st
 
     def test_manual_fill_infers_rank_and_advances_state(self):
@@ -301,6 +305,23 @@ class ManualResultRankInferTest(unittest.TestCase):
         ui_actions.repair_result(st, 'm1', 'Win')
         self.assertEqual(st.inferred, [])
         self.assertEqual(rank_state.load()['win_streak'], 0)
+
+    def test_non_ranked_mode_does_not_advance_state(self):
+        """🔴 2026-10-22：非天梯局手填结果**不推**天梯段位。
+
+        巅峰/DC/活动局打完**不改天梯段位**（口径同采集器 `_infer_rank_state`）。
+        原来手填链没有模式守卫 —— 实锤 10-19~10-21 用户手填的几局（非天梯）
+        把 `lose_streak` 一路推到 107，后面每局的推断都建立在虚高的连败数上。
+        """
+        from core import rank_state
+        for gm in (12, 19, 21, None):        # DC / 巅峰 / 活动 / 判不出
+            rank_state.save({'rank': 6, 'rate': 5, 'win_streak': 0,
+                             'lose_streak': 0})
+            st = self._st(rank_after=None, game_mode=gm)
+            ui_actions.repair_result(st, 'm1', 'Lose')
+            self.assertEqual(st.inferred, [], 'game_mode=%r 不该推' % gm)
+            self.assertEqual(rank_state.load()['lose_streak'], 0,
+                             'game_mode=%r 连败计数被推进了' % gm)
 
     def test_uncalibrated_state_is_silent(self):
         from core import rank_state

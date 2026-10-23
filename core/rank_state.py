@@ -33,6 +33,14 @@ from core import paths
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_PATH = os.environ.get('MD_RANK_STATE') or paths.data_path('rank_state.json')
 
+#: **导入时**算出的默认状态文件路径（**常量，不随 `STATE_PATH` 变**）。
+#:
+#: ★ 2026-10-22：审计日志分流要用它当判据 —— `STATE_PATH` 是**可变的**
+#: 模块级常量（单测会把它改到 tmp），拿它当判据的话：单测改完 STATE_PATH
+#: 后，「写的就是 STATE_PATH」恒成立 → 审计照样写进真机日志（噪音）。
+#: 这个常量在 import 那一刻定下，**永远不变**。
+DEFAULT_STATE_PATH = STATE_PATH
+
 RANK_MASTER = 7
 RANK_PLATINUM = 5
 RATE_MIN, RATE_MAX = 1, 5
@@ -94,21 +102,40 @@ def load(path=None):
         return {}
 
 
-def _audit_save(new_state):
-    # 默认状态文件的写入审计：rank/rate/streak 变化才记（带调用栈）。
+def _audit_log_path(state_path):
+    """审计日志放哪：跟**被写的那个状态文件**同目录。
+
+    ★ 2026-10-22：原来**一律**写真机的
+    `data/archive/rank_state_audit.log` —— 单测把状态指到 tmp 后，
+    审计仍写真机日志，于是那份**取证日志 8 成是测试噪音**
+    （实锤：10-18~10-22 那段里 8919/11384 行是 unittest 写的）。
+    取证日志一旦被噪音淹没，段位漂移事故就查不动了。
+    改成：写**默认状态文件**时进真机日志（那才是要取证的那份），
+    写别的路径（单测的 tmp）时进那个路径旁边的同名日志。
+    """
+    if os.path.normcase(os.path.abspath(state_path)) == \
+            os.path.normcase(os.path.abspath(DEFAULT_STATE_PATH)):
+        # ★ BUG-B2A-05（2026-10-18）：走 `paths.data_path('archive', ...)`。
+        #   原来硬拼 `PROJ/data/archive/` —— 安装版（Program Files）那里不可写，
+        #   `open` 抛 OSError 被调用处的 `except: pass` 吞掉，审计日志一条都不写；
+        #   而它正是 09-27 / 10-05 两次「段位被无日志改掉」事故的取证手段。
+        return paths.data_path('archive', 'rank_state_audit.log')
+    return os.path.join(os.path.dirname(os.path.abspath(state_path)),
+                        'rank_state_audit.log')
+
+
+def _audit_save(new_state, state_path=None):
+    # 状态文件的写入审计：rank/rate/streak 变化才记（带调用栈）。
     # 09-27 实锤：rank_state 被 7-3 无日志改成 7-5，推断链整条跟着错。
-    old_st = load()
+    p = state_path or STATE_PATH
+    old_st = load(p)
     keys = ('rank', 'rate', 'win_streak', 'lose_streak')
     old_v = {k: old_st.get(k) for k in keys}
     new_v = {k: new_state.get(k) for k in keys}
     if old_v == new_v:
         return
     import traceback
-    # ★ BUG-B2A-05（2026-10-18）：改走 `paths.data_path('archive', ...)`。
-    #   原来硬拼 `PROJ/data/archive/` —— 安装版（Program Files）那里不可写，
-    #   `open` 抛 OSError 被调用处的 `except: pass` 吞掉，审计日志一条都不写；
-    #   而它正是 09-27 / 10-05 两次「段位被无日志改掉」事故的取证手段。
-    log = paths.data_path('archive', 'rank_state_audit.log')
+    log = _audit_log_path(p)
     stamp = time.strftime('%Y-%m-%d %H:%M:%S')
     with io.open(log, 'a', encoding='utf-8', newline='') as f:
         f.write('%s  %s -> %s  (src=%s)\n' % (stamp, old_v, new_v,
@@ -118,13 +145,12 @@ def _audit_save(new_state):
 
 
 def save(state, path=None):
-    if path is None:                     # 写审计：09-27 段位漂移事故，再发作就有据可查
-        try:
-            _audit_save(state)
-        except Exception:
-            pass
     """写状态（覆盖）。"""
     p = path or STATE_PATH
+    try:                                 # 写审计：09-27 段位漂移事故，再发作就有据可查
+        _audit_save(state, p)
+    except Exception:
+        pass
     state = dict(state or {})
     state['at'] = time.strftime('%Y-%m-%d %H:%M:%S')
     try:

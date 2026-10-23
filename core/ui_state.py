@@ -877,6 +877,37 @@ def _recent_in_window(storage, limit: int = 500, since=None, until=None,
     return out
 
 
+def _rank_points(m, group, which) -> Optional[str]:
+    """非天梯局的「段位列」值 -> 格式化字符串；没有给 None。
+
+    ``which`` = ``'before'`` / ``'after'``。**纯函数**（可单测）。
+
+    * 巅峰局 -> ``'1507.49'``（2 位小数，与战绩页段位列同一个格式）
+    * DC 杯 **2 阶段** -> ``'DP 1000'``（整数 + `DP ` 前缀，见用户口径：
+      界面上就叫 DP）；1 阶段的 DLv **不给**（那是段位不是积分）
+    * 其余（天梯 / 活动 / 单人）-> None
+    """
+    if group == 'peak':
+        v = m.get('peak_rate_%s' % which)
+        if v is None:
+            return None
+        try:
+            return '%.2f' % float(v)
+        except (TypeError, ValueError):
+            return None
+    if group == 'dc':
+        if m.get('cup_stage') != 2:
+            return None
+        v = m.get('cup_dp_%s' % which)
+        if v is None:
+            return None
+        try:
+            return 'DP %d' % int(v)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _page_row(m) -> dict:
     """一局 -> 对局记录的一行（字段就是界面那几列要用的，不多不少）。
 
@@ -938,6 +969,35 @@ def _page_row(m) -> dict:
                           and (m.get('peak_rate_after') is not None
                                or m.get('peak_rate_before') is not None))
                       else None,
+        # ★ DC 杯 DP（2026-10-23）：只对 **DC 杯 2 阶段**的行给值。
+        # after 优先 / before 兜底（与巅峰积分同语义）；`cup_stage` 必须是 2 才算
+        # —— 1 阶段打的是 DLv（段位），不是积分，画出来会误导。
+        # 显示成 '1000'（整数、没有小数位，与巅峰积分 '1507.49' 不同）。
+        'cup_dp': ('%d' % int(m.get('cup_dp_after')
+                              if m.get('cup_dp_after') is not None
+                              else m.get('cup_dp_before')))
+                  if (group == 'dc' and m.get('cup_stage') == 2
+                      and (m.get('cup_dp_after') is not None
+                           or m.get('cup_dp_before') is not None))
+                  else None,
+        #: ★ 2026-10-23 用户：「看板战绩页应该是 **图标-分数-DP** 这样写，
+        #:   而不是 图标-DP-分数」。`cup_dp` 是纯分数（如 `'2048'`），
+        #:   `cup_dp_unit` 是单位（`'DP'`）—— 界面自己决定谁在前。
+        #:   ⚠️ `cup_dp` 本身保持"只有数字"（导出页/别处都按这个用），
+        #:   **不要**把 'DP ' 前缀塞回去。
+        'cup_dp_unit': 'DP' if (group == 'dc' and m.get('cup_stage') == 2
+                                and (m.get('cup_dp_after') is not None
+                                     or m.get('cup_dp_before') is not None))
+                       else None,
+        # ★ 段位列的「非天梯」形态（2026-10-23 用户：导出页巅峰积分和 DP
+        #   都可以放到段位列）。天梯局仍然是 `rank_label_before/after` 那两个
+        #   段位名；巅峰 / DC 杯局在这里给**格式化好的积分**，导出页直接拿去用。
+        #   ⚠️ 只给「本局模式对应的那种积分」，不混：
+        #      巅峰 -> peak_rate_before/after（小数 2 位）
+        #      DC 2 阶段 -> cup_dp_before/after（整数，带 DP 前缀）
+        #   1 阶段与活动局恒 None（那三种模式本来就没有积分）。
+        'rank_points_before': _rank_points(m, group, 'before'),
+        'rank_points_after': _rank_points(m, group, 'after'),
         'opp_deck': m.get('opp_deck_name') or '',
         'opp_known': bool(m.get('opp_deck_name')),
         #: M5 反推的输入（点了对手卡组格要拿它算建议，见 app.on_pick_deck）
@@ -2198,8 +2258,11 @@ EXPORT_COLUMNS: Tuple[Tuple[str, str], ...] = (
     ('opp_known', '对手卡组已标注'),
     ('mode_label', '模式'),
     ('total_turns', '回合数'),
-    ('rank_label_before', '局前段位'),
-    ('rank_label_after', '局后段位'),
+    #: ★ 2026-10-23 用户：「导出页巅峰积分和 DP 都可以放到段位列」——
+    #: 表头写成「段位/积分」：天梯局填段位名，巅峰局填 RATE，DC 杯 2 阶段填 DP。
+    #: ⚠️ 只改**文案**，键名不动（`rank_label_*` 是数据层字段，改键会破坏兼容）。
+    ('rank_label_before', '局前段位/积分'),
+    ('rank_label_after', '局后段位/积分'),
     ('rank_delta', '段位变化'),
     #: ★ 2026-10-16 手坑两列：逗号分隔的卡名（按界面语言）；
     #: 判不出（无逐卡数据）留空 —— 与界面「—」同源（`_trap_names_cell`）。
@@ -2301,8 +2364,14 @@ def export_rows(storage, mode_group=None, limit: int = 5000,
                 'opp_known': tr('是') if r.get('opp_known') else tr('否'),
                 'mode_label': r.get('mode_label') or '',
                 'total_turns': r.get('total_turns'),
-                'rank_label_before': r.get('rank_label_before') or '',
-                'rank_label_after': r.get('rank_label_after') or '',
+                # ★ 段位三列**不只天梯**（2026-10-23 用户口径）：
+                #   有积分就写积分（巅峰 / DC 2 阶段），否则写段位名。
+                #   两者互斥 —— 积分只在天梯以外出现（见 `_rank_points`），
+                #   所以「先看积分、再退回段位名」不会串。
+                'rank_label_before': (r.get('rank_points_before')
+                                      or r.get('rank_label_before') or ''),
+                'rank_label_after': (r.get('rank_points_after')
+                                     or r.get('rank_label_after') or ''),
                 'rank_delta': tr(EXPORT_DELTA_CN.get(r.get('rank_delta'), '')),
                 'my_traps': _trap_names_cell(r.get('my_traps')),
                 'opp_traps': _trap_names_cell(r.get('opp_traps')),

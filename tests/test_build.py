@@ -40,13 +40,47 @@ class PatchPackageTest(unittest.TestCase):
         if PROJ not in sys.path:
             sys.path.insert(0, PROJ)
 
-    def test_patch_entries_exclude_data(self):
-        from build.build_patch import patch_entries
+    def test_patch_entries_exclude_user_data(self):
+        """★ 补丁包**绝不带用户数据**（会覆盖用户手填的表 / 对局记录）。
+
+        ⚠️ 2026-10-23 放宽：程序的**自带素材**（`ASSET_DIRS` 白名单：图标目录）
+        允许进包 —— 否则用补丁升级的用户看不到 v1.1.2 新加的 DC 图标。
+        但**用户数据**（`deck_name_cn.csv` / `card_names.json` / `archive/` …）
+        仍然一个都不许进。
+        """
+        from build.build_patch import ASSET_DIRS, patch_entries
         entries = patch_entries()
         self.assertTrue(entries, '补丁清单为空 —— 发布仓路径不对？')
+        allowed = tuple(d + '/' for d in ASSET_DIRS)
         leaked = [e for e in entries
-                  if e == 'data' or e.startswith('data/')]
-        self.assertEqual(leaked, [], '补丁包混进了 data/（会覆盖用户数据）')
+                  if (e == 'data' or e.startswith('data/'))
+                  and not e.startswith(allowed)]
+        self.assertEqual(leaked, [], '补丁包混进了用户数据')
+
+    def test_patch_entries_never_include_user_data_files(self):
+        """逐个盯死**用户数据文件**：它们进了包就是覆盖用户的东西。"""
+        from build.build_patch import patch_entries
+        entries = set(patch_entries())
+        for bad in ('data/deck_name_cn.csv', 'data/card_names.json',
+                    'data/card_names.csv', 'data/masterduel.db',
+                    'data/deck_name_cn.xlsx'):
+            self.assertNotIn(bad, entries, '补丁包混进了用户数据：%s' % bad)
+        #: `archive/`（对局记录）与 `card_art/`（缓存）也必须没有
+        for e in entries:
+            self.assertFalse(e.startswith('data/archive/'),
+                             '补丁包混进了对局记录：%s' % e)
+            self.assertFalse(e.startswith('data/card_art/'),
+                             '补丁包混进了卡图缓存：%s' % e)
+
+    def test_patch_entries_include_asset_whitelist(self):
+        """自带素材白名单里的图标必须进包（否则新素材跟着代码发了却没图）。"""
+        from build.build_patch import ASSET_DIRS, patch_entries
+        entries = set(patch_entries())
+        icons = [e for e in entries
+                 if e.startswith(tuple(d + '/' for d in ASSET_DIRS))]
+        self.assertTrue(icons, '自带素材一个都没进包')
+        self.assertIn('data/mode_icons/dc.webp', entries,
+                      'v1.1.2 的 DC 图标没进补丁包')
 
     def test_patch_entries_exclude_runtime(self):
         from build.build_patch import patch_entries

@@ -1383,18 +1383,50 @@ class MatchRow(QWidget):
             from core import modes as _M
             icon = _M.icon_path('peak')
             label = peak
+        # ★ DC 杯 DP（2026-10-23）：2 阶段的 DC 杯行画「DC图标 + DP 1000」。
+        #   图标 = `data/mode_icons/dc.webp`（游戏解包 EventLogo713_NoEff 的 DC 主体）。
+        #   ⚠️ 用户 2026-09-14 那句「DC 杯和活动不需要图标」已被 2026-10-23 推翻
+        #   （只推翻 DC，活动杯赛仍然不做，见 `core.modes.WANTED_ICONS`）。
+        cup_dp = self.row.get('cup_dp')
+        cup_dp_unit = self.row.get('cup_dp_unit') or 'DP'
+        if cup_dp:
+            from core import modes as _M
+            icon = _M.icon_path('dc')
+            #: ★ 用户 2026-10-23：「应该是 **图标-分数-DP** 这样写」——
+            #:   所以 label 只放**分数**，单位单独画在它右边（下面 `lab` 之后）。
+            label = cup_dp
         #: 有箭头时名字要让出「间距 + 箭头」的宽，否则会被挤出列外
         room = col_width(4) - theme.RANK_ICON_ROW - theme.S_XS
         if moving:
             room -= theme.S_XS + 12
+        if cup_dp:
+            #: 分数后面还要画「DP」两个字，得先让出它的宽（否则分数被挤掉）
+            fm_unit = QFontMetrics(widgets.font(theme.PAGE_F_SMALL))
+            room -= fm_unit.horizontalAdvance(cup_dp_unit) + theme.S_XS
+        #: ⚠️ 2026-10-23 曾想「不够宽就借对手卡组的宽 + 省略小数」——
+        #:   **已撤销**：用户实测截图（9 月巅峰赛 `1522.95` + 图标）证明
+        #:   真实 Inter 字体下现列宽**够用**，之前的 `1515…` 只是**测试机没装
+        #:   任何字体**（QFontDatabase.families() 为空）导致的测量假象。
+        #:   别为了假象去动列宽预算。
         hl.addStretch(1)                    # ★ 居中（用户：「表头和列应该居中对齐」）
         if icon:
-            hl.addWidget(widgets.thumb_label(icon, theme.RANK_ICON_ROW))
+            #: ★ 2026-10-23 用户实测两条：「DC 图标还有灰色背景，天梯图标是透明背景」
+            #:   + 「图标太小了」。天梯段位图标是透明 PNG；而 `thumb_label` 默认
+            #:   铺 `SURFACE2` 灰底 + 居中裁方 —— DC 的 2:1 宽扁图被裁掉左右、
+            #:   只剩中间一小块，所以显得小。
+            #:   → 段位格统一走 **fit（不裁切）+ 透明底**。
+            hl.addWidget(widgets.thumb_label(icon, theme.RANK_ICON_ROW,
+                                             fit=True, background=False))
         if label:
             lab = _lab(_elide(label, room, theme.PAGE_F_SMALL), 'body',
                        size=theme.PAGE_F_SMALL)
             lab.setToolTip(label)
             hl.addWidget(lab)
+        #: ★ DC 行的单位画在**分数后面**（图标-分数-DP），用户 2026-10-23 定。
+        #:   用 `muted` 小字，别抢分数的视觉重点。
+        if cup_dp:
+            hl.addWidget(_lab(cup_dp_unit, 'muted',
+                              size=theme.PAGE_F_SMALL))
         if moving:
             hl.addWidget(_lab('↑' if delta == 'up' else '↓', 'muted',
                               size=theme.PAGE_F_SMALL))
@@ -1415,6 +1447,8 @@ class MatchRow(QWidget):
                 tip = tr('%s（掉段）') % label
             if peak:
                 tip = '%s %s' % (tr('巅峰决斗'), peak)
+            elif cup_dp:
+                tip = '%s %s%s' % (tr('DC杯'), label, cup_dp_unit)
             host.setToolTip(tip)
         elif self.row.get('rank_pending'):
             host.setToolTip(tr('段位获取中…（结算写入通常需要 1~2 分钟）'))
@@ -3120,6 +3154,16 @@ class DashboardWindow(QWidget):
         事件全部直接放行、边缘判定永远不执行（2026-10-21 踩过这一版）。
         """
         et = ev.type()
+        #: ★ 2026-10-22：**标题栏整条都是拖动区**，不参与边缘缩放判定。
+        #:   原来标题栏几何 = `QRect(1, 1, 1198, 34)`，而 `edges_at()` 的
+        #:   上边命中带是 `pos.y() <= RESIZE_MARGIN(8)` —— 标题栏顶部那 8px
+        #:   **同时**落在上边缩放区里。在那儿按下会进入**缩放态**而不是拖动态，
+        #:   用户以为在拖标题栏挪窗口，实际在缩放窗口。
+        #:   （这条也是「拖到最小高度后每次拖拽高度都变大」的第一环。）
+        if obj is getattr(self, '_title_bar', None):
+            if et == QEvent.MouseButtonPress and ev.button() == Qt.LeftButton:
+                self._manual_resize = None      # 进拖动态：清掉任何残留缩放态
+            return False
         if et in (QEvent.HoverMove, QEvent.MouseMove):
             pos = self._map_to_self(obj, ev)
             if pos is None:
@@ -3336,6 +3380,8 @@ class DashboardWindow(QWidget):
 
     def _title_press(self, ev):
         if ev.button() == Qt.LeftButton:
+            #: ★ 2026-10-22：进拖动态前清掉**残留的缩放态**（见 `_title_release`）。
+            self._manual_resize = None
             win = self.windowHandle()
             if win is None or not win.startSystemMove():
                 self._drag_from = (ev.globalPosition().toPoint()
@@ -3347,6 +3393,13 @@ class DashboardWindow(QWidget):
 
     def _title_release(self, _ev):
         self._drag_from = None
+        #: ★ 2026-10-22：顺手清掉**残留的缩放态**。
+        #:   缩放态的按下被 `eventFilter` 吞掉（`return True`），松开事件
+        #:   就发到**那个子控件**（标题栏）—— 走的是这里，只清 `_drag_from`，
+        #:   `_manual_resize` 留着。下次拖标题栏时 `eventFilter` 看到
+        #:   `_manual_resize is not None` 就会**优先走缩放**而不是拖动，
+        #:   窗口于是被纵向缩放（用户实报：拖到最小高度后每次拖拽高度都变大）。
+        self._manual_resize = None
 
     def keyPressEvent(self, ev):                            # noqa: N802
         if ev.key() == Qt.Key_Escape:

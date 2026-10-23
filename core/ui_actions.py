@@ -16,6 +16,7 @@ import os
 import subprocess
 from typing import Callable, Optional, Sequence, Tuple
 
+from core import modes
 from core.storage import MANUAL_RESULT_SRC
 
 #: 快捷方式文件名（放在系统「启动」目录里）
@@ -279,6 +280,14 @@ def _infer_rank_after_manual(storage, match_id: str, result: str) -> None:
             return                              # 状态未校准：不编
         row = storage.get_match(match_id)
         if row is None or row.get('my_rank_after') is not None:
+            return
+        #: ★ 2026-10-22：**只推天梯局**（口径同采集器 `_infer_rank_state`）——
+        #:   巅峰/DC/活动局打完**不改天梯段位**，拿它们的结果去推会把
+        #:   rank_state 的连胜/连败计数带歪。
+        #:   实锤：10-19~10-21 用户手填的几局（非天梯）把 `lose_streak`
+        #:   一路推到 107 —— 后面每一局的推断都建立在虚高的连败数上。
+        #:   判不出模式（`game_mode` 为 NULL）→ **不推**（不编）。
+        if modes.group(row.get('game_mode')) != 'ranked':
             return
         before = (st.get('rank'), st.get('rate'))
         new_st, _promoted = rank_state.next_state(st, result)

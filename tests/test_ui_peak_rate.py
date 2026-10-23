@@ -107,7 +107,18 @@ class TestDashboardRankCellPeak(unittest.TestCase):
         self.ui_state = ui_state
 
     def test_rank_cell_renders_icon_and_score(self):
-        """巅峰行段位格 = 巅峰图标 + 积分数字，tooltip 全称。"""
+        """巅峰行段位格 = 巅峰图标 + 积分数字，tooltip 全称。
+
+        ⚠️ **本机无字体时跳过**（2026-10-23 查明）：测试机
+        `QFontDatabase.families()` 是**空表**（Qt 不再自带字体），
+        于是所有文本都被量成 98px 宽，`1515.62` 必然被 `_elide` 成 `1515…`。
+        用户 2026-10-23 的实测截图（9 月巅峰赛 `1522.95` + 图标并排放得下）
+        证明**真实环境够用** —— 这个失败是测量假象，不是列宽 bug。
+        别为了它去改 `STATS_COLS`。
+        """
+        from PySide6.QtGui import QFontDatabase
+        if not QFontDatabase.families():
+            self.skipTest('测试机没装任何字体 —— 文本宽度不可信，见 docstring')
         from PySide6.QtWidgets import QLabel
         from ui.dashboard import MatchRow
         row = self.ui_state._page_row(_base_row(peak_rate_after=1515.62))

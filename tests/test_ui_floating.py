@@ -1747,6 +1747,17 @@ class BadgeAlignTest(unittest.TestCase):
     """
 
     def test_icons_start_at_the_same_x_in_every_row(self):
+        """★ 段位图标要**跨行对齐**（2026-09-15 用户：「段位图标没有对齐」）。
+
+        实测原来是 106/107/112/116 —— 因为内容整体居中，带箭头的行比不带的宽。
+        现在图标贴槽左缘，起点必须是同一个数。
+
+        ⚠️ 2026-10-23 走过的弯路（**别再改回去**）：用户先说「悬浮窗 DC 没有
+        小段位、只有图标，应该和表头**段位居中**」，我做成「只有图标时在组内
+        居中」；用户看到实际效果后立刻说「**和天梯图标比又有偏右的感觉**」。
+        → **只有图标时也必须贴左**，跨行对齐优先。
+        （表头「段位」是整列居中，正对「图标+数字」这个组的中心，不矛盾。）
+        """
         app = _app()
         win = floating.FloatingWindow()
         win.set_snapshot(_demo_snap())
@@ -1761,6 +1772,33 @@ class BadgeAlignTest(unittest.TestCase):
                     break
         self.assertGreaterEqual(len(xs), 3, 'demo 里应当有多行带段位图标')
         self.assertEqual(len(set(xs)), 1, '图标起点必须一致，实测：%s' % xs)
+        win.hide()
+
+    def test_icon_only_rows_also_left_aligned(self):
+        """★ 只有图标的行（DC / 巅峰）**不能居中** —— 否则与天梯图标错位。
+
+        2026-10-23 用户第二轮实测：「和天梯图标比又有偏右的感觉」。
+        """
+        app = _app()
+        win = floating.FloatingWindow()
+        win.set_snapshot(_demo_snap())
+        win.show()
+        app.processEvents()
+        num = ('I', 'II', 'III', 'IV', 'V')
+        xs = {}
+        for row in win.row_widgets():
+            labs = row.badge.findChildren(QLabel) if row.badge else []
+            has_numeral = any(l.text() in num for l in labs)
+            for lab in labs:
+                pm = lab.pixmap()
+                if pm is not None and not pm.isNull():
+                    xs.setdefault('ladder' if has_numeral else 'icon_only',
+                                  []).append(lab.mapTo(win, QPoint(0, 0)).x())
+                    break
+        self.assertIn('icon_only', xs, 'demo 里应当有「只有图标」的行')
+        all_x = xs['ladder'] + xs['icon_only']
+        self.assertEqual(len(set(all_x)), 1,
+                         '只有图标的行必须和天梯行左缘一致，实测：%s' % xs)
         win.hide()
 
 

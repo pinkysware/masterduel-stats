@@ -70,20 +70,24 @@ class IconTest(unittest.TestCase):
         self.assertIsNone(modes.icon_path(None))
         self.assertIsNone(modes.icon_path('nope'))
 
-    def test_only_peak_needs_an_icon(self):
-        """★ 用户 2026-09-14 口径：**只有巅峰决斗需要模式图标**。
+    def test_peak_and_dc_need_an_icon(self):
+        """★ 需要模式图标的分类 = **巅峰 + DC 杯**。
 
-        天梯用段位图标；DC 杯和活动杯赛**不需要**图标。
+        * 天梯用段位图标（不用模式图标）；
+        * 用户 2026-09-14 说过「dc杯和活动不需要图标」，
+          **DC 那一半已被 2026-10-23 推翻**（用户要求给 DC 杯加图标）；
+        * 活动杯赛**仍然不做** —— 每月换 logo，等真到那个活动再定。
         """
-        self.assertEqual(modes.WANTED_ICONS, ('peak',))
+        self.assertEqual(modes.WANTED_ICONS, ('peak', 'dc'))
 
     def test_missing_icons_is_empty_in_a_healthy_repo(self):
-        """需要的那一个已经拿到了 —— 所以正常就是空列表（这个函数现在当"素材丢没丢"自检）。"""
+        """需要的都拿到了 —— 所以正常就是空列表（这个函数现在当"素材丢没丢"自检）。"""
         self.assertEqual(modes.missing_icons(), [])
 
-    def test_ranked_dc_event_are_not_reported_as_missing(self):
+    def test_ranked_and_event_are_not_reported_as_missing(self):
+        """天梯（用段位图标）与活动杯赛（每月换）不算"缺素材"。"""
         miss = modes.missing_icons()
-        for k in ('ranked', 'dc', 'event'):
+        for k in ('ranked', 'event'):
             self.assertNotIn(k, miss, '%s 不需要图标，不该被算成缺素材' % k)
 
 
@@ -106,12 +110,17 @@ class BadgeTest(unittest.TestCase):
         self.assertEqual(icon, 'data/mode_icons/peak.webp')
         self.assertEqual(text, '巅峰决斗')
 
-    def test_dc_and_event_have_name_even_without_icon(self):
+    def test_event_has_name_even_without_icon(self):
         """图标可以缺，**名字不能缺**（缺名字界面就成空白了）。"""
-        for gm, want in ((12, 'DC杯'), (21, '活动决斗')):
-            icon, text = modes.badge(gm)
-            self.assertEqual(text, want)
-            self.assertIsNone(icon)
+        icon, text = modes.badge(21)
+        self.assertEqual(text, '活动决斗')
+        self.assertIsNone(icon)
+
+    def test_dc_uses_its_own_icon(self):
+        """DC 杯（2026-10-23 起）有自己的图标：`data/mode_icons/dc.webp`。"""
+        icon, text = modes.badge(12)
+        self.assertEqual(icon, 'data/mode_icons/dc.webp')
+        self.assertEqual(text, 'DC杯')
 
     def test_badge_never_raises(self):
         for gm in (None, 'x', 0, 999):

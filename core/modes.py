@@ -10,6 +10,8 @@
 **游戏本体解包原版**（2026-09-15 起，见 `docs/素材解包说明.md`）：
 
     assets/.../prefabs/profile/rankicons/large/img_rateicon_01_l  ->  peak.webp
+    assets/.../images/event/highend_hd/EventLogo713_NoEff.png     ->  dc.webp
+      （只取上半的 DC 两个字母；**必须用 `_NoEff`**，见 WANTED_ICONS 注释）
 
 ⚠️ 文件名是 **`rate`icon**（不是 `rank`icon）—— 按 `img_rankicon` 过滤会漏掉它。
 ★ 2026-09-15（commit d3d0479）起**全部换成游戏本体解包原版**，第三方 CDN 那版已废。
@@ -30,11 +32,16 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: 模式图标目录。文件名 = `storage.MODE_GROUP_*` 的值（ranked / peak / dc / event）
 ICON_DIR = os.path.join(PROJ, 'data', 'mode_icons')
 
-#: **需要图标**的模式分类（用户 2026-09-14 定）：
+#: **需要图标**的模式分类：
 #: * `ranked`（天梯）**不需要** —— 那一行的标识用段位图标（见 :func:`badge`）
-#: * `dc`（DC 杯）/ `event`（活动杯赛）**也不需要** —— 用户原话「dc杯和活动不需要图标」
-#: 所以真正需要图的只有 `peak`（巅峰决斗）一个。
-WANTED_ICONS = ('peak',)
+#: * `peak`（巅峰决斗）✅ —— `peak.webp`（游戏解包 `img_rateicon_01_l`）
+#: * `dc`（DC 杯）✅ —— `dc.webp`（游戏解包 `EventLogo713_NoEff` 的 DC 主体，
+#:   2026-10-23 用户要求加；**用 `_NoEff` 版**：带特效版有贯穿画布的水平光晕，
+#:   18px 下会糊成一团）
+#: * `event`（活动杯赛）**仍然不做** —— 每月活动都换 logo，等真到那个活动再定
+#:
+#: ⚠️ 2026-09-14 原话是「dc杯和活动不需要图标」，**DC 那一半已被 2026-10-23 推翻**。
+WANTED_ICONS = ('peak', 'dc')
 
 
 def group(game_mode) -> Optional[str]:
@@ -83,8 +90,9 @@ def icon_for(game_mode) -> Optional[str]:
 def missing_icons() -> list:
     """还没图标的分类（给「缺什么素材」这类提示用）。
 
-    ⚠️ 别再往里加 `ranked` / `dc` / `event` —— 用户 2026-09-14 明确
-    「天梯用段位图标、DC 杯和活动不需要图标」。这个函数现在是"素材有没有丢"的自检。
+    ⚠️ 别再往里加 `ranked` / `event` —— 天梯用段位图标（不用模式图标），
+    活动杯赛**每月换 logo**、等真到那个活动再定（用户 2026-10-23）。
+    `dc` 已在 2026-10-23 加入（用户要求），见 :data:`WANTED_ICONS`。
     """
     return sorted(k for k in WANTED_ICONS if icon_path(k) is None)
 

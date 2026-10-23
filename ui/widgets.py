@@ -123,16 +123,61 @@ def forget_pixmap(path, size: Optional[int] = None) -> int:
 
 
 def thumb_label(path, size: int = 26, radius: int = theme.R_XS,
-                opacity: float = 1.0) -> QLabel:
-    """卡图小标签（**图缺失就留一个同尺寸的空占位**，布局不会跳）。"""
+                opacity: float = 1.0, fit: bool = False,
+                background: bool = True) -> QLabel:
+    """卡图小标签（**图缺失就留一个同尺寸的空占位**，布局不会跳）。
+
+    :param fit: ``True`` = **按比例缩放、不裁切**（宽/高图完整放进方格，四周留白）。
+        默认 ``False`` 走 :func:`round_pixmap` 的**居中裁方**（卡绘都是方的，裁了没损失）。
+        ⚠️ 模式图标这类**非方形**素材必须传 ``fit=True``，否则左右被裁掉。
+    :param background: ``False`` = 不画 ``SURFACE2`` 底色（透明背景）。
+        用户 2026-10-23：天梯段位图标是透明的，模式图标也不该带灰底。
+    """
     lab = QLabel()
     lab.setFixedSize(size, size)
-    lab.setStyleSheet('background: %s; border-radius: %dpx;'
-                      % (theme.SURFACE2, radius))
-    pix = round_pixmap(path, size, radius, opacity)
+    if background:
+        lab.setStyleSheet('background: %s; border-radius: %dpx;'
+                          % (theme.SURFACE2, radius))
+    else:
+        lab.setStyleSheet('background: transparent;')
+    pix = (round_pixmap_fit(path, size, opacity) if fit
+           else round_pixmap(path, size, radius, opacity))
     if pix is not None:
         lab.setPixmap(pix)
     return lab
+
+
+def round_pixmap_fit(path, size: int = 26, opacity: float = 1.0):
+    """**按比例缩放、不裁切**的 QPixmap（非方形素材用）；读不出来返回 None。
+
+    与 :func:`round_pixmap` 的区别：那边居中裁成正方形（适合卡绘），
+    这边保留完整构图、四周透明留白（适合**模式图标**这种 2:1 的宽扁图）。
+    有缓存，键含 `'fit'` 前缀，不会和 `round_pixmap` 撞。
+    """
+    if not path:
+        return None
+    full = path if os.path.isabs(path) else os.path.join(PROJ_ROOT, path)
+    key = ('fit', os.path.normcase(full), int(size), float(opacity))
+    if key in _PIX_CACHE:
+        return _PIX_CACHE[key]
+
+    src = QPixmap(full)
+    if src.isNull():
+        _PIX_CACHE[key] = None
+        return None
+
+    out = QPixmap(size, size)
+    out.fill(QColor(0, 0, 0, 0))
+    scaled = src.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
+    if opacity < 1.0:
+        p.setOpacity(float(opacity))
+    p.drawPixmap((size - scaled.width()) // 2,
+                 (size - scaled.height()) // 2, scaled)
+    p.end()
+    _PIX_CACHE[key] = out
+    return out
 
 
 def font(size: int, weight=QFont.Weight.Normal,

@@ -120,6 +120,11 @@ RANK_RECALLIB_SEC = 180.0
 #: 晚一拍），且存活到下一局开局 —— 窗口比段位的 30s 宽是安全的（不抢时间），
 #: 180s 覆盖「用户在结算画面磨蹭 + 慢慢点回菜单」的场景。
 PEAK_WAIT_SEC = 180.0
+#: DC 杯 DP（2026-10-23）：收局后等「本局 DP 结算对」出现的窗口（秒）。
+#: 实测（2026-10-23 12:44 那局）：结算对在**结算画面**就出现（`after` 已是新值），
+#: 而常驻的 `DuelMenu.Cup.dp` 到**36 秒后**才追上 —— 所以必须读结算对。
+#: 窗口 180s 与巅峰积分同口径（覆盖用户在结算画面磨蹭）。
+CUP_WAIT_SEC = 180.0
 #: 收局 EM 的**结算窗口**（秒）：结算画面是**逐步就绪**的（文案 -> 胜负位），
 #: ⚠️ 2026-09-20 60 -> 90：投降局的结算画面实测 40s+ 才出现，60s 窗口在整读
 #:    还没做完时就被新局切掉 → 那两局 result 丢失（用户实报）。
@@ -264,6 +269,22 @@ class Hooks(object):
         """
         return None
 
+    def read_cup_result(self):
+        """ClientWork 的 **DC 杯 DP 结算对**（before/after/win）；没接给 None。
+
+        见 `core/memread/cup_dp.py`；只对 **DC 杯 2 阶段**的局消费
+        （编排层门控：1 阶段打的是 DLv 不是 DP，不能混）。
+        """
+        return None
+
+    def read_cup_stage(self):
+        """当前 DC 杯阶段（1 / 2）；没接给 None。"""
+        return None
+
+    def backfill_cup(self, dir_name):
+        """把刚落盘的 DP 补进库（`tools/backfill_cup_dp.apply_one`）；没接给 None。"""
+        return None
+
     def snapshot_peak_deck(self):
         """巅峰局 own-deck：扫**编辑中的卡组**实例（09-28 用户配合实测）。
 
@@ -372,6 +393,7 @@ class DuelCollector(object):
                  disconnect_timeout=DISCONNECT_TIMEOUT,
                  write_gap=WRITE_GAP_SEC, rank_wait=RANK_WAIT_SEC,
                  rank_base_wait=RANK_BASE_WAIT_SEC, peak_wait=PEAK_WAIT_SEC,
+                 cup_wait=CUP_WAIT_SEC,
                  em_settle_wait=EM_SETTLE_WAIT_SEC,
                  hunt_limit=HUNT_LIMIT_SEC,
                  remnant_min=REMNANT_MIN_SIZE,
@@ -384,6 +406,7 @@ class DuelCollector(object):
         self.rank_wait = rank_wait
         self.rank_base_wait = rank_base_wait
         self.peak_wait = peak_wait
+        self.cup_wait = cup_wait
         self.em_settle_wait = em_settle_wait
         self.hunt_limit = hunt_limit
         self.remnant_min = remnant_min
@@ -415,6 +438,9 @@ class DuelCollector(object):
         self._duel_before = None         # 本局开局时的双方信息（含局前段位）
         self._peak_base = None           # 开局那拍的巅峰结算对（上一局的，当指纹）
         self._peak_probes = []           # 巅峰积分挂起队列（结算对出现为止）
+        self._cup_base = None            # 开局那拍的 DP 结算对（上一局的，当指纹）
+        self._cup_stages = []            # 开局时读到的 DC 杯阶段（结算节点里没有 stage）
+        self._cup_probes = []            # DC 杯 DP 挂起队列
         self._last_finish_ts = None      # 本进程最近一次收局（残影判据②用）
         self._last_seen_size = None      # 上一拍扫描观测的 size（残影判据①用）
         self._pending_reuse = None       # 首见时已判定的复用目录（P1-1 复用优先）
@@ -784,6 +810,8 @@ class DuelCollector(object):
             lines += self._poll_rank_probes(now)     # 段位探测：每拍推进一步
         if self._peak_probes:
             lines += self._poll_peak_probes(now)     # 巅峰积分：等本局结算对出现
+        if self._cup_probes:
+            lines += self._poll_cup_probes(now)      # DC杯 DP：等本局结算对出现
         if self._em_pending is not None:
             lines += self._poll_em_pending(now)      # EM 胜负位补读：每拍推进
         if self._em_backlog:
@@ -909,6 +937,22 @@ class DuelCollector(object):
             self._peak_base = self.hooks.read_peak_result()
         except Exception:
             pass
+        # DC 杯 DP 链的基线（2026-10-23）：口径与巅峰一致 —— 开局那拍
+        # `DuelResult` 里还是**上一局**的结算对，读一次当指纹。结算节点里
+        # **没有 stage 字段**，所以开局顺手把阶段存下来（收局时结算画面里
+        # 读不到它），供 `_start_cup_probe` 判「这局该不该落 DP」。
+        self._cup_base = None
+        try:
+            self._cup_base = self.hooks.read_cup_result()
+        except Exception:
+            pass
+        self._cup_stages = []
+        try:
+            st = self.hooks.read_cup_stage()
+            if st is not None:
+                self._cup_stages = [st]
+        except Exception:
+            pass
         # 实机发现（验收局 2，2026-09-13）：活动局（骰子拉力等，mode 不在 3/19）
         # 的 maindeck_id 仍指向大厅常规选中的卡组 —— 常规快照是**错值**而非
         # null（本局实际卡组是用户自组的活动卡组，不在 Deck/DeckList 容器）。
@@ -971,6 +1015,15 @@ class DuelCollector(object):
             had.append('巅峰积分')
         if self._peak_base is not None:
             self._peak_base = None
+        #: DC 杯 DP 挂起与基线 —— 与巅峰积分同一批坑（BUG-B8-07）：进程没了
+        #: 还留着挂起，重启后结算对一出现就把上一局的 DP 写进旧目录。
+        if self._cup_probes:
+            self._cup_probes = []
+            had.append('DC杯积分')
+        if self._cup_base is not None:
+            self._cup_base = None
+        if self._cup_stages:
+            self._cup_stages = []
         #: ★ BUG-B8-06：游戏进程都没了，续采锚点必然指不回原进程的控制器；
         #: 留着只会在**下一局**开局时把两局并进同一个目录。
         if self._resume_rec is not None:
@@ -1259,6 +1312,11 @@ class DuelCollector(object):
             lines += self._start_peak_probe(now, rec)
         except Exception as e:                            # noqa: BLE001
             self.log('巅峰积分挂起失败（不阻塞）：%r' % e)
+        # ⑦ DC 杯 DP（2026-10-23）：只挂 DC 杯 2 阶段，等结算对出现
+        try:
+            lines += self._start_cup_probe(now, rec)
+        except Exception as e:                            # noqa: BLE001
+            self.log('DC杯积分挂起失败（不阻塞）：%r' % e)
         try:
             self._start_deck_confirm(now, rec)     # 九轮③：第一局确认窗口
         except Exception as e:                            # noqa: BLE001
@@ -1754,6 +1812,114 @@ class DuelCollector(object):
             lines.append(got)
         return lines
 
+    # ---- DC 杯 DP（Duelist Cup DUEL POINT，2026-10-23）----------------
+    def _start_cup_probe(self, now, rec):
+        """收局读 DC 杯 DP：`DuelResult.resultInfo.Cup.dp` 的 before/after/win。
+
+        ⚠️ **只挂 DC 杯**（`M.group(game_mode) == 'dc'`）**且只挂 2 阶段**：
+        1 阶段打的是 DLv（不是积分），混进 `cup_dp_*` 会让统计把两套数当同一种比。
+        结算节点里**没有 stage 字段**，所以阶段用**开局那拍**读到的
+        （`_cup_stages`）—— 一局之内阶段不会变。
+
+        与巅峰积分同构：结算对要等结算画面出现，挂起 `cup_wait` 秒每拍重试。
+        """
+        if rec.dir_path is None:
+            return []                    # 没建目录（早退局）没处落盘
+        if _M.group(rec.game_mode) != 'dc':
+            return []
+        stage = self._cup_stages[0] if self._cup_stages else None
+        if stage is None:
+            #: ★ 兜底重读：采集器可能**中途才 attach**（开局那一拍没读到阶段），
+            #: 也可能开局那拍 `DuelMenu` 还没就位。`stage` 是常驻值、
+            #: **离开杯赛界面也不会清**（`dp`/`dlv` 会清，见 cup_dp.py 模块头），
+            #: 所以收局这一刻再读一次是稳的。读不到就真跳过（不猜）。
+            try:
+                stage = self.hooks.read_cup_stage()
+            except Exception:
+                stage = None
+            if stage is not None:
+                self._cup_stages = [stage]
+        if stage != 2:
+            self.log('DC杯：本局阶段=%s（不是 2 阶段），不记 DP' % (stage,))
+            return []
+        cur = self._read_cup_checked()
+        if cur:
+            return self._settle_cup(cur, rec.dir_path, now, stage, waited=0.0)
+        #: 入队（同目录已有条目则替换 —— 重入幂等）
+        self._cup_probes = [q for q in self._cup_probes
+                            if q.get('dir') != rec.dir_path]
+        self._cup_probes.append({'dir': rec.dir_path, 'at': now,
+                                 'deadline': now + self.cup_wait,
+                                 'stage': stage, 'tries': 1})
+        self.log('DC杯积分：结算对还没出现，挂起 %.0fs 每拍重试（队列 %d 条）'
+                 % (self.cup_wait, len(self._cup_probes)))
+        return []
+
+    def _read_cup_checked(self):
+        """读 DP 结算对 + **链条校验**：新对 `before` 必须等于基线的 `after`。
+
+        与 `_read_peak_checked` 同口径：开局那拍 `DuelResult` 里是上一局的
+        结算对，拿它的 `after` 当基线；新对的 `before` 应当接得上。
+        基线没有时，收局后出现的第一对就收（对局期间 DuelResult 已被清掉）。
+        """
+        cur = self.hooks.read_cup_result()
+        if not cur:
+            return None
+        base = self._cup_base
+        if base and cur.get('before') != base.get('after'):
+            return None
+        return cur
+
+    def _poll_cup_probes(self, now):
+        """推进 DC 杯 DP 等待队列；落盘那一刻返回日志行。"""
+        if not self._cup_probes:
+            return []
+        cur = self._read_cup_checked()
+        lines, keep = [], []
+        for p in self._cup_probes:
+            if cur:
+                lines += self._settle_cup(cur, p['dir'], now,
+                                          p.get('stage'),
+                                          waited=now - p['at'])
+                continue
+            p['tries'] += 1
+            if now < p['deadline']:
+                keep.append(p)
+                continue
+            lines.append('DC杯积分：放弃（%s，%.0fs 内没等到本局结算对；'
+                         '快退/掉线局多半没有）'
+                         % (os.path.basename(p.get('dir') or '?'),
+                            self.cup_wait))
+        self._cup_probes = keep
+        return lines
+
+    def _settle_cup(self, cur, dir_path, now, stage, waited=0.0):
+        """落盘 `cup_dp.json` + 顺手补进库（只补空；失败不阻塞）。"""
+        data = {'before': cur.get('before'), 'after': cur.get('after'),
+                'win': cur.get('win'), 'stage': stage,
+                'base': self._cup_base, 'at': now,
+                'waited_sec': round(waited, 1)}
+        try:
+            with open(os.path.join(dir_path, 'cup_dp.json'), 'w',
+                      encoding='utf-8', newline='') as f:
+                f.write(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
+        except Exception as e:
+            self.log('DC杯积分落盘失败：%r' % e)
+            return []
+        self._cup_base = None
+        delta = (cur['after'] - cur['before'])
+        lines = ['DC杯积分：%d -> %d（%+d，%s阶段，等了 %.1fs）'
+                 % (cur['before'], cur['after'], delta, stage, waited)]
+        dir_name = os.path.basename(dir_path)
+        try:
+            got = self.hooks.backfill_cup(dir_name)
+        except Exception as e:
+            self.log('DC杯积分补写失败（不阻塞，可手跑 backfill_cup_dp --apply）：%r' % e)
+            got = None
+        if got:
+            lines.append(got)
+        return lines
+
     def _poll_rank_bases(self, now):
         """挂起窗口内每拍重试读基线；读到就照常走两拍法，超时放弃（日志可见）。
 
@@ -1834,6 +2000,24 @@ class DuelCollector(object):
             got = None
         if got:
             lines.append(got)
+        # ★ 2026-10-22：**局前真值**也要盖住推断值。
+        #   `backfill_rank`（= `backfill_my_rank.apply_one`）对局前位是
+        #   「只补空」—— 而推断链（`_infer_rank_state`）**先**把推断值占进去，
+        #   于是探测读到的真值（`Duel.rank`，开局那一拍的权威值）永远进不来。
+        #   实锤：2026-10-22 11:06 那局，库里 `7-5`（推断）vs 真值 `7-4` ——
+        #   界面因此画成「7-5 → 7-4 ↑ 升段」，而这局是**大师4 原地不动**。
+        #   真值在 `p['before']`（**局前**，不是 `cur` 那个局后值）。
+        try:
+            before = p.get('before') or {}
+            if before.get('rank') is not None and before.get('rate') is not None:
+                from core.storage import Storage
+                fixed = Storage().repair_rank_before_for_record(
+                    dir_name, before['rank'], before['rate'])
+                if fixed:
+                    lines.append('段位局前位：真值 %s-%s 已盖掉推断值'
+                                 % (before['rank'], before['rate']))
+        except Exception as e:
+            self.log('局前段位真值覆盖失败（不阻塞）：%r' % e)
         # ★ 真值复核（2026-09-18 晚 + 深夜补强）：探测真值是**权威**，本局行以它为准。
         #   为什么要覆盖而不是「只补空」：本局行此刻装的可能是**推断值**
         #   （`_infer_rank_state` 收局后同帧写的），推断规则里那条跨大段晋级还
@@ -1954,34 +2138,55 @@ class Runtime(Hooks):
         self.em_reader = EndMessageReader(game_dir=game_dir)
         self._deck_watch = None      # 编辑界面卡组观察者（懒建；attach 时重建）
         self._peak_watch = None      # 巅峰 own-deck 观察者（懒建；同上）
+        #: 上一次 ``attach()`` 失败的原因（None = 没失败过 / 刚成功）。
+        #: ⚠️ 没有它，「还没加载完」与「版本更新把结构改了」在日志里长得一样。
+        self.last_attach_error = None
 
     # -- 生命周期 --
     def attach(self):
-        """连游戏进程 + 解析 metadata + 定位 Engine/DuelClient/控制器 TypeInfo。"""
+        """连游戏进程 + 解析 metadata + 定位 Engine/DuelClient/控制器 TypeInfo。
+
+        ⚠️ **失败原因必须留下来**（2026-10-22 加）：游戏版本更新（尤其
+        Unity 大版本）后最典型的故障就是这条链某一段断掉，而原来所有异常都被
+        吞成 ``return False``，主循环只打「…等待游戏就绪（第 N 次）」——
+        与「游戏还没加载完」**一模一样**，排查时完全看不出断在哪一步。
+        现在原因存在 :attr:`last_attach_error` 上，主循环首次/每 60 次打一次。
+        """
         self.detach()
+        self.last_attach_error = None
         pids = find_pids_by_name('masterduel.exe')
         if not pids:
+            self.last_attach_error = '没找到 masterduel.exe 进程'
             return False
         mp = default_metadata_path(self.game_dir)
         proc = None
         try:
             header = MetadataHeader.from_file(mp)
+            if not header.is_valid:
+                # 头部不合法 = 版本特征变了（Unity 大版本升级后会这样）
+                raise RuntimeError('metadata 头部不合法（magic/version/偏移）：%r'
+                                   % (header,))
             proc = SafeProcess(pids[0])
             mirrors = find_all_metadata_mirrors(proc, header)
             if not mirrors:
-                raise RuntimeError('没找到 metadata 镜像')
+                raise RuntimeError(
+                    '没找到 metadata 镜像（头部特征对不上 —— 游戏还在加载，'
+                    '或版本更新改了 metadata 格式）')
             self.mirror = mirrors[0]
             self.tbl = read_string_table(mp, header)
             tis = find_typeinfo(proc, self.mirror, self.tbl,
                                 ENGINE_NS, ENGINE_NAME)
             if not tis:
-                raise RuntimeError('没定位到 Engine')
+                raise RuntimeError('没定位到 %s.%s 的 TypeInfo（类可能改名了）'
+                                   % (ENGINE_NS, ENGINE_NAME))
             self.engine_ti = tis[0]
             efl = {f.name: f.offset
                    for f in list_fields(proc, self.engine_ti,
                                         mirror=self.mirror)}
             if ENGINE_FIELD_MODE not in efl:
-                raise RuntimeError('字段表里没有 %s' % ENGINE_FIELD_MODE)
+                raise RuntimeError('Engine 字段表里没有 %s（字段改名？现有 %s）'
+                                   % (ENGINE_FIELD_MODE,
+                                      ', '.join(sorted(efl)[:10]) or '(空)'))
             self.engine_fields = efl
             self.mode_off = efl[ENGINE_FIELD_MODE]
             self.finished_off = efl.get(ENGINE_FIELD_FINISHED)
@@ -1991,7 +2196,9 @@ class Runtime(Hooks):
             ctis = find_typeinfo(proc, self.mirror, self.tbl,
                                  'YgomGame.Duel', 'DuelLogController')
             self.ctrl_ti = ctis[0] if ctis else 0
-        except Exception:
+        except Exception as e:                               # noqa: BLE001
+            # 记下**具体哪一步**（异常类型 + 文本），别只留一个 False
+            self.last_attach_error = '%s: %s' % (type(e).__name__, e)
             if proc is not None:
                 try:
                     proc.close()
@@ -2212,6 +2419,38 @@ class Runtime(Hooks):
         import backfill_peak_rate as bpr       # 同目录 tools/
         from core.storage import Storage
         return bpr.apply_one(Storage(), self.records_dir, dir_name)
+
+    def read_cup_result(self):
+        from core.memread.cup_dp import read_cup_result
+        try:
+            if self._cw_ti is None:
+                self._cw_ti = self.ticache.get('YgomSystem.Utility',
+                                               'ClientWork') or None
+            if not self._cw_ti:
+                return None
+            return read_cup_result(self.sp, self.mirror, self.tbl,
+                                   cw_ti=self._cw_ti)
+        except Exception:
+            return None
+
+    def read_cup_stage(self):
+        from core.memread.cup_dp import read_cup_stage
+        try:
+            if self._cw_ti is None:
+                self._cw_ti = self.ticache.get('YgomSystem.Utility',
+                                               'ClientWork') or None
+            if not self._cw_ti:
+                return None
+            return read_cup_stage(self.sp, self.mirror, self.tbl,
+                                  cw_ti=self._cw_ti)
+        except Exception:
+            return None
+
+    def backfill_cup(self, dir_name):
+        """DP 落盘后补进库（与 `tools/backfill_cup_dp.py` 共用 apply_one）。"""
+        import backfill_cup_dp as bcd          # 同目录 tools/
+        from core.storage import Storage
+        return bcd.apply_one(Storage(), self.records_dir, dir_name)
 
     def read_winbits(self, instance):
         """补读胜负位（同一个 EM 实例，隔几秒再来一次）。"""
@@ -2709,7 +2948,11 @@ def main(argv=None):
                 else:
                     tries += 1
                     if tries == 1 or tries % 60 == 0:
-                        log('…等待游戏就绪（第 %d 次）' % tries)
+                        # ★ 带上原因：版本更新后断链与「还没加载完」症状相同，
+                        #   没有这一步就只能靠人肉猜（2026-10-22）。
+                        why = getattr(rt, 'last_attach_error', None)
+                        log('…等待游戏就绪（第 %d 次）%s'
+                            % (tries, ('—— %s' % why) if why else ''))
                     time.sleep(args.interval)
                     continue
             ts = now_str()
@@ -2737,7 +2980,9 @@ def main(argv=None):
                     connected_pid = rt.pid
                     log('重新 attach 成功（pid=%s）' % rt.pid)
                 else:
-                    log('重新 attach 失败 —— 下一轮再试')
+                    log('重新 attach 失败 —— 下一轮再试%s'
+                        % (('：%s' % rt.last_attach_error)
+                           if getattr(rt, 'last_attach_error', None) else ''))
                 time.sleep(args.interval)
                 continue
             try:

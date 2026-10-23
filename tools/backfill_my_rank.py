@@ -149,6 +149,17 @@ def apply_one(storage, records_dir, dir_name):
         got_acts = storage.backfill_my_rank_before(row['match_id'],
                                                    before[0], before[1])
         acts.append('局前 ' + ('%d-%d' % before if got_acts else '无改动'))
+    elif before is not None:
+        # ★ 2026-10-22：局前位**已被推断值占住**时，用真值盖掉它
+        #   （判据见 `Storage.repair_rank_before_for_record`）。
+        #   原来这里只补空 —— 推断链先占位后真值永远进不来，
+        #   实锤 2026-10-22 11:06 那局：库里 `7-5`（推断）vs 真值 `7-4`，
+        #   界面因此画成「7-5 → 7-4 ↑ 升段」，实际是大师4 原地不动。
+        repair = getattr(storage, 'repair_rank_before_for_record', None)
+        if callable(repair):
+            if repair(dir_name, before[0], before[1]):
+                acts.append('局前真值 %d-%d 覆盖推断值'
+                            % (before[0], before[1]))
     if not acts:
         return None
     return '段位入库：%s（%s）' % (dir_name, '，'.join(acts))

@@ -113,6 +113,19 @@ class SettingsPatchedTest(unittest.TestCase):
                       TEST_QSETTINGS['application']).clear()
         _clear()
         self.addCleanup(_clear)
+        #: ★ 2026-10-22：段位推断状态文件也必须隔离 ——
+        #: `core.rank_state.save()` 默认写 **真机** `data/rank_state.json`
+        #: （`STATE_PATH` 是**模块级常量**，不跟 DATA_DIR 走）。
+        #: 本模块的「点结果格」用例会走 `ui_actions.repair_result` →
+        #: `_infer_rank_after_manual` → `rank_state.save()` —— 不隔离的话
+        #: **跑一次本文件就把用户的连胜/连败计数和段位改掉**
+        #: （实锤：2026-10-21 22:53 全量跑单测，真机状态从 7-4 被写成 7-5、
+        #:  `lose_streak` 一路涨到 107 —— 后面 10-22 的局因此全被判错）。
+        import core.rank_state as _rank_state
+        self._rank_path = _rank_state.STATE_PATH
+        _rank_state.STATE_PATH = os.path.join(tempfile.mkdtemp(),
+                                               'rank_state.json')
+        self.addCleanup(setattr, _rank_state, 'STATE_PATH', self._rank_path)
 
 
 @unittest.skipUnless(HAVE_QT, '没装 PySide6')

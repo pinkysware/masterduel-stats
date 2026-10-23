@@ -1032,6 +1032,9 @@ class RankBadge(QWidget):
         outer.setSpacing(0)
         outer.addStretch(1)
         self._group = QWidget()
+        #: 组宽**恒为满宽**（`badge_group_width()`）—— 这是「图标跨行对齐」的基准，
+        #: 收缩会破坏它（`tests/test_ui_floating.BadgeAlignTest` 锁着）。
+        #: 只有图标时（DC / 巅峰）怎么居中见下面 `_side` 的调用点。
         self._group.setFixedWidth(badge_group_width())
         outer.addWidget(self._group)
         outer.addStretch(1)
@@ -1055,6 +1058,12 @@ class RankBadge(QWidget):
             lay.addWidget(self._text(ARROW_UP if delta == 'up' else ARROW_DOWN,
                                      self.NUM_SIZE))
         else:
+            #: 🔴 **所有行图标一律贴组左缘**（2026-09-15 用户「段位图标没有对齐」
+            #:   定下的口径）。2026-10-23 曾试过「只有图标时在组内居中，与表头
+            #:   段位对齐」—— 用户实测反馈「**和天梯图标比又有偏右的感觉**」：
+            #:   DC/巅峰 图标到列中央，天梯图标贴左，跨行一看就不齐。
+            #:   → **撤销居中**，回到图标左缘一致。表头「段位」本来就是整列居中，
+            #:   正对「图标+数字」这个组的中心，两者不矛盾。
             self._side(lay, icon, row.get('badge_numeral'))
             if not icon and not row.get('badge_numeral')                     and row.get('rank_pending'):
                 #: ★ 段位「获取中」占位（同看板 `_rank_cell`，2026-09-18 晚）
@@ -1103,7 +1112,10 @@ class RankBadge(QWidget):
         if icon:
             lab = QLabel()
             lab.setFixedSize(cls.ICON, cls.ICON)
-            pix = widgets.round_pixmap(icon, cls.ICON, radius=cls.RADIUS)
+            #: ★ 2026-10-23：改 **不裁切**（`round_pixmap_fit`）—— 段位图标本来是
+            #:   方的，裁不裁一样；DC 图标是 2:1 宽扁图，居中裁方会把左右切掉，
+            #:   用户实测「图标太小了」。按比例缩放能完整放进 20px 的槽。
+            pix = widgets.round_pixmap_fit(icon, cls.ICON)
             if pix is not None:
                 lab.setPixmap(pix)
             lay.addWidget(lab)

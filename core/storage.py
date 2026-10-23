@@ -285,6 +285,10 @@ MATCH_FIELDS = (
     # ⚠️ 加列必须四处联动（SCHEMA_SQL / ADDED_COLUMNS / MATCH_FIELDS /
     #    KEEP_IF_NEW_NULL），漏 MATCH_FIELDS = 采集器写了也静默丢。
     'peak_rate_before', 'peak_rate_after', 'peak_season',
+    # DC 杯 DP（2026-10-23）：2 阶段的 DUEL POINT（整数）与阶段号。
+    # ⚠️ 与 peak_rate_* **不共用** —— DC 杯的 DP 和巅峰积分是两套互不相干的数，
+    #    混一列会让看板把两者当同一种东西比较（DP 从 0 起、RATE 从 1500 起）。
+    'cup_dp_before', 'cup_dp_after', 'cup_stage',
     'opp_revealed', 'opp_revealed_ids',
     # 手坑两列（2026-10-16）：JSON 数组字符串，每项
     # [{'turn':0,'id':12950,'key':'ash','name_cn':'灰流丽'}, ...]
@@ -307,6 +311,9 @@ KEEP_IF_NEW_NULL = (
     # 巅峰积分（2026-09-28）：收局后由采集器补写 —— 重解析 upsert 的新值
     # 是 NULL 时必须保留，否则把已回填的积分冲掉（与段位列同一批坑）
     'peak_rate_before', 'peak_rate_after', 'peak_season',
+    # DC 杯 DP（2026-10-23）：与巅峰积分同一批坑 —— 收局后由采集器补写，
+    # 重解析 upsert 的新值是 NULL 时必须保留
+    'cup_dp_before', 'cup_dp_after', 'cup_stage',
     # M3：record 回填列 —— 新值为 NULL 保留旧值（result 的覆盖走
     # apply_record_meta 的 winbit 优先规则，不走 upsert 的全量覆盖）
     # ⚠️ `result_src` **不在**这里：它跟 `result` 同生共死（见 _build_insert_sql
@@ -341,6 +348,10 @@ ADDED_COLUMNS = (
     # round 2 位入库；season 整数（积分跨赛季不可比，2026-09-28 审查 C2）
     ('peak_rate_before', 'REAL'), ('peak_rate_after', 'REAL'),
     ('peak_season', 'INTEGER'),
+    # DC 杯 DP（2026-10-23）：INTEGER —— 游戏给的是装箱 Int64（不是巅峰那种字符串，
+    # 所以不用 REAL）；stage 记 1/2（只有 2 阶段的局才写 DP）
+    ('cup_dp_before', 'INTEGER'), ('cup_dp_after', 'INTEGER'),
+    ('cup_stage', 'INTEGER'),
     # 多账号（2026-10-03）：收局从内存 profile 盖章（name + pcode 唯一键）
     ('account_name', 'TEXT'),
     ('account_pcode', 'INTEGER'),
@@ -460,6 +471,9 @@ CREATE TABLE IF NOT EXISTS matches (
     peak_rate_before REAL,                 -- 巅峰决斗积分（Rate Duel RATE，局前）
     peak_rate_after  REAL,                 -- 巅峰积分（局后）
     peak_season      INTEGER,              -- 巅峰赛季号（跨赛季不可比）
+    cup_dp_before    INTEGER,              -- DC 杯 DP（2 阶段，局前）
+    cup_dp_after     INTEGER,              -- DC 杯 DP（局后）
+    cup_stage        INTEGER,              -- DC 杯阶段（1=DLv / 2=DP）
     finish_type     INTEGER,                -- API 的结束方式编码
     opp_revealed    TEXT,                   -- JSON 数组（卡名）
     opp_revealed_ids TEXT,                  -- JSON 数组（卡 ID）
@@ -1153,6 +1167,51 @@ class Storage:
                              % ', '.join(sets), args + [match_id])
             return actions
 
+    def backfill_cup_dp(self, match_id, before, after, stage):
+        """DC 杯 DP 三列 —— **只补空、不覆盖**（口径同 `backfill_peak_rate`）。
+
+        DP 没有推断链（不像段位有 `rank_state`），所以不需要「真值覆盖推断」
+        的守卫；按「列清单、None 跳过」的单列口径写。全 None / 行不存在返回 {}；
+        返回动作 dict（'set' / 'kept:<旧值>' / 'unchanged'，按列）。
+
+        ⚠️ 值域校验在读取层（`core.memread.cup_dp.decode_dp`）做过了，这里不重复 ——
+        但 `stage` 只该是 1/2，传别的值说明调用方算错了，直接当 None 跳过。
+        """
+        if stage is not None:
+            try:
+                stage = int(stage)
+            except (TypeError, ValueError):
+                stage = None
+            if stage not in (1, 2):
+                stage = None
+        pairs = (('cup_dp_before', before), ('cup_dp_after', after),
+                 ('cup_stage', stage))
+        if all(v is None for _, v in pairs):
+            return {}
+        with self._open() as conn:
+            row = conn.execute('SELECT * FROM matches WHERE match_id = ?',
+                               (match_id,)).fetchone()
+            if row is None:
+                return {}
+            row = _row_to_dict(row)
+            actions, sets, args = {}, [], []
+            for col, value in pairs:
+                if value is None:
+                    continue
+                cur = row.get(col)
+                if cur is None:
+                    sets.append('%s = ?' % col)
+                    args.append(value)
+                    actions[col] = 'set'
+                elif cur != value:
+                    actions[col] = 'kept:%s' % cur
+                else:
+                    actions[col] = 'unchanged'
+            if sets:
+                conn.execute('UPDATE matches SET %s WHERE match_id = ?'
+                             % ', '.join(sets), args + [match_id])
+            return actions
+
     def set_api_meta(self, match_id, g):
         """把 **API 独有**的字段写到某一行（日志解析拿不到这些）。
 
@@ -1580,6 +1639,74 @@ class Storage:
                 'UPDATE matches SET my_rank_after = ?, my_rate_after = ?'
                 ' WHERE record_dir = ?', (rank, rate, record_dir))
             return cur.rowcount
+
+    def repair_rank_before_for_record(self, record_dir, rank, rate):
+        """段位**真值复核（局前位）**：探测真值盖住推断值。
+
+        ★ 2026-10-22：局前段位原来**只补空**（`backfill_my_rank_before`）——
+        而推断链（`infer_rank_for_record`）会**先**把推断值占进去，于是
+        探测读到的真值（`Duel.rank`，开局那一拍的权威值）**永远补不进去**。
+        实锤：2026-10-22 11:06 那局，库里 `my_rank_before=7-5`（推断值）、
+        探测真值 `7-4` —— 界面因此画成「7-5 → 7-4 ↑ 升段」，
+        而这局其实是**大师4 原地不动**（用户 2026-10-22 实报）。
+
+        覆盖判据（要严 —— 不能盖掉 API/人工写的权威值）：
+        * 真值与现值一致 → 什么都不做；
+        * 现值是**推断值** → 覆盖（见 `_rank_before_is_inferred`）；
+        * 判不出 → **不覆盖**（宁可不改，也不拿推断盖权威值）。
+        """
+        if rank is None or rate is None:
+            return 0
+        with self._open() as conn:
+            row = conn.execute(
+                'SELECT * FROM matches WHERE record_dir = ?',
+                (record_dir,)).fetchone()
+            if row is None:
+                return 0
+            row = _row_to_dict(row)
+            cur_pair = (row.get('my_rank_before'), row.get('my_rate_before'))
+            if cur_pair[0] is None:
+                return 0                        # 还没有值 -> 走「只补空」那条
+            if cur_pair == (rank, rate):
+                return 0                        # 已经是真值
+            if not self._rank_before_is_inferred(row):
+                return 0                        # 不是推断值 -> 不碰
+            cur = conn.execute(
+                'UPDATE matches SET my_rank_before = ?, my_rate_before = ?'
+                ' WHERE record_dir = ?', (rank, rate, record_dir))
+            return cur.rowcount
+
+    @staticmethod
+    def _rank_before_is_inferred(row):
+        """这一行的局前段位**是不是推断链写的**（可被真值覆盖）？
+
+        判据（两条都过才算推断值）：
+        * 段位对在**合法取值域**内（大段 1..7、小段 1..5）——
+          越界的（如旧行的 0/0）判不出来源，不碰；
+        * 本行**局后段位**与当前局前段位**大段一致** —— 推断链写 before/after
+          用的是同一份推断结果（同局不升/不掉段时两者相等；升段/掉段局
+          after 会变，但那种局本来也不该靠这条判据覆盖）。
+
+        ⚠️ 判不出就返回 False —— **宁可不覆盖**，也不拿推断盖人工/API 值
+        （那些是权威的，见 `KEEP_IF_NEW_NULL`）。
+        """
+        rank, rate = row.get('my_rank_before'), row.get('my_rate_before')
+        if rank is None or rate is None:
+            return False
+        try:
+            rank, rate = int(rank), int(rate)
+        except (TypeError, ValueError):
+            return False
+        if not (1 <= rank <= 7) or not (1 <= rate <= 5):
+            return False
+        after = row.get('my_rank_after')
+        if after is None:
+            return True                         # 只有局前值 -> 多半是推断占位
+        try:
+            after = int(after)
+        except (TypeError, ValueError):
+            return False
+        return after == rank
 
     def repair_my_deck_by_record(self, record_dir, name, src='revealed'):
         """卡组确认后的**本局修正**（2026-09-18 九轮审查 P1-1）。
