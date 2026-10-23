@@ -258,3 +258,29 @@ class UninstallJumpAndPidCheckTest(unittest.TestCase):
         raw = open(os.path.join(BUILD, 'launch_installed.bat'), 'rb').read()
         raw.decode('ascii')
 
+    def test_launcher_survives_path_with_spaces(self):
+        """★ 装到 `C:\\Program Files\\...`（默认目录，**带空格**）必须能启动。
+
+        根因（2026-10-24 用户实机首报，已复现）：`for /f ... in (`命令`)` 会
+        二次解析命令行，带引号的 exe 路径在空格处被截断：
+
+            'C:\\Program' 不是内部或外部命令
+            → DATA_DIR 空 → [ERROR] could not determine the duel data folder
+
+        **每个装到默认位置的用户都打不开程序**。修法：先重定向到临时文件再读。
+        这里锁两件事：① 不许再用反引号命令替换；② 必须走「重定向到文件」。
+        """
+        bat = self._code_lines(_read(os.path.join(BUILD,
+                                                  'launch_installed.bat')))
+        self.assertNotIn('in (`', bat,
+                         '命令替换（反引号）在带空格路径下会被截断 —— '
+                         '改用重定向到临时文件再 for /f 读文件')
+        self.assertIn('> "%MD_TMP%"', bat,
+                      'DATA_DIR 必须先重定向到文件再读')
+        self.assertIn('in ("%MD_TMP%")', bat,
+                      'DATA_DIR 必须从文件读，不是从命令读')
+        #: 判活那条同样受影响（同一个 bug 的第二个受害者）
+        self.assertNotIn("in (`\"%PY%\" -c \"import sys;sys.path.insert(0,'.');"
+                         "from ui import collector_ctl", bat)
+        self.assertIn('> "%MD_TMP2%"', bat, 'RUNNING 也要走文件')
+
