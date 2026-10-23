@@ -92,6 +92,41 @@ class TestDashboardRankCellCup(unittest.TestCase):
         self.assertTrue(any(t.startswith('DP') for t in texts), texts)
         self.assertIn('DC杯', cell.toolTip())
 
+    def test_stage1_shows_icon_but_no_score(self):
+        """★ 用户 2026-10-23：「现在**统一显示 DC 图标**，一阶段**不显示分数和 DP**」。
+
+        1 阶段打的是 DLv（LV1~LV20），不是积分 —— 那格只有图标，没有数字。
+        判据是 `is_dc`（按模式，不分阶段），**不是** `cup_dp`（只有 2 阶段有值）。
+        """
+        from PySide6.QtWidgets import QLabel
+        from ui import dashboard
+        row = self.ui_state._page_row(_base_row(cup_stage=1))
+        self.assertTrue(row.get('is_dc'))
+        self.assertIsNone(row.get('cup_dp'))          # 1 阶段没有积分
+        cell = dashboard.MatchRow(row, lambda *a: None)._rank_cell()
+        icons = [l for l in cell.findChildren(QLabel)
+                 if l.pixmap() is not None and not l.pixmap().isNull()]
+        texts = [l.text() for l in cell.findChildren(QLabel) if l.text()]
+        self.assertTrue(icons, '1 阶段也该有 DC 图标')
+        self.assertEqual(texts, [], '1 阶段不该显示分数或 DP')
+        self.assertIn('1 阶段', cell.toolTip())
+
+    def test_stage2_shows_icon_and_score(self):
+        """2 阶段：图标 + 分数 + DP（对照上一条）。"""
+        from PySide6.QtWidgets import QLabel
+        from ui import dashboard
+        row = self.ui_state._page_row(
+            _base_row(cup_stage=2, cup_dp_after=2048))
+        self.assertTrue(row.get('is_dc'))
+        cell = dashboard.MatchRow(row, lambda *a: None)._rank_cell()
+        texts = [l.text() for l in cell.findChildren(QLabel) if l.text()]
+        self.assertTrue(any(t.startswith('2') for t in texts), texts)
+        self.assertIn('DP', texts)
+
+    def test_non_dc_row_has_no_is_dc(self):
+        row = self.ui_state._page_row(_base_row(game_mode=3))
+        self.assertFalse(row.get('is_dc'))
+
     def test_order_is_icon_score_unit(self):
         """★ 用户 2026-10-23：「应该是 **图标-分数-DP** 这样写，而不是 图标-DP-分数」。"""
         from PySide6.QtWidgets import QLabel

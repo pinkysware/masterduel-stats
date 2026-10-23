@@ -1389,9 +1389,14 @@ class MatchRow(QWidget):
         #   （只推翻 DC，活动杯赛仍然不做，见 `core.modes.WANTED_ICONS`）。
         cup_dp = self.row.get('cup_dp')
         cup_dp_unit = self.row.get('cup_dp_unit') or 'DP'
-        if cup_dp:
+        #: ★ 用户 2026-10-23：「**现在统一显示 DC 图标，一阶段不显示分数和 DP**」。
+        #:   判据用 `is_dc`（按**模式**，不分阶段）而不是 `cup_dp`（只有 2 阶段有值）
+        #:   —— 否则 1 阶段的局整格空白，与悬浮窗（按模式给图标）不一致。
+        #:   1 阶段打的是 DLv（LV1~LV20），**不是积分**，所以那格只有图标、没有数字。
+        if self.row.get('is_dc'):
             from core import modes as _M
             icon = _M.icon_path('dc')
+        if cup_dp:
             #: ★ 用户 2026-10-23：「应该是 **图标-分数-DP** 这样写」——
             #:   所以 label 只放**分数**，单位单独画在它右边（下面 `lab` 之后）。
             label = cup_dp
@@ -1450,6 +1455,9 @@ class MatchRow(QWidget):
             elif cup_dp:
                 tip = '%s %s%s' % (tr('DC杯'), label, cup_dp_unit)
             host.setToolTip(tip)
+        elif self.row.get('is_dc'):
+            #: 1 阶段的 DC 行：只有图标没有数字，tooltip 说明「为什么不显示分数」
+            host.setToolTip(tr('DC杯（1 阶段：LV1~LV20，没有 DP）'))
         elif self.row.get('rank_pending'):
             host.setToolTip(tr('段位获取中…（结算写入通常需要 1~2 分钟）'))
         return host

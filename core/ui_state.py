@@ -980,6 +980,11 @@ def _page_row(m) -> dict:
                       and (m.get('cup_dp_after') is not None
                            or m.get('cup_dp_before') is not None))
                   else None,
+        #: ★ DC 杯**行的标记**（不分阶段）—— 看板据此画 DC 图标。
+        #:   1 阶段（DLv）**没有积分**，但图标照画（用户 2026-10-23：
+        #:   「现在统一显示 DC 图标，一阶段不显示分数和 DP」）。
+        #:   ⚠️ 与 `cup_dp` 的判据不同：`cup_dp` 只要 2 阶段有值的局。
+        'is_dc': (group == 'dc'),
         #: ★ 2026-10-23 用户：「看板战绩页应该是 **图标-分数-DP** 这样写，
         #:   而不是 图标-DP-分数」。`cup_dp` 是纯分数（如 `'2048'`），
         #:   `cup_dp_unit` 是单位（`'DP'`）—— 界面自己决定谁在前。
