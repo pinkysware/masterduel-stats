@@ -124,6 +124,35 @@ class MyDeckWatcher(object):
             self._inst = addr
         return self._consider(deck)
 
+    def peek(self, now=None) -> Optional[dict]:
+        """读**当前**编辑实例的牌（快照语义：要值；None = 真读不到）。
+
+        与 :meth:`poll` 的区别：**不走 `_consider` 的同指纹去重** —— 那条
+        短路是「编辑界面观察者」的节拍语义（变了才写状态文件）；巅峰快照
+        复用本类时语义不同：用户在大厅编辑过的牌已写进 `my_deck.json`，
+        巅峰编辑实例读到同一副（同一指纹）时 poll() 恒 None，
+        巅峰局的我方卡组就整局空（2026-10-24 实锤：3/3 局、卡组相同必现；
+        09-28 验收能过纯属当时两份指纹不同）。节拍与实例缓存与 poll 共用。
+        """
+        now = time.time() if now is None else now
+        if self._inst:
+            deck, state = self._read_at(self._inst)
+            if state == 'error':
+                return None               # 瞬时读失败：保留地址，下拍重试
+            if state != 'ok':
+                self._inst = None         # 确实不是本类实例 -> 走重扫节流
+                self._next_scan_at = now + self.rescan_sec
+                return None
+            return deck
+        if now < self._next_scan_at:
+            return None
+        deck, addr = self.reader.scan()
+        self._next_scan_at = now + self.rescan_sec
+        if not deck:
+            return None
+        self._inst = addr
+        return deck
+
     def _consider(self, deck) -> Optional[dict]:
         ids = list(deck.get('ids') or [])
         fp = my_deck.fingerprint(ids)

@@ -228,7 +228,8 @@ def mark(storage, match_id: str, name: Optional[str] = None,
 
 
 def mark_meta_deck(storage, match_id: str, deck: Optional[dict],
-                   disp: Optional[str] = None
+                   disp: Optional[str] = None,
+                   note: Optional[str] = None
                    ) -> Tuple[bool, str]:
     """把 meta_decks 的一条记录（dict）绑到一局 —— S3 卡组选择器用。
 
@@ -241,6 +242,9 @@ def mark_meta_deck(storage, match_id: str, deck: Optional[dict],
 
     ``disp`` = **界面上显示的那个名字**（多语言时由调用方按当前显示语言算好传进来，
     见 `ui.selector.deck_display`）。不传就退回「中文优先」的老口径。
+
+    ``note`` = 标注留痕（如 auto-adopt 的 ``auto:conf=0.95``），落
+    ``matches.opp_deck_note``（storage 层 COALESCE 补空，不盖已有备注）。
     """
     if not match_id:
         return False, '没有指定对局'
@@ -251,7 +255,7 @@ def mark_meta_deck(storage, match_id: str, deck: Optional[dict],
     try:
         oid = storage.upsert_opp_deck(deck['name'],
                                       aliases=deck.get('aliases'))
-        storage.mark_opp_deck(match_id, opp_deck_id=oid, name=disp)
+        storage.mark_opp_deck(match_id, opp_deck_id=oid, name=disp, note=note)
     except Exception as exc:                       # 不许把异常丢给界面
         return False, '写入失败：%s' % exc
     return True, '已标注：%s' % disp

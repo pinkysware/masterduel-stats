@@ -104,6 +104,22 @@ class MarkTest(unittest.TestCase):
         ui_actions.mark(st, 'm1', name='闪刀姬', note='看过战报')
         self.assertEqual(st.marked[0][3], '看过战报')
 
+    def test_mark_meta_deck_passes_note_through(self):
+        """auto-adopt 传 note= 不能再炸（2026-10-25：签名缺形参，TypeError 被
+        「退回显示建议」吞掉 —— 高置信局全部退回黄色建议要手点）。"""
+        st = FakeStorage()
+        ok, msg = ui_actions.mark_meta_deck(
+            st, 'm1', {'name': 'Invoked', 'name_cn': '召唤师'},
+            note='auto:conf=0.95')
+        self.assertTrue(ok, msg)
+        self.assertEqual(st.marked[0][3], 'auto:conf=0.95')
+
+    def test_mark_meta_deck_without_note_keeps_none(self):
+        st = FakeStorage()
+        ok, _ = ui_actions.mark_meta_deck(st, 'm1', {'name': 'Invoked'})
+        self.assertTrue(ok)
+        self.assertIsNone(st.marked[0][3])
+
     def test_mark_never_raises(self):
         ok, msg = ui_actions.mark(FakeStorage(fail=True), 'm1', name='x')
         self.assertFalse(ok)

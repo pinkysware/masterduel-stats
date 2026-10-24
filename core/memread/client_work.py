@@ -32,6 +32,19 @@ CONTAINERS = [('Deck', 'DeckList'), ('TDeck', 'TDeckList'),
 PART_ORDER = ('m', 'e', 's', 't')
 
 
+def _sdata_addr(proc, mirror, tbl, cw_ti=None):
+    """ClientWork 的 ``s_data`` 静态字段 -> 指针值；读不到给 ``None``。"""
+    ti = cw_ti or find_clientwork(proc, mirror, tbl)
+    if not ti:
+        return None
+    fl = {f.name: f.offset for f in list_fields(proc, ti, mirror=mirror)}
+    if 's_data' not in fl:
+        return None
+    base = static_fields_addr(proc, ti)
+    sdata = proc.read_ptr(base + fl['s_data'])
+    return sdata if sdata and sdata >= 0x10000 else None
+
+
 def find_clientwork(proc, mirror, tbl):
     """ClientWork 的 TypeInfo；没定位到给 None。"""
     try:
@@ -133,15 +146,8 @@ def snapshot_my_deck(proc, mirror, tbl, cw_ti=None):
         全内存扫描，常驻方必须传缓存；None 才自己找）。
     """
     try:
-        ti = cw_ti or find_clientwork(proc, mirror, tbl)
-        if not ti:
-            return None
-        fl = {f.name: f.offset for f in list_fields(proc, ti, mirror=mirror)}
-        if 's_data' not in fl:
-            return None
-        base = static_fields_addr(proc, ti)
-        sdata = proc.read_ptr(base + fl['s_data'])
-        if not sdata or sdata < 0x10000:
+        sdata = _sdata_addr(proc, mirror, tbl, cw_ti)
+        if not sdata:
             return None
         containers = read_containers(proc, mirror, sdata)
         deck_list = read_deck_list(proc, mirror, sdata)
@@ -164,3 +170,72 @@ def snapshot_my_deck(proc, mirror, tbl, cw_ti=None):
     except (TypeError, ValueError):
         did = sel
     return {'deck_id': did, 'deck_name': row.get('name'), 'ids': ids}
+
+
+def read_ratedeck(proc, mirror, tbl, cw_ti=None):
+    """巅峰（Rate Duel）选牌 -> 契约形状 dict；读不到 ``None``。
+
+    2026-10-25 实机定性（10 月版 UI，双槽位选牌）：巅峰槽位就是
+    ``s_data.Deck.ratedeck_id``（与天梯槽 ``maindeck_id`` 并列的字段，
+    字段名直说了 Rate deck）—— 名字取 ``Deck.list[ratedeck_id].name``，
+    逐卡表取 ``DeckList[ratedeck_id]`` 的 ``{m/e/s/t}``。用户巅峰与天梯
+    选同一副时两值相同（48171157='闪刀姬'，55 张），分开选时各自独立 ——
+    正好补上 09-28「巅峰牌在 DeckEdit 编辑实例」实锤的过期（10 月版选牌
+    走 DeckSelectViewController2 列表选择，全程不建编辑实例）。
+
+    ⚠️ 别碰同层的 ``RDeckList``（R 开头容易望文生义）—— 实测它装着一副
+    与用户所选无关的完整召唤师（56 张、ulong 键、对局外常驻、非最近对手：
+    与 00:02/00:21 局露卡 0 重合），语义未定（疑似租借/推荐预载），
+    拿它当快照会整局错标。
+
+    ⚠️ ``ratedeck_id`` 读不到 / 0 / 名字与逐卡表都缺 -> ``None``（宁可
+    空，别编）。
+    """
+    try:
+        sdata = _sdata_addr(proc, mirror, tbl, cw_ti)
+        if not sdata:
+            return None
+        got = dict(dict_items(proc, mirror, sdata) or [])
+        deck = dict(dict_items(proc, mirror, got.get('Deck')) or {})
+        rv = deck.get('ratedeck_id')
+        rid = None
+        if rv and rv > 0x10000:
+            rid = read_string(proc, rv, 60) or boxed_int(proc, rv)
+        if rid in (None, '', 0):
+            return None
+        rid_str = str(rid)
+        # 名字：Deck.list[ratedeck_id].name
+        name = None
+        lst = dict(dict_items(proc, mirror, deck.get('list')) or {})
+        entry = lst.get(rid_str)
+        if entry and entry > 0x10000:
+            for k2, v2 in (dict_items(proc, mirror, entry) or []):
+                if (k2 if isinstance(k2, str) else read_string(proc, k2, 30)) == 'name':
+                    name = read_string(proc, v2, 60)
+                    break
+        # 逐卡表：DeckList[ratedeck_id] 的 {m/e/s/t}
+        main: list = []
+        extra: list = []
+        dl = dict(dict_items(proc, mirror, got.get('DeckList')) or {})
+        dv = dl.get(rid_str)
+        if dv and dv > 0x10000:
+            for part, pv in (dict_items(proc, mirror, dv) or []):
+                if not pv or pv < 0x10000:
+                    continue
+                p2 = dict(dict_items(proc, mirror, pv) or {})
+                ids = int_list(proc, mirror, p2.get('ids')) or []
+                if str(part) == 'e':
+                    extra = ids
+                elif str(part) == 'm':
+                    main = ids
+        ids = main + extra
+        if not ids:
+            return None
+        try:
+            deck_id = int(rid_str)
+        except (TypeError, ValueError):
+            deck_id = rid_str
+        return {'deck_id': deck_id, 'deck_name': name, 'ids': ids,
+                'main': main, 'extra': extra, 'container': 'Ratedeck'}
+    except Exception:
+        return None

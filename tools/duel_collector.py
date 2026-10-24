@@ -286,11 +286,18 @@ class Hooks(object):
         return None
 
     def snapshot_peak_deck(self):
-        """巅峰局 own-deck：扫**编辑中的卡组**实例（09-28 用户配合实测）。
+        """巅峰局 own-deck（2026-10-25 二改：10 月版巅峰槽 = Deck.ratedeck_id）。
 
-        现场实锤：巅峰选的卡组**不落 ClientWork 容器**（DTDeck 全空），
-        而是走 DeckEdit 编辑实例（deck_name='闪刀姬'、55 张，识别=Sky Striker）。
-        便宜路径：MyDeckWatcher 同款（实例缓存 + 重扫节流）。
+        主路：`client_work.read_ratedeck` —— 巅峰选牌槽位就是
+        ``s_data.Deck.ratedeck_id``（名字在 Deck.list、逐卡表在 DeckList，
+        字段名自解释、常驻、与天梯槽 maindeck_id 并列）。09-28 的「巅峰牌在
+        DeckEdit 编辑实例」已过期（10 月版选牌走列表选择，不建编辑实例）。
+        回落：编辑实例通道（`peek()`，兼容老版本 / 打开过编辑界面的场景）。
+
+        ⚠️ 回落通道用 `peek()` 不用 `poll()`：poll 的「同指纹不重复识别」会把
+        「巅峰牌 == 大厅最近编辑的牌」的局整局短路成 None（2026-10-24）。
+        ⚠️ 别碰同层 `RDeckList`（见 `read_ratedeck` docstring：语义未定，
+        实测装着与所选无关的召唤师，拿来当快照会错标）。
         """
         # ★ BUG-B8-05：基类 `Hooks` 没有 `sp` / `mirror` / `tbl`（只有 Runtime 有）
         #   —— 原来直接 `self.sp` 会让自定义 Hooks 子类在巅峰局抛 AttributeError，
@@ -301,13 +308,35 @@ class Hooks(object):
         tbl = getattr(self, 'tbl', None)
         if sp is None or mirror is None or tbl is None:
             return None
+        # ---- 主路：Deck.ratedeck_id -------------------------------------
+        try:
+            from core.memread.client_work import find_clientwork, read_ratedeck
+            cw_ti = getattr(self, '_cw_ti', None)
+            if cw_ti is None:
+                tc = getattr(self, 'ticache', None)
+                if tc is not None:
+                    cw_ti = tc.get('YgomSystem.Utility', 'ClientWork') or None
+                    self._cw_ti = cw_ti
+            if cw_ti is None:
+                cw_ti = find_clientwork(sp, mirror, tbl)
+                self._cw_ti = cw_ti
+            if cw_ti:
+                deck = read_ratedeck(sp, mirror, tbl, cw_ti=cw_ti)
+                if deck and deck.get('ids'):
+                    self.log('巅峰快照（ratedeck）：%s（%d 张）'
+                             % (deck.get('deck_name') or '（未识别）',
+                                len(deck['ids'])))
+                    return deck
+        except Exception:
+            pass
+        # ---- 回落：DeckEdit 编辑实例（09-28 老通道）----------------------
         try:
             if getattr(self, '_peak_watch', None) is None:
                 from core.memread.my_deck_watch import (DeckEditReader,
                                                         MyDeckWatcher)
                 self._peak_watch = MyDeckWatcher(
                     DeckEditReader(sp, mirror, tbl))
-            return self._peak_watch.poll()
+            return self._peak_watch.peek()
         except Exception:
             return None
 

@@ -192,6 +192,31 @@ class TestWatcher(unittest.TestCase):
         self.assertEqual(got['name'], 'Sky Striker')
         self.assertEqual(reader.scans, 1)               # 一次全扫都没多花
 
+    def test_peek_bypasses_fingerprint_shortcircuit(self):
+        """巅峰快照语义：同一副牌 peek 也要返回值（poll 会被同指纹短路）。
+
+        2026-10-24 实锤：大厅编辑过的牌已写 my_deck.json，巅峰编辑实例读到
+        同一副 -> poll() 恒 None -> 巅峰局我方卡组整局空（3/3 局必现）。
+        """
+        reader = _StubReader(_deck([4007] * 41))
+        w = self._watch(reader)
+        self.assertIsNotNone(w.poll(now=1000.0))
+        self.assertIsNone(w.poll(now=1002.0))           # 同指纹 -> poll 短路
+        got = w.peek(now=1004.0)
+        self.assertEqual(got['ids'], [4007] * 41)       # peek 不短路
+
+    def test_peek_after_gone_rescans_with_throttle(self):
+        """peek 的便宜路径/节流与 poll 同拍：gone 作废地址、120s 后才重扫。"""
+        reader = _StubReader(_deck([4007] * 41))
+        w = self._watch(reader)
+        self.assertIsNotNone(w.poll(now=1000.0))
+        reader.deck = None                              # 离开编辑界面
+        self.assertIsNone(w.peek(now=1002.0))           # gone -> 作废 + 节流
+        reader.deck = _deck([4007] * 41)
+        self.assertIsNone(w.peek(now=1100.0))           # 还没到 120s
+        self.assertIsNotNone(w.peek(now=1200.0))        # 到点重扫 -> 有值
+        self.assertEqual(reader.scans, 2)
+
 
 if __name__ == '__main__':
     unittest.main()

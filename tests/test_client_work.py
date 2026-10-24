@@ -66,6 +66,68 @@ def _patch_typeinfo(cw_ti):
     client_work.find_typeinfo = lambda *a, **k: [cw_ti]
 
 
+class TestRatedeck(unittest.TestCase):
+    """read_ratedeck —— 巅峰槽位 `Deck.ratedeck_id`（2026-10-25 实机定性）。"""
+
+    def _build(self, mem, ratedeck='48171157', name='闪刀姬', deck_list=None):
+        cw_ti = build_named_typeinfo(mem, 'ClientWork', [('s_data', 0x08)])
+        sb = mem.alloc(0x40)
+        mem.put_u64(cw_ti, 0xB8, sb)
+        deck_inner = {'maindeck_id': build_string(mem, '48171157')}
+        if ratedeck is not None:
+            deck_inner['ratedeck_id'] = build_string(mem, str(ratedeck))
+        if name is not None and ratedeck is not None:
+            deck_inner['list'] = build_str_dict(mem, {
+                str(ratedeck): build_str_dict(
+                    mem, {'name': build_string(mem, name)})})
+        kv = {'Deck': build_str_dict(mem, deck_inner)}
+        if deck_list:
+            parts = {}
+            for part, ids in deck_list.items():
+                if ids:
+                    parts[part] = build_str_dict(mem, {
+                        'ids': build_ref_list(
+                            mem, [build_boxed_int(mem, v) for v in ids])})
+            kv['DeckList'] = build_str_dict(
+                mem, {str(ratedeck): build_str_dict(mem, parts)})
+        sdata = build_str_dict(mem, kv)
+        mem.put_u64(sb, 0x08, sdata)
+        return ObjProc(mem), cw_ti
+
+    def test_full_chain(self):
+        mem = FakeMem()
+        proc, cw_ti = self._build(
+            mem, deck_list={'m': [20500, 8933], 'e': [14990]})
+        d = client_work.read_ratedeck(proc, None, 'tbl', cw_ti=cw_ti)
+        self.assertEqual(d['deck_id'], 48171157)
+        self.assertEqual(d['deck_name'], '闪刀姬')
+        self.assertEqual(d['ids'], [20500, 8933, 14990])
+        self.assertEqual(d['container'], 'Ratedeck')
+
+    def test_ratedeck_missing_is_none(self):
+        """从没选过巅峰（ratedeck_id 缺）-> None，不回落天梯那份。"""
+        mem = FakeMem()
+        proc, cw_ti = self._build(mem, ratedeck=None)
+        self.assertIsNone(
+            client_work.read_ratedeck(proc, None, 'tbl', cw_ti=cw_ti))
+
+    def test_no_card_list_is_none(self):
+        """逐卡表没加载（DeckList 无该条）-> None（契约：宁空不编）。"""
+        mem = FakeMem()
+        proc, cw_ti = self._build(mem, deck_list={})
+        self.assertIsNone(
+            client_work.read_ratedeck(proc, None, 'tbl', cw_ti=cw_ti))
+
+    def test_name_missing_still_returns_cards(self):
+        """名字条目缺 -> deck_name=None 但卡表照回（名字不拦识别）。"""
+        mem = FakeMem()
+        proc, cw_ti = self._build(mem, name=None,
+                                  deck_list={'m': [20500]})
+        d = client_work.read_ratedeck(proc, None, 'tbl', cw_ti=cw_ti)
+        self.assertIsNone(d['deck_name'])
+        self.assertEqual(d['ids'], [20500])
+
+
 class TestSnapshot(unittest.TestCase):
 
     def test_full_chain(self):
