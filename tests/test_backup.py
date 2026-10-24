@@ -189,6 +189,11 @@ class ExportPageBackupUiTest(unittest.TestCase):
         self.assertTrue(page.btn_restore.text())
         self.assertTrue(callable(page._do_backup))
         self.assertTrue(callable(page._do_restore))
+        #: 🔴 2026-10-24 踩过：诊断包按钮创建了却没 addWidget（孤儿控件，
+        #:   永不显示）—— 存在性断言拦不住，必须查**布局归属**。
+        for b in (page.btn_backup, page.btn_restore, page.btn_diag):
+            self.assertIsNotNone(b.parentWidget(), '按钮没进布局: %r' % b)
+            self.assertTrue(b.isVisibleTo(page))
 
 
 if __name__ == '__main__':

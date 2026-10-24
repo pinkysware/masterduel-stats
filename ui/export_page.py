@@ -138,6 +138,7 @@ class ExportPage(QWidget):
         self.btn_diag.clicked.connect(self._do_diag)
         bk_head.addWidget(self.btn_backup)
         bk_head.addWidget(self.btn_restore)
+        bk_head.addWidget(self.btn_diag)
         outer.addLayout(bk_head)
 
         self._preview = []
