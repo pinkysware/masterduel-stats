@@ -57,12 +57,19 @@ class PatchPackageTest(unittest.TestCase):
                   and not e.startswith(allowed)]
         self.assertEqual(leaked, [], '补丁包混进了用户数据')
 
-    def test_patch_includes_bug_guide(self):
-        """★ 2026-10-24 手册进包（不单独发布）—— patch 也要带。"""
-        from build.build_patch import patch_entries
-        entries = set(patch_entries())
-        self.assertIn('bug-guide.html', entries)
-        self.assertIn('bug-guide.md', entries)
+    def test_patch_excludes_bug_guide(self):
+        """★ 2026-10-25 手册回退独立产物（A 方案）—— patch 不再带。
+        常量断言（零环境依赖）：patch_entries() 按「文件存在」过滤，
+        拿它的结果断言在干净 clone 上会红。"""
+        from build.build_patch import PATCH_FILES
+        self.assertNotIn('bug-guide.html', PATCH_FILES)
+        self.assertNotIn('bug-guide.md', PATCH_FILES)
+
+    def test_patch_includes_user_guide(self):
+        """★ 2026-10-25 使用指南进包 —— html/md 都要列（emit_into 双写）。"""
+        from build.build_patch import PATCH_FILES
+        self.assertIn('user-guide.html', PATCH_FILES)
+        self.assertIn('user-guide.md', PATCH_FILES)
 
     def test_patch_includes_offline_seed(self):
         """★ 2026-10-24：离线基线必须进补丁 —— 补丁升级的老用户

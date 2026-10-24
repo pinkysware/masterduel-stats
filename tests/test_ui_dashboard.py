@@ -378,7 +378,8 @@ class DashboardShellTest(unittest.TestCase):
         # 2026-10-18 用户定：新增「游戏对局数据」（数据目录可改）→ 12 项
         # 2026-10-21 用户定：新增「刷新 Tier 榜单」（s_tierlist —— 之前只有
         #   「获取新卡组名」顺带刷榜，名实不符，用户找不到更新入口）→ 13 项
-        self.assertEqual(len(dashboard.SETTINGS_PAGES), 13)
+        # 2026-10-25 用户定：新增「使用指南」（s_guide，随包 user-guide.html）→ 14 项
+        self.assertEqual(len(dashboard.SETTINGS_PAGES), 14)
         self.assertIn('获取新卡组名', dashboard.PAGE_HINTS['decks'][1] + dashboard.PAGE_HINTS['decks'][0])
 
     # ------------------------------------------------------------ 几何持久化
@@ -2160,10 +2161,13 @@ class DeckManagerFeedbackTest(unittest.TestCase):
         self.assertIn('多个用 / 分隔', tips)
 
     def test_header_is_above_the_rows(self):
-        """表头在最上面（先表头 → 自定义行 → 数据行）。"""
+        """表头在最上面（提示行 → 表头 → 自定义行 → 数据行）。
+
+        2026-10-25 加了页头提示行（点卡图可换卡图）—— 它是 col 的第 0 项。"""
         lay = self.mgr.col
-        self.assertIs(lay.itemAt(0).widget(), self.mgr.header_row)
-        self.assertIs(lay.itemAt(1).widget(), self.mgr.new_row)
+        self.assertIs(lay.itemAt(0).widget(), self.mgr.guide_label)
+        self.assertIs(lay.itemAt(1).widget(), self.mgr.header_row)
+        self.assertIs(lay.itemAt(2).widget(), self.mgr.new_row)
 
     def test_header_aligns_with_row_columns(self):
         """★ 表头与数据行**逐列对齐**（两边列宽/伸缩比必须一致）。

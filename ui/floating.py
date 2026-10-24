@@ -1260,7 +1260,8 @@ class OppDeckCell(QFrame):
             #   仍算未标注：底色保持琥珀 soft、`!` 角标保留；只是文字用白字
             #   （琥珀字跟「未知卡组」会混淆）。
             deck_text = suggest
-            base_tip = tr('建议：%s —— 点一下即标注') % suggest
+            base_tip = tr('建议：%s —— 点一下即确认；置信高且命中多时会自动'
+                          '入库') % suggest
             self.label.setStyleSheet('color: %s;' % theme.INK)
         else:
             # D6（2026-09-15 用户定）：未标注那格写「未知卡组」（原「点击标注」），

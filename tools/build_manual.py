@@ -52,6 +52,13 @@ DEFAULT_OUT = os.path.dirname(PROJ)
 #: 实测混进中文容易在下游出现乱码名（不如一开始就别用）。
 SUFFIX = 'bug-guide'
 
+#: 「使用指南」（2026-10-25 起）：包根 ``user-guide.html``，随 4 包分发；
+#: 内容 = ``docs/用户指南.md``（中文）。与 bug-guide **共用同一渲染管线**
+#: （emit_into 参数化，见 docs/用户指南与FAQ计划.md §三-3）。
+GUIDE_REL = 'docs/用户指南.md'
+GUIDE_SUFFIX = 'user-guide'
+GUIDE_TITLE = 'Master Duel Stats 使用指南'
+
 
 def read_version() -> str:
     from core.version import __version__
@@ -255,11 +262,11 @@ strong { font-weight: 600; }
 """
 
 
-def render_html(md: str, version: str = '') -> str:
+def render_html(md: str, version: str = '', title: str = None) -> str:
     body = render_markdown(md)
-    title = 'Master Duel Stats — Bug 定位手册'
+    t = title or 'Master Duel Stats — Bug 定位手册'
     if version:
-        title += ' v%s' % version
+        t += ' v%s' % version
     return (
         '<!DOCTYPE html>\n'
         '<html lang="zh-CN">\n<head>\n'
@@ -268,45 +275,53 @@ def render_html(md: str, version: str = '') -> str:
         '<title>%s</title>\n'
         '<style>\n%s</style>\n'
         '</head>\n<body>\n%s\n</body>\n</html>\n'
-        % (html.escape(title), _CSS, body))
+        % (html.escape(t), _CSS, body))
 
 
 # -------------------------------------------------------------------- main
-def build(version: str = None, out_dir: str = None) -> list:
+def build(version: str = None, out_dir: str = None,
+          src_rel: str = MANUAL_REL, stem_suffix: str = SUFFIX,
+          doc_title: str = None) -> list:
     """生成产物，返回写出的文件路径列表。**不抛网络/环境异常**。"""
     ver = version or read_version()
     out = out_dir or DEFAULT_OUT
-    src = os.path.join(PROJ, MANUAL_REL)
+    src = os.path.join(PROJ, src_rel)
     with io.open(src, encoding='utf-8', newline='') as f:
         md = f.read()
 
     os.makedirs(out, exist_ok=True)
-    stem = 'masterduel-stats-v%s-%s' % (ver, SUFFIX)
+    stem = 'masterduel-stats-v%s-%s' % (ver, stem_suffix)
     html_path = os.path.join(out, stem + '.html')
     md_path = os.path.join(out, stem + '.md')
 
     with io.open(html_path, 'w', encoding='utf-8', newline='') as f:
-        f.write(render_html(md, ver))
+        f.write(render_html(md, ver, doc_title))
     with io.open(md_path, 'w', encoding='utf-8', newline='') as f:
         f.write(md)
     return [html_path, md_path]
 
 
-def emit_into(dst_dir: str, version: str = None) -> list:
-    """★ 2026-10-24 用户口径变更：手册**塞进压缩包**，不再单独发布 ——
-    打包脚本（full/patch/lite/installer）在出包前调这个，把
-    ``bug-guide.html`` / ``bug-guide.md``（**不带版本号**，升级自然覆盖）
-    生成到包根。返回写出的路径列表。
+def emit_into(dst_dir: str, version: str = None, src: str = None,
+              stem: str = None, title: str = None) -> list:
+    """把一份文档生成 ``<stem>.html`` + ``<stem>.md``（不带版本号）到 dst_dir。
+
+    缺省 = bug-guide（``docs/Bug定位手册.md``）。★ 2026-10-25 拍板（A 方案）：
+    bug-guide **回退为独立产物**（``build()`` 出带版本号的发布件），emit_into
+    现在实际只给 **user-guide** 接线用（full/patch/installer/sync 四处，见
+    ``docs/用户指南与FAQ计划.md`` §三-3），接线传
+    ``src=GUIDE_REL, stem=GUIDE_SUFFIX, title=GUIDE_TITLE``。
     """
     ver = version or read_version()
-    src = os.path.join(PROJ, MANUAL_REL)
-    with io.open(src, encoding='utf-8', newline='') as f:
+    src_rel = src or MANUAL_REL
+    sfx = stem or SUFFIX
+    src_path = os.path.join(PROJ, src_rel)
+    with io.open(src_path, encoding='utf-8', newline='') as f:
         md = f.read()
     os.makedirs(dst_dir, exist_ok=True)
-    html_path = os.path.join(dst_dir, 'bug-guide.html')
-    md_path = os.path.join(dst_dir, 'bug-guide.md')
+    html_path = os.path.join(dst_dir, sfx + '.html')
+    md_path = os.path.join(dst_dir, sfx + '.md')
     with io.open(html_path, 'w', encoding='utf-8', newline='') as f:
-        f.write(render_html(md, ver))
+        f.write(render_html(md, ver, title))
     with io.open(md_path, 'w', encoding='utf-8', newline='') as f:
         f.write(md)
     return [html_path, md_path]
@@ -319,8 +334,16 @@ def main(argv=None) -> int:
                     help='版本号（默认读 core/version.py 的 __version__）')
     ap.add_argument('--out-dir', default=None,
                     help='输出目录（默认 = 仓库上一级，与四个包同目录）')
+    ap.add_argument('--file', default=None,
+                    help='源 md（默认 docs/Bug定位手册.md；'
+                         '如 docs/用户指南.md）')
+    ap.add_argument('--stem', default=None,
+                    help='产物名（默认 bug-guide；如 user-guide）')
+    ap.add_argument('--title', default=None,
+                    help='HTML <title>（默认 Bug 定位手册）')
     args = ap.parse_args(argv)
-    paths = build(args.version, args.out_dir)
+    paths = build(args.version, args.out_dir, src_rel=args.file,
+                  stem_suffix=args.stem, doc_title=args.title)
     for p in paths:
         print('  %s  (%.1f KB)' % (p, os.path.getsize(p) / 1024.0))
     return 0

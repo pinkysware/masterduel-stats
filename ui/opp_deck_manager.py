@@ -959,6 +959,13 @@ class OppDeckManager(QWidget):
         #: 放外面的话滚动条一出现就错位）
         self.header_row = OppDeckHeaderRow(hide_w=hide_w, del_w=DEL_W)
         self.col.insertWidget(0, self.header_row)
+        #: ★ 2026-10-25 用户：「换卡图很隐蔽没有提示发现不了」—— 表头正上方
+        #:   常驻一行 muted 说明（点卡图 → 搜卡名 → 确认 → 获取卡图）。
+        self.guide_label = widgets.label(
+            tr('点卡图可更换卡图（搜卡名挑一张卡）；自定义卡组同样支持'),
+            'muted')
+        self.guide_label.setContentsMargins(0, 0, 0, theme.S_XS)
+        self.col.insertWidget(0, self.guide_label)
 
         foot = QHBoxLayout()
         self.status = _lab(tr('%d 条') % len(self.rows_ui), 'body',

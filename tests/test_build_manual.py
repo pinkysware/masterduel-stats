@@ -202,5 +202,36 @@ class EmitIntoTest(unittest.TestCase):
             self.assertIn('Bug', md[:200] or md)
 
 
+class TestParameterized(unittest.TestCase):
+    """emit_into / render_html 参数化 —— user-guide 与 bug-guide 共用管线。"""
+
+    def test_emit_into_custom_stem_and_title(self):
+        d = tempfile.mkdtemp()
+        try:
+            out = build_manual.emit_into(
+                d, version='9.9.9', src=MANUAL,
+                stem='user-guide', title='测试标题 XY')
+            names = sorted(os.path.basename(x) for x in out)
+            self.assertEqual(names, ['user-guide.html', 'user-guide.md'])
+            html = io.open(out[0], encoding='utf-8').read()
+            self.assertIn('<title>测试标题 XY v9.9.9</title>', html)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_emit_into_default_is_bug_guide(self):
+        """缺省行为不变（向后兼容：老调用方 emit_into(dir) 不带参）。"""
+        d = tempfile.mkdtemp()
+        try:
+            out = build_manual.emit_into(d, version='9.9.9')
+            names = sorted(os.path.basename(x) for x in out)
+            self.assertEqual(names, ['bug-guide.html', 'bug-guide.md'])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_render_html_default_title_unchanged(self):
+        html = build_manual.render_html('# x', '1.0.0')
+        self.assertIn('Bug 定位手册 v1.0.0', html)
+
+
 if __name__ == '__main__':
     unittest.main()

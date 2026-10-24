@@ -638,6 +638,30 @@ _T = {
         ('No per-card record for this game (API/manual import, or seat unclear)',
          'この対戦にカード別記録なし（API/手動取込、または席不明）'),
     '我方手坑': ('My Traps', '自分'),
+
+    # ---- 使用指南 + 提示三刀（2026-10-25）----
+    '使用指南': ('User Guide', '使い方ガイド'),
+    '打开': ('Open', '開く'),
+    '指南文件缺失，请重新安装或升级到最新版':
+        ('Guide file missing — please reinstall or upgrade to the'
+         ' latest version',
+         'ガイドファイルがありません。再インストールか最新版への'
+         '更新をお願いします'),
+    '建议：%s —— 点一下即确认；置信高且命中多时会自动入库':
+        ('Suggestion: %s — click to confirm; confident matches with'
+         ' enough hits are adopted automatically',
+         '提案：%s —— クリックで確定；高信頼度かつ十分なヒットなら'
+         '自動登録します'),
+    '点卡图可更换卡图（搜卡名挑一张卡）；自定义卡组同样支持':
+        ('Click a deck image to replace it (search by card name);'
+         ' custom decks work the same way',
+         'カード画像をクリックで変更（カード名で検索）；'
+         'カスタムデッキも同じ操作です'),
+    '换机 / 重装前先备份；报障请导出诊断包':
+        ('Back up before moving / reinstalling; export a diagnostics'
+         ' bundle when reporting issues',
+         '引っ越し・再インストール前にバックアップ；不具合報告には'
+         '診断パックを同梱してください'),
     '对方手坑': ('Opp Traps', '相手'),
     '先 %s 后 %s': ('1st %s 2nd %s', '先攻 %s 後攻 %s'),
     '%d 场': ('%d games', '%d 戦'),

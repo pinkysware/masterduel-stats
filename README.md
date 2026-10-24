@@ -68,6 +68,8 @@ Either way you can switch to any folder in **dashboard → Settings → Interfac
 | `masterduel-stats-v1.1.6-win64-full.zip` | ~39 MB | **None** — Python & all deps bundled; unzip anywhere and run `MDStats.exe` |
 | `masterduel-stats-v1.1.6-patch-win64.zip` | **~0.7 MB** | **Upgrade for existing portable installs** — program code only; unzip over the old folder. Your duel data is not touched |
 | `masterduel-stats-v1.1.6-win64-lite.zip` | ~6 MB | Python 3.13 installed; `MDStats.exe` installs the dependencies on first run |
+
+> **Docs**: the Bug guide ships alongside the packages on each Release (`*-bug-guide.html/.md`); the **User Guide** is bundled — open it from Dashboard → Settings → User Guide, or `user-guide.html` in the app folder.
 | Source code (zip / tar.gz) | auto | for developers — attached automatically by GitHub for each tag |
 
 **The easy way:** install [Python 3.13](https://www.python.org/downloads/)

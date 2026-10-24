@@ -118,6 +118,8 @@ class ExportPage(QWidget):
                                size=theme.PAGE_F_BODY,
                                weight=QFont.Weight.Medium))
         bk_head.addStretch(1)
+        outer.addWidget(widgets.label(
+            tr('换机 / 重装前先备份；报障请导出诊断包'), 'muted'))
         self.btn_backup = QPushButton(tr('备份全部数据…'))
         self.btn_restore = QPushButton(tr('从备份恢复…'))
         self.btn_diag = QPushButton(tr('导出诊断包…'))

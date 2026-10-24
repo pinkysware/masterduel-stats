@@ -47,6 +47,8 @@
 | `masterduel-stats-v1.1.6-win64-full.zip` | ~39 MB | **什么都不用装** —— 自带 Python 与全部依赖，解压后双击 `MDStats.exe` |
 | `masterduel-stats-v1.1.6-patch-win64.zip` | **~0.7 MB** | **老用户升级用**（便携版）—— 只含程序代码，解压覆盖到原目录即可；**不会动你的对局数据** |
 | `masterduel-stats-v1.1.6-win64-lite.zip` | ~6 MB | 需先装 Python 3.13；首次运行 `MDStats.exe` 会自动安装依赖 |
+
+> **文档**：Bug 排障手册在每次 Release 的产物里（`*-bug-guide.html/.md`）；**使用指南**随软件附带 —— 看板 → 设置 → 使用指南 打开，或双击程序目录里的 `user-guide.html`。
 | Source code (zip / tar.gz) | 自动 | 源码包，GitHub 对每个 tag 自动附带 |
 
 **从旧版升级（便携版）**：下 `patch.zip`（不到 1MB），

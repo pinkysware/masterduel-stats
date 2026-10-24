@@ -512,7 +512,7 @@ class FloatingWindowTest(unittest.TestCase):
         self.assertEqual(cell.label.text(), '小丑戏帮')
         self.assertNotIn('未知卡组', cell.label.text())
         self.assertIn('建议', cell.toolTip())
-        self.assertIn('点一下即标注', cell.toolTip())
+        self.assertIn('点一下即确认', cell.toolTip())
         self.assertTrue(cell.thumb.is_warning_badged())         # 仍未标注：`!` 保留
 
     def test_suggest_click_marks_without_panel(self):

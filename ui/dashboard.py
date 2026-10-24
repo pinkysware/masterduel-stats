@@ -87,6 +87,7 @@ SETTINGS_PAGES: Tuple[Tuple[str, str], ...] = (
     ('刷新 Tier 榜单', 's_tierlist'),
     ('参照库刷新', 's_refdecks'),
     ('语言', 's_lang'),
+    ('使用指南', 's_guide'),
     ('游戏对局数据', 's_datadir'),
     ('显示我方手坑列', 's_show_my_traps'),
     ('显示对方手坑列', 's_show_opp_traps'),
@@ -134,7 +135,7 @@ def float_hidden_cols() -> tuple:
 #:    工具本体 tools/import_duel_records.py 保留（--apply 仍可手动跑）。
 SETTING_GROUPS = (
     ('数据工具', ('s_audit', 's_tierlist', 's_banlist', 's_cardtable', 's_refdecks')),
-    ('界面', ('s_lang', 's_datadir', 's_show_my_traps',
+    ('界面', ('s_lang', 's_guide', 's_datadir', 's_show_my_traps',
               's_show_opp_traps')),
     ('行为', ('s_autoshow', 's_close', 's_autostart', 's_restart')),
 )
@@ -147,6 +148,7 @@ SETTING_NOTES = {
     's_tierlist': '重抓 Tier 榜 / 使用率 / 新卡组（卡组页那张表的数据）',
     's_refdecks': '卡组构成的参照库（每张卡的使用率，每月一次）',
     's_lang': '卡名 / 卡组名的显示语言（匹配一律走卡 id）',
+    's_guide': '打开随软件附带的使用指南（各页功能与常见问题）',
     's_datadir': '数据库 / 对局记录 / 卡图缓存放哪儿（可换到其它磁盘）',
     's_show_my_traps': '战绩页「对局记录」最右「我方手坑」列',
     's_show_opp_traps': '战绩页「对局记录」最右「对方手坑」列',
@@ -679,6 +681,12 @@ class SettingsIndexPage(QWidget):
                 lambda on: settings().setValue('ui/auto_show_floating',
                                                '1' if on else '0'))
             return box
+        if key == 's_guide':
+            btn = QPushButton(tr('打开'))
+            btn.setFont(widgets.font(theme.RAIL_F_ITEM))
+            btn.setFixedHeight(btn.fontMetrics().height() + 12)
+            btn.clicked.connect(self._open_user_guide)
+            return btn
         if key == 's_restart':
             btn = QPushButton(tr('重启界面'))
             btn.setFont(widgets.font(theme.RAIL_F_ITEM))
@@ -764,6 +772,42 @@ class SettingsIndexPage(QWidget):
         btn2.clicked.connect(self._open_data_dir)
         h.addWidget(btn2)
         return box
+
+    def _open_user_guide(self):
+        """打开使用指南（包根 user-guide.html，随 4 包分发）。
+
+        找不到时：开发目录现场生成一份（源 md 在 docs/）；发布版没有源，
+        提示重新安装 —— **不静默**（点了没反应 = 用户以为坏了）。
+        """
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtWidgets import QMessageBox
+        import sys as _sys
+        root = os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))                      # 项目根 / 包根
+        exe = os.path.dirname(os.path.abspath(_sys.executable))
+        cands = [os.path.join(root, 'user-guide.html'),
+                 os.path.join(exe, 'user-guide.html'),
+                 os.path.join(os.path.dirname(exe), 'user-guide.html')]
+        target = next((p for p in cands if os.path.isfile(p)), None)
+        if target is None:
+            try:
+                from tools import build_manual
+                out = build_manual.emit_into(
+                    root, src=build_manual.GUIDE_REL,
+                    stem=build_manual.GUIDE_SUFFIX,
+                    title=build_manual.GUIDE_TITLE)
+                target = out[0]
+            except Exception as _e:                          # noqa: BLE001
+                print('[guide] 现场生成失败：%r' % (_e,))
+        if target:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(target))
+        else:
+            QMessageBox.information(
+                self, tr('使用指南'),
+                tr('指南文件缺失，请重新安装或升级到最新版'))
+            print('[guide] missing user-guide.html —— python tools/'
+                  'build_manual.py --file docs/用户指南.md --stem user-guide')
 
     def _open_data_dir(self):
         """资源管理器里打开当前「游戏对局数据」目录（不存在就先建）。"""

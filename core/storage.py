@@ -130,10 +130,11 @@ COUNTED_GAME_MODES = (3, 19)      # RANK / RATE
 #:   详见 docs/活动局快照防线方案.md §十二。
 #: 消费方：`core/duel_record.to_row()`（出口兜底）+ `tools/duel_collector._start_record()`
 #: （采集侧主防线）。一处定义、两处引。
-#: ★ 09-28 终版：天梯/巅峰 own-deck **来源不同但都可信** —— 现场实测（用户在
-#: 巅峰界面打开卡组编辑时采样）：天梯 = ClientWork `Deck`（常规快照）；
-#: 巅峰 = **DeckEdit 编辑实例**（`DTDeck` 容器是空的；用户巅峰选的牌在编辑实例里，
-#: deck_name='闪刀姬'、识别=Sky Striker）。采集器按 game_mode 分流
+#: ★ 09-28 终版 + 2026-10-25 重写实锤：天梯/巅峰 own-deck **来源不同但都可信** ——
+#: 天梯 = ClientWork `Deck`（常规快照）；巅峰 = **`Deck.ratedeck_id`**（10 月版
+#: 巅峰选牌槽位，`client_work.read_ratedeck`：名字在 `Deck.list`、逐卡表在
+#: `DeckList`）。旧「巅峰 = DeckEdit 编辑实例」口径在 10 月版选牌 UI 改版后
+#: 已失效（全程不建编辑实例）。采集器按 game_mode 分流
 #: （19 → snapshot_peak_deck），口径上两者都可信（曾一度收紧到 (3,) 又回）。
 DECK_SNAPSHOT_TRUSTED_MODES = (3, 19)
 
