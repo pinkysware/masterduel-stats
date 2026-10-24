@@ -62,15 +62,29 @@ def gate_suggestions(cands, floor=SUGGEST_CONF_MIN):
 #:   1. 置信度 >= 0.85（解释率八成五以上 —— 实测：耀圣镜像 1.0、朱罗纪
 #:      1.0、捕食植物 0.88 会自动；阿努比斯站外局 0.38、结界像 0.24~0.67
 #:      不会）；
-#:   2. 命中 >= 4 张 —— 两三张泛用恰好全中也会 conf=1.0，样本太少不算数；
+#:   2. 命中 >= 3 张（2026-10-24 深夜二降：用户口径「白森 1 张+耀圣 2 张
+#:      就能判」—— 字段卡解释力强。**3 张档必须唯一解释者**（并列组只有
+#:      第一名）：三张泛用恰好全中时几十个卡组完全并列，绝不能自动；
+#:      4 张及以上才允许并列选边（狱神耀圣/耀圣那种卡表几乎相同的并列）；
 #:   3. 第一名**明显胜过**第二名（bayes 差 > 0.01）—— 狱神耀圣与 Elfnote
 #:      同分并列时机器不能替用户选（那是口径问题不是识别问题）。
-AUTO_ADOPT_CONF_MIN = 0.85
-AUTO_ADOPT_MIN_HITS = 4
+#: ★ 2026-10-24 深夜实报修正：0.85 -> 0.80（小丑戏帮 0.84 差 0.01 被挡，
+#:   三局全要手点；阿努比斯 0.38 / 结界像 0.67 仍挡得住）+ 并列不再弃权 ——
+#:   同分（hits、bayes 都几乎相同）时选**中文名更具体**的那条：对手全耀圣
+#:   时「狱神耀圣」与「耀圣」永远同分，用户口径要混轴名（铁律 7）；
+#:   小丑戏帮 vs 堕天使同理。没有中文名的（站内英文）排在有中文名的之后。
+AUTO_ADOPT_CONF_MIN = 0.80
+AUTO_ADOPT_MIN_HITS = 3
+
+
+def _specificity(c):
+    """并列选边用的「具体度」：有中文名优先，中文名更长者更具体。"""
+    cn = c.get('name_cn') or ''
+    return (1 if cn else 0, len(cn))
 
 
 def auto_adoptable(cands):
-    """从候选里挑「可以自动入库的那条」（不满足三条安全线返回 None）。
+    """从候选里挑「可以自动入库的那条」（不满足安全线返回 None）。
 
     ``cands`` = gate_suggestions 过滤后的列表。纯函数，单测锁。
     """
@@ -82,13 +96,14 @@ def auto_adoptable(cands):
         return None
     if float(top.get('confidence') or 0) < AUTO_ADOPT_CONF_MIN:
         return None
-    if len(cs) > 1:
-        second = cs[1]
-        if (int(second.get('hits') or 0) >= int(top.get('hits') or 0)
-                and float(second.get('bayes') or 0)
-                >= float(top.get('bayes') or 0) - 0.01):
-            return None                    # 并列 —— 机器不选边
-    return top
+    #: 同分并列组（hits 不低于第一名且 bayes 差 <= 0.01）—— 选更具体的
+    ties = [c for c in cs
+            if int(c.get('hits') or 0) >= int(top.get('hits') or 0)
+            and float(c.get('bayes') or 0)
+            >= float(top.get('bayes') or 0) - 0.01]
+    if len(ties) > 1 and int(top.get('hits') or 0) < 4:
+        return None                # 3 张档的并列 = 证据不足（多半是泛用）
+    return max(ties, key=_specificity)
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCK_PATH = paths.data_path('.duel_ui.lock')

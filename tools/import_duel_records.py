@@ -209,6 +209,22 @@ def scan_all(records_dir):
 MY_DECK_MAX_AGE_SEC = 24 * 3600
 
 
+def _latest_account(storage):
+    """库里最近盖过章的**我方账号名**（判据 ④ 用；没有给 None）。
+
+    为什么从库取：账号名只在收局时读内存 profile（`account_name` 列），
+    没有独立状态文件 —— 取时间最近的一条即可（多账号也是它当前在用）。
+    """
+    try:
+        with storage._open() as conn:
+            row = conn.execute(
+                'SELECT account_name FROM matches WHERE account_name IS NOT NULL'
+                ' ORDER BY started_at DESC LIMIT 1').fetchone()
+        return (row['account_name'] or None) if row else None
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
 def _current_my_deck():
     """「当前卡组」状态（编辑界面读到的，`core.my_deck`）—— 没有给 None。"""
     try:
@@ -307,7 +323,14 @@ def process(records_dir=DEFAULT_RECORDS, storage=None, apply=False,
                 report['duels'].append(item)
                 continue
 
-            duel = duel_record.decode_record(main)
+            #: ★ 2026-10-24 判据 ③④ 的身份注入：decode 阶段 meta 里还没有
+            #:    卡组名（current-deck 是这之后才兜底的）、账号名在库里 ——
+            #:    先取好传进去，decode 内部就能把座位判出来（21:48 局实测：
+            #:    快照/ClientWork 全空，账号名对 names[1] 命中）。
+            _acct = _latest_account(storage)
+            _mdn = (_current_my_deck() or {}).get('name')
+            duel = duel_record.decode_record(main, my_deck_name=_mdn,
+                                             my_account=_acct)
             duel['merged_from'] = sorted(s['name'] for s in g if s['name'] != rid)
             item['merged_from'] = duel['merged_from']
             # M4：卡表里查不到的卡 id（P1-2：必须出现在常驻路径的日志里）

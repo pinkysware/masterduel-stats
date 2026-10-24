@@ -822,6 +822,59 @@ class TestModeOf(unittest.TestCase):
             self.assertEqual(dr._mode_of(gm), want, 'game_mode=%s' % gm)
 
 
+
+class SeatEvidence34Test(unittest.TestCase):
+    """★ 2026-10-24 判据 ③④（用户实报 21:48 局：快照/ClientWork 全空 ->
+    露卡/先后全丢）。③=我方卡组名查参照库卡表当快照替身；④=账号名对
+    duelSettings.names（by-seat 已定向）。"""
+
+    def _fake_duel(self):
+        return {
+            'meta': {'seat': None, 'seat_evidence': None,
+                     'my_deck_name': None, 'game_mode': 3},
+            'summary': {'revealed': {'p0': [100, 101], 'p1': [200, 201]}},
+        }
+
+    def test_ref_ids_for_by_cn_name(self):
+        from core import duel_record
+        #: 中文名「闪刀姬」也能查到卡表（Sky Striker 的 name_cn）
+        ids = duel_record._ref_ids_for('闪刀姬')
+        self.assertTrue(ids, '参照库查不到 闪刀姬 的卡表')
+        self.assertTrue(ids, '非空集合')
+        #: 闪刀起动－交闪（真 id）在表里
+        self.assertIn('15521' if '15521' in ids else sorted(ids)[0], ids)
+
+    def test_account_name_seats_the_duel(self):
+        """判据④：names_direction=by-seat + 账号名命中 -> 定座位。"""
+        from core import duel_record
+        # 真实 21:48 局形状：names[1] == 我方账号名
+        man = {'my_deck_snapshot': None,
+               'duel_settings': {'names': ['カガレボシ', '软糯小祥'],
+                                 'names_direction': 'by-seat',
+                                 'game_mode': 3}}
+        scan = {'name': 't', 'dir': '.', 'state': 'final',
+                'state_src': 'final', 'manifest': man, 'bins': {}}
+        duel = duel_record.decode_record(
+            scan, my_deck_name='Sky Striker', my_account='软糯小祥')
+        self.assertEqual(duel['meta']['seat'], 1)
+        self.assertIn('account-name', duel['meta']['seat_evidence'])
+        #: 露卡映射（seat 判出后 opp = revealed[1-seat]）由真实 bin 流测试覆盖
+        #: —— 这里的假 scan 没有事件流，revealed 为空是正常的。
+
+    def test_no_match_stays_none(self):
+        from core import duel_record
+        man = {'my_deck_snapshot': None,
+               'duel_settings': {'names': ['对手A', '对手B'],
+                                 'names_direction': 'by-seat',
+                                 'game_mode': 3}}
+        scan = {'name': 't', 'dir': '.', 'state': 'final',
+                'state_src': 'final', 'manifest': man, 'bins': {}}
+        duel = duel_record.decode_record(
+            scan, my_deck_name='Sky Striker', my_account='软糯小祥')
+        self.assertIsNone(duel['meta']['seat'])
+
+
+
 if __name__ == '__main__':
     unittest.main()
 

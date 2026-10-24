@@ -185,5 +185,22 @@ class ReleaseDocTest(unittest.TestCase):
         self.assertIn('tools/build_manual.py', self.doc)
 
 
+
+class EmitIntoTest(unittest.TestCase):
+    """★ 2026-10-24 手册进包（不单独发布）：emit_into 生成不带版本号的两件。"""
+
+    def test_emits_unversioned_pair(self):
+        import tempfile, os
+        from tools import build_manual
+        with tempfile.TemporaryDirectory() as td:
+            out = build_manual.emit_into(td)
+            names = sorted(os.path.basename(x) for x in out)
+            self.assertEqual(names, ['bug-guide.html', 'bug-guide.md'])
+            html = io.open(out[0], encoding='utf-8').read()
+            self.assertIn('<html', html)
+            md = io.open(out[1], encoding='utf-8').read()
+            self.assertIn('Bug', md[:200] or md)
+
+
 if __name__ == '__main__':
     unittest.main()

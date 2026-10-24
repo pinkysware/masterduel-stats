@@ -452,7 +452,8 @@ def hand_trap_sides(summary, seat, turns=None):
 
 # ---------------------------------------------------------------- 解码
 
-def decode_record(scan, card_names_file=None):
+def decode_record(scan, card_names_file=None, my_deck_name=None,
+                  my_account=None):
     """层 0 -> 层 1 的 duel dict（meta 只含层 0 能自给的，外部配对另注入）。"""
     record_dir = scan['dir']
     man = scan['manifest']
@@ -553,6 +554,39 @@ def decode_record(scan, card_names_file=None):
         #:   `seat` 判错的连带面很大（opp_revealed / went_first / 两列手坑），
         #:   所以冲突要能被打包工具筛出来复核。真库当前 0 行（无冲突样本）。
         meta['seat_conflict'] = True
+    #: 座位判据 ③（2026-10-24 用户实报 21:48 局）：快照与 ClientWork 都
+    #:    没读到，但 meta 里有**我方卡组名**（current-deck 兜底等来源）——
+    #:    用它在参照库（mdm_deck_cards.json，纯本地）查卡表当快照替身，
+    #:    再跑同一套 infer_seat 容错判定。为什么可行：我方卡组的卡只可能
+    #:    出现在我那一侧的已见卡里；镜像局（两侧同卡组）照样歧义判 None，
+    #:    安全性不变。参照库没有这个卡组（站外自组）就不猜。
+    #:    ⚠️ decode 阶段 meta.my_deck_name 多半还空着（current-deck 是入库层
+    #:    兜底的）—— 所以 decode_record 有 ``my_deck_name`` 注入参数，
+    #:    入库层把兜底后的名字传进来重判（见 tools/import_duel_records.py）。
+    _mdn = meta.get('my_deck_name') or my_deck_name
+    if meta['seat'] is None and _mdn:
+        try:
+            ref_ids = _ref_ids_for(_mdn)
+            if ref_ids:
+                seat, ev = infer_seat(ref_ids, summ['revealed'])
+                if seat is not None:
+                    meta['seat'] = seat
+                    meta['seat_evidence'] = 'ref-deck:' + ev
+        except Exception:                                # noqa: BLE001
+            pass
+    #: 座位判据 ④（2026-10-24 同局第二证据）：duelSettings.names 方向已定
+    #:    （by-seat，2/2 实机）且**我方账号名**（库内 account_name，入库层注入）
+    #:    能对上某个座位名 —— 直接定座位。这比卡表交集更硬（游戏自己排的名）。
+    #:    names[seat] == 我方名 -> seat 就是它；对不上不猜。
+    if meta['seat'] is None and my_account             and ds and ds.get('names_direction') == 'by-seat':
+        _names = [str(n or '') for n in (ds.get('names') or [])]
+        if len(_names) == 2:
+            me = str(my_account)
+            for i, n in enumerate(_names):
+                if n == me:
+                    meta['seat'] = int(i)
+                    meta['seat_evidence'] = 'account-name:names[%d]==%s' % (i, me)
+                    break
     if meta['seat'] is not None:
         summ['opp_revealed_ids'] = summ['revealed'][
             'p1' if meta['seat'] == 0 else 'p0']
@@ -812,6 +846,44 @@ def _count_labels(events):
 
 
 # ---------------------------------------------------------------- 座位
+
+#: 参照库卡表缓存（判据 ③ 专用；进程内一份，第一次用时加载）
+_REF_DECK_CACHE = {}
+
+
+def _ref_ids_for(deck_name):
+    """我方卡组名 -> 参照库卡表的卡 id 集合（查不到返回 None；**不抛**）。
+
+    名字先过一遍「显示名」常见叫法（meta 清单的 name / name_cn）再查。
+    """
+    if deck_name in _REF_DECK_CACHE:
+        return _REF_DECK_CACHE[deck_name]
+    out = None
+    try:
+        import json
+        import os
+        from core import paths
+        p = paths.resolve('mdm_deck_cards.json')
+        if os.path.exists(p):
+            with open(p, encoding='utf-8') as f:
+                decks = (json.load(f) or {}).get('decks') or {}
+            # 直接名 / 别的条目的 name_cn 同名（current-deck 兜底的是显示名）
+            hit = decks.get(deck_name)
+            if hit is None:
+                for dn, info in decks.items():
+                    if isinstance(info, dict) and (
+                            info.get('name_cn') == deck_name
+                            or dn == deck_name):
+                        hit = info
+                        break
+            if isinstance(hit, dict):
+                cards = hit.get('cards') or {}
+                out = set(str(k) for k in cards)
+    except Exception:                                    # noqa: BLE001
+        out = None
+    _REF_DECK_CACHE[deck_name] = out
+    return out
+
 
 def infer_seat(snapshot_ids, revealed):
     """纯函数：我方卡组快照 vs 双方已见卡 -> (seat, evidence)。

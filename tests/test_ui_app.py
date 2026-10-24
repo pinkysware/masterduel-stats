@@ -855,25 +855,49 @@ class AutoAdoptTest(unittest.TestCase):
         self.assertIsNotNone(got)
         self.assertEqual(got['name'], '狱神耀圣')
 
-    def test_too_few_hits_rejected(self):
-        #: 两三张泛用凑巧全中（conf=1.0 但 hits=3）不自动
+    def test_three_hit_tier_rules(self):
+        """★ 3 张档（2026-10-24 深夜二降门槛 4->3）：唯一解释者放行、
+        并列（多半是泛用全中）拒绝；4 张起才允许并列选边。"""
+        #: 白森1+耀圣2 的口径局：第一名 3/3 且第二名 hits 更低 —— 自动
+        self.assertIsNotNone(app_mod.auto_adoptable(
+            [self._c('耀圣白森', 3, 1.0, -2.0), self._c('耀圣', 2, 0.6, -9.0)]))
+        #: 三张泛用恰好全中：几十个卡组完全并列 —— 不自动
         self.assertIsNone(app_mod.auto_adoptable(
-            [self._c('X', 3, 1.0), self._c('Y', 2, 0.6, -9.0)]))
+            [self._c('X', 3, 1.0, -2.0), self._c('Y', 3, 1.0, -2.0),
+             self._c('Z', 3, 1.0, -2.0)]))
+        #: 2 张 —— 样本太少
+        self.assertIsNone(app_mod.auto_adoptable(
+            [self._c('X', 2, 1.0), self._c('Y', 1, 0.5, -9.0)]))
 
     def test_low_confidence_rejected(self):
-        #: 捕食植物 0.88 会过（>0.85）；结界像 0.67 不自动
+        #: 捕食植物 0.88 / 小丑戏帮 0.84 会过（>0.80）；结界像 0.67 不自动
         self.assertIsNotNone(app_mod.auto_adoptable(
             [self._c('Predaplant', 7, 0.88, -4.0), self._c('Z', 5, 0.6, -9.0)]))
+        self.assertIsNotNone(app_mod.auto_adoptable(
+            [self._c('Clown Crew', 16, 0.84, -4.0), self._c('Z', 5, 0.6, -9.0)]))
         self.assertIsNone(app_mod.auto_adoptable(
             [self._c('Banquet', 5, 0.67, -5.0), self._c('Z', 4, 0.5, -9.0)]))
 
-    def test_tie_rejected(self):
-        #: 狱神耀圣与 Elfnote 同 hits 同 bayes —— 机器不替用户选
-        self.assertIsNone(app_mod.auto_adoptable(
-            [self._c('狱神耀圣', 7, 1.0, -3.2), self._c('Elfnote', 7, 1.0, -3.2)]))
-        #: bayes 拉开一点（-3.2 vs -3.6）就该自动
-        self.assertIsNotNone(app_mod.auto_adoptable(
-            [self._c('狱神耀圣', 7, 1.0, -3.2), self._c('Elfnote', 7, 1.0, -3.6)]))
+    def test_tie_picks_more_specific_cn_name(self):
+        """★ 2026-10-24 深夜改口径：同分并列不再弃权 —— 选中文名更具体的
+        （用户实报：对手全耀圣时狱神耀圣与耀圣永远同分，三局全要手点）。"""
+        a = dict(self._c('狱神耀圣', 7, 1.0, -3.2), name_cn='狱神耀圣')
+        b = dict(self._c('Elfnote', 7, 1.0, -3.2), name_cn='耀圣')
+        self.assertEqual(app_mod.auto_adoptable([a, b])['name'], '狱神耀圣')
+        # 顺序反过来也一样
+        self.assertEqual(app_mod.auto_adoptable([b, a])['name'], '狱神耀圣')
+        # 小丑戏帮(4字) vs 堕天使(3字)
+        c = dict(self._c('Clown Crew', 16, 0.84, -4.0), name_cn='小丑戏帮')
+        d = dict(self._c('Darklord', 16, 0.84, -4.0), name_cn='堕天使')
+        self.assertEqual(app_mod.auto_adoptable([c, d])['name'], 'Clown Crew')
+        # 都没有中文名 —— 并列时维持第一名（不因英文名长而选边）
+        e = self._c('Clown Crew', 16, 0.84, -4.0)
+        f = self._c('Darklord', 16, 0.84, -4.0)
+        self.assertEqual(app_mod.auto_adoptable([e, f])['name'], 'Clown Crew')
+        # bayes 拉开（-3.2 vs -3.6）—— 并列组只有第一名，照旧自动
+        g = dict(self._c('狱神耀圣', 7, 1.0, -3.2), name_cn='狱神耀圣')
+        h = dict(self._c('Elfnote', 7, 1.0, -3.6), name_cn='耀圣')
+        self.assertEqual(app_mod.auto_adoptable([g, h])['name'], '狱神耀圣')
 
     def test_empty_and_second_lower_hits(self):
         self.assertIsNone(app_mod.auto_adoptable([]))

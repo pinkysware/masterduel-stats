@@ -57,6 +57,13 @@ class PatchPackageTest(unittest.TestCase):
                   and not e.startswith(allowed)]
         self.assertEqual(leaked, [], '补丁包混进了用户数据')
 
+    def test_patch_includes_bug_guide(self):
+        """★ 2026-10-24 手册进包（不单独发布）—— patch 也要带。"""
+        from build.build_patch import patch_entries
+        entries = set(patch_entries())
+        self.assertIn('bug-guide.html', entries)
+        self.assertIn('bug-guide.md', entries)
+
     def test_patch_includes_offline_seed(self):
         """★ 2026-10-24：离线基线必须进补丁 —— 补丁升级的老用户
         （1.1.2 没抓过清单 / 一直离线）升级后同样要有卡组清单可搜。"""
