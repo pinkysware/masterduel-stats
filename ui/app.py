@@ -606,6 +606,7 @@ class MasterDuelUiApp(object):
         if self._demo:                     # 调试模式：探针停着，兜底防误触
             return
         self._auto_show_tick()             # 游戏启动 → 自动弹悬浮窗（2026-10-05）
+        self._collector_guard_tick()       # 采集器死了 → 拉起来（2026-10-24）
         p = ui_state.probe(self.storage)
         key = p.key() if p is not None else None
         #: ★ 多账号（2026-10-03）：账号切换也触发全量刷新（探针键不含它）
@@ -617,6 +618,33 @@ class MasterDuelUiApp(object):
             return
         self.last_key = key
         self.refresh()
+
+    def _collector_guard_tick(self) -> None:
+        """每 5 分钟看一眼采集器心跳，不新鲜就拉起来（**幂等 + 不抛**）。
+
+        ★ 2026-10-24 机主实机事故：采集器 01:27 静默死亡（无窗口、无报错），
+        界面开着也照常显示 —— 之后 12 小时打的局**全部无记录**，直到
+        人工看心跳文件才发现。原来只在启动后 6 秒查一次（`_ensure_collector`），
+        中途死了没人管 —— 本函数补上「常驻守护」。
+
+        * 判据 = `ui_state.collector_status()` 的心跳新鲜度（读一个文件，便宜；
+          与看板标题栏那行状态**同一份实现**，口径唯一）。
+        * 节流 5 分钟：刚拉起的采集器写心跳要一两秒，查太勤会误杀 /
+          重复拉起（虽然 `ensure_collector` 本身幂等，还是省着点）。
+        * demo 模式不进本函数（`tick` 已挡）。
+        """
+        try:
+            import time as _t
+            now = _t.time()
+            if now - getattr(self, '_last_collector_guard', 0.0) < 300.0:
+                return
+            self._last_collector_guard = now
+            if ui_state.collector_status().get('running'):
+                return
+            from ui.collector_ctl import ensure_collector
+            ensure_collector()
+        except Exception:                                # noqa: BLE001
+            pass
 
     def _auto_show_tick(self) -> None:
         """游戏启动 → 自动弹悬浮窗（设置 ``ui/auto_show_floating``，默认开）。
@@ -1567,6 +1595,15 @@ class MasterDuelUiApp(object):
         if settings().value('dash/floating_visible', '1') not in ('0', 'false'):
             self.win.show()
         self.open_dashboard('stats')
+        #: ★ 2026-10-24「一键可用」：首启（或换了数据目录）弹环境引导窗。
+        #:   非模态 —— 不挡悬浮窗/看板；用户点「开始使用/稍后」后不再打扰
+        #:   （QSettings 标志与数据目录绑定，重装会重新弹）。
+        if not self._demo:
+            try:
+                from ui.setup_wizard import maybe_show_setup
+                maybe_show_setup(self)
+            except Exception:                              # noqa: BLE001
+                pass
         if not self._demo:                 # demo 不跑探针（热切回真库时会再启）
             self.timer.start()
         return self.qapp.exec()

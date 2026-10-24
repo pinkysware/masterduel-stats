@@ -48,14 +48,20 @@ class PatchPackageTest(unittest.TestCase):
         但**用户数据**（`deck_name_cn.csv` / `card_names.json` / `archive/` …）
         仍然一个都不许进。
         """
-        from build.build_patch import ASSET_DIRS, patch_entries
+        from build.build_patch import ASSET_DIRS, PATCH_DATA_FILES, patch_entries
         entries = patch_entries()
         self.assertTrue(entries, '补丁清单为空 —— 发布仓路径不对？')
-        allowed = tuple(d + '/' for d in ASSET_DIRS)
+        allowed = tuple(d + '/' for d in ASSET_DIRS) + PATCH_DATA_FILES
         leaked = [e for e in entries
                   if (e == 'data' or e.startswith('data/'))
                   and not e.startswith(allowed)]
         self.assertEqual(leaked, [], '补丁包混进了用户数据')
+
+    def test_patch_includes_offline_seed(self):
+        """★ 2026-10-24：离线基线必须进补丁 —— 补丁升级的老用户
+        （1.1.2 没抓过清单 / 一直离线）升级后同样要有卡组清单可搜。"""
+        from build.build_patch import patch_entries
+        self.assertIn('data/meta_decks_seed.json', set(patch_entries()))
 
     def test_patch_entries_never_include_user_data_files(self):
         """逐个盯死**用户数据文件**：它们进了包就是覆盖用户的东西。"""
@@ -252,6 +258,13 @@ class UninstallJumpAndPidCheckTest(unittest.TestCase):
         self.assertNotIn('tasklist', bat, '不许再手搓 tasklist 判活')
         self.assertNotIn('set /p OLDPID', bat,
                          'pid 文件是 JSON，读整行去比永远匹配不上')
+
+    def test_installer_removes_smoke_script(self):
+        """★ 冒烟脚本不能进安装包（2026-10-24 实测 v1.1.3 的 Setup 带着
+        `_smoke.py` —— build_full_zip 冒烟后有删，build_installer 漏了）。"""
+        src = _read(os.path.join(BUILD, 'build_installer.py'))
+        self.assertIn("os.remove(os.path.join(STAGE, '_smoke.py'))", src,
+                      'build_installer 冒烟后没删 _smoke.py，它会进安装包')
 
     def test_launcher_is_ascii(self):
         """launch_installed.bat 必须是 ASCII（cmd 代码页，见文件头注释）。"""

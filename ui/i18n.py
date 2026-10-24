@@ -299,6 +299,53 @@ _T = {
     # ---- 设置卡图：状态行不回显路径（2026-10-08）----
     '已设置「%s」的卡图': ("Deck art set for \"%s\"",
                              '「%s」のデッキ画像を設定しました'),
+    # ---- 首启引导 / 环境自检（2026-10-24） -------------------------------
+    '欢迎使用 Master Duel Stats': ('Welcome to Master Duel Stats',
+                                   'Master Duel Stats へようこそ'),
+    '只读统计工具：读游戏日志与公开内存，不写入、不注入。先确认下面几项都正常，之后就能自动记录对局。':
+        ('Read-only stats: reads the game log and public memory only, '
+         'never writes or injects. Check the items below, then duels are '
+         'recorded automatically.',
+         '読み取り専用の統計ツールです。ログと公開メモリだけを読み、書き込みや'
+         '注入はしません。下記を確認すれば対戦を自動記録します。'),
+    '环境自检': ('Self Check', '環境チェック'),
+    '环境自检…': ('Self Check…', '環境チェック…'),
+    '数据目录': ('Data Folder', 'データ保存先'),
+    '游戏': ('Game', 'ゲーム'),
+    '采集器': ('Collector', 'コレクター'),
+    '卡组清单': ('Deck List', 'デッキリスト'),
+    '未找到（启动游戏后自动识别，或手动选择）':
+        ('Not found (auto-detected once the game runs, or pick it manually)',
+         '見つかりません（ゲーム起動後に自動検出、または手動で選択）'),
+    '游戏运行中': ('game running', 'ゲーム起動中'),
+    '运行中': ('Running', '実行中'),
+    '未运行': ('Not running', '停止中'),
+    '手动选择…': ('Browse…', 'フォルダー選択…'),
+    '立即启动': ('Start Now', '今すぐ起動'),
+    '稍后再说': ('Later', 'あとで'),
+    '开始使用': ('Get Started', 'はじめる'),
+    '选择游戏安装目录（含 masterduel_Data）':
+        ('Pick the game install folder (the one containing masterduel_Data)',
+         'ゲームのインストール先（masterduel_Data がある階層）を選択'),
+    '这个目录不对': ('Wrong folder', 'このフォルダーは違います'),
+    '这个目录不对：里面没有 masterduel_Data。选游戏本体所在的那一层（和 masterduel.exe 同级）。':
+        ('Wrong folder: no masterduel_Data inside. Pick the level that has '
+         'masterduel.exe.', 'masterduel_Data がありません。masterduel.exe '
+         'と同じ階層を選んでください。'),
+    '已保存。请重启程序后生效；现有数据不会自动搬迁。':
+        ('Saved. Restart the app to apply; existing data is not moved '
+         'automatically.', '保存しました。再起動で反映されます。'
+         '既存データは自動では移動しません。'),
+    '对局数据库与记录都存这里。':
+        ('Your database and duel records live here.',
+         'データベースと対戦記録はここに保存されます。'),
+    '%d 条（可搜索 / Tier 表）': ('%d decks (searchable / Tier list)',
+                                 '%d 件（検索・Tier 表）'),
+    '空 —— 等待联网更新或检查 data/meta_decks_seed.json':
+        ('Empty — waiting for the online refresh, or check '
+         'data/meta_decks_seed.json',
+         '空 — オンライン更新を待つか data/meta_decks_seed.json を確認'),
+
     # ---- 本地化第二批（2026-10-04 实时切换 + 全页面接线）----
     " %d平": (" %d draw", " %d引き分け"),
     " · 最近生效 %s": (" · last effective %s", " ・最近の発効 %s"),

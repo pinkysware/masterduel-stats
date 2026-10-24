@@ -597,6 +597,13 @@ class SettingsIndexPage(QWidget):
                            weight=QFont.Weight.Medium))
         if subtitle and subtitle != '设置':
             lay.addWidget(_lab(subtitle, 'muted', size=theme.F_METRIC_SM))
+        #: ★ 2026-10-24「一键可用」：首启引导窗的重开入口（弹非模态向导，
+        #:   环境状态一览 + 可修 —— 游戏目录 / 数据目录 / 采集器）。
+        chk = QPushButton(tr('环境自检…'))
+        chk.setFont(widgets.font(theme.F_BODY))
+        chk.setFixedHeight(chk.fontMetrics().height() + 12)
+        chk.clicked.connect(self._open_setup_wizard)
+        lay.addWidget(chk, 0, Qt.AlignLeft)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -712,6 +719,16 @@ class SettingsIndexPage(QWidget):
         combo.activated.connect(                       # ★ 只在用户操作时发
             lambda idx, q=qkey: self._save(q, combo.itemData(idx)))
         return combo
+
+    def _open_setup_wizard(self):
+        """重开首启引导窗（环境自检）。非模态；持引用防 GC。"""
+        from ui.setup_wizard import SetupWizard
+        try:
+            self._setup_wiz.close()
+        except Exception:                                  # noqa: BLE001
+            pass
+        self._setup_wiz = SetupWizard()
+        self._setup_wiz.show()
 
     def _make_datadir_control(self):
         """「游戏对局数据」：显示当前目录 + [更改…] 按钮。

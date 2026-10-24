@@ -1097,6 +1097,24 @@ def main():
         json.dump(all_rows, f, ensure_ascii=False, indent=1)
     print('[快照] %s' % os.path.relpath(snap, PROJ))
 
+    # ★ 2026-10-24「一键可用」：同一份数据顺手写**离线基线**（随包分发）。
+    #   新用户首启由 ui/first_run.py 离线灌库（毫秒级、不联网）——
+    #   装完打开立刻能搜卡组 / 看 Tier 表；本联网抓取只在后台把它刷新到最新。
+    #   ⚠️ 走 resolve()（DATA_DIR 优先、缺失回落 ASSET_DIR）：开发机上抓的
+    #   基线落在 data/ 随包带；用户机上「刷新 Tier 榜单」不该覆盖它自带的基线。
+    from core import paths as _paths
+    seed_path = _paths.resolve('meta_decks_seed.json')
+    if atomic.write_text(seed_path,
+                         json.dumps({'version': 1,
+                                     'fetched_at': time.strftime(
+                                         '%Y-%m-%dT%H:%M:%S'),
+                                     'rows': all_rows},
+                                    ensure_ascii=False, indent=1)):
+        print('[基线] %s（%d 条）' % (os.path.relpath(seed_path, PROJ),
+                                     len(all_rows)))
+    else:
+        print('[基线] 写入失败：%s' % seed_path)
+
 
 if __name__ == '__main__':
     main()

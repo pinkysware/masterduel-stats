@@ -1,6 +1,6 @@
 {
  "version": 1,
- "fetched_at": "2026-10-21T22:58:20",
+ "fetched_at": "2026-10-24T14:03:24",
  "source": "masterduelmeta /api/v1/deck-types?limit=3000",
  "names": [
   "/Assault Mode",

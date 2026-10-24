@@ -47,8 +47,30 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: QSettings 里记「已经跑过一次」的键 —— 兜底用（库非空时本来就不该再跑）
 FLAG_KEY = 'firstrun/meta_decks_fetched'
 
+
+def _dir_mark() -> str:
+    """首跑标志存的**值** = 当前数据目录的标识（normcase 绝对路径）。
+
+    ★ 为什么存路径不存 1（2026-10-24 贴吧用户实报「搜索不到卡组」）：
+    QSettings 是**机器级**的（注册表 HKCU），而库是**目录级**的——
+    播种成功后用户重装 / 换目录 / 换机器恢复数据，新位置是**全新空库**，
+    但机器级标志还在 → `ensure_meta_decks` 直接跳过 → `meta_decks` 永远 0 行
+    → 卡组选择器 / Tier 表全空，怎么搜都搜不到。
+    存路径后：目录变了标志自然对不上 → 按没跑过处理 → 重新播种。
+    （旧版的值 `1` 与路径永不相等 → 升级上来的用户自动修一次。）
+    """
+    try:
+        return os.path.normcase(os.path.abspath(paths.DATA_DIR))
+    except Exception:                                      # noqa: BLE001
+        return ''
+
 #: 自检日志落盘处（与采集器同一个目录，见 tools/duel_collector.py）
 LOG_PATH = paths.data_path('archive', 'first_run.log')
+
+#: **离线基线**（随包分发的 meta_decks 快照，`fetch_meta_decks.py` 每次抓取
+#: 顺手刷新）。首跑第 0 步把它灌进库 —— **不联网**，打开就能搜卡组/看 Tier 表；
+#: 联网抓取降级为后台更新（`ensure_meta_decks` 原有链路）。
+SEED_NAME = 'meta_decks_seed.json'
 
 
 def _log(msg: str) -> None:
@@ -161,6 +183,41 @@ def _migrate_from(legacy: str) -> list:
     return out
 
 
+def seed_rows() -> list:
+    """读离线基线的 rows（无基线 / 坏了 → 空表，**不抛**）。"""
+    import json
+    path = paths.resolve(SEED_NAME)
+    try:
+        with open(path, encoding='utf-8') as f:
+            raw = json.load(f)
+        rows = raw.get('rows') if isinstance(raw, dict) else raw
+        return rows if isinstance(rows, list) else []
+    except Exception:                                      # noqa: BLE001
+        return []
+
+
+def seed_from_package(st) -> int:
+    """**第 0 步（离线）**：把随包基线灌进空库。返回灌入条数（0 = 没灌）。
+
+    * 只在 ``meta_decks`` 为空时灌（非空说明用户已有数据，别碰）；
+    * 走 ``replace_meta_decks(rows, prune=False)`` —— 只插不删，
+      后续联网抓取会按 ``(name, kind)`` 正常 UPDATE（含 source 归位），
+      所以**不走 `--cn-only` 那条路**（空库上它会把全部条目建成
+      `source='custom'`，污染后续站内更新口径）；
+    * 失败不抛：基线只是加速器，坏了大不了回落联网播种。
+    """
+    try:
+        if not meta_decks_empty(st):
+            return 0
+        rows = seed_rows()
+        if not rows:
+            return 0
+        st.replace_meta_decks(rows, prune=False)
+        return len(rows)
+    except Exception:                                      # noqa: BLE001
+        return 0
+
+
 def ensure_meta_decks(app) -> Optional[object]:
     """库空就在后台抓一次清单 + 卡组图；返回 runner（不需要时返回 None）。
 
@@ -186,19 +243,31 @@ def ensure_meta_decks(app) -> Optional[object]:
     #    依赖 QCoreApplication 的 organizationName —— 没设时 status=AccessError，
     #    标志读写出错（「首跑播种」会每次都重跑）。与全项目其余 7 处同源。
     s = QSettings('masterduel', 'M7')
-    if s.value(FLAG_KEY):
+    #: ★ 标志必须「键在 **且** 值 = 当前数据目录」才算跑过（2026-10-24 修，
+    #:    见 `_dir_mark` 的文档 —— 存 1 会让重装/换目录后的空库永远不播种）。
+    if str(s.value(FLAG_KEY) or '') == _dir_mark():
         return None
 
     try:
         if not meta_decks_empty(st):
             # 库非空 = 已经有清单（用户自己跑过、或跑过首跑）→ 只记标志，不再联网
-            s.setValue(FLAG_KEY, 1)
+            s.setValue(FLAG_KEY, _dir_mark())
             return None
     except Exception:                                    # noqa: BLE001
         return None
 
     from ui.script_runner import ScriptRunner
 
+    #: ★ 第 0 步：离线灌随包基线（毫秒级）—— 灌成功用户**立刻**能搜卡组；
+    #:   联网抓取仍照跑（后台刷新 tier/图/新条目），两者不冲突
+    #:   （replace_meta_decks 按 (name,kind) upsert）。
+    n = seed_from_package(st)
+    if n:
+        _log('[first_run] 离线基线已灌 %d 条（meta_decks_seed.json）' % n)
+        try:
+            app.refresh()
+        except Exception:                                  # noqa: BLE001
+            pass
     _log('[first_run] meta_decks 为空 → 后台抓卡组清单 + 卡组图')
 
     def on_done(code: int) -> None:
@@ -208,7 +277,7 @@ def ensure_meta_decks(app) -> Optional[object]:
         # 新落库的 `img_file` —— 不丢就是「抓成功了但界面还是默认图」。
         app._imgs = None
         if code == 0:
-            s.setValue(FLAG_KEY, 1)
+            s.setValue(FLAG_KEY, _dir_mark())
             _log('[first_run] 卡组清单 + 卡组图抓取完成')
         else:
             # 失败**不写标志** → 下次启动会再试一次（离线用户联网后自然恢复）

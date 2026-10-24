@@ -2117,3 +2117,36 @@ class ExportTest(unittest.TestCase):
         with io.open(path, encoding='utf-8-sig', newline='') as f:
             got = list(_csv.reader(f))
         self.assertEqual(len(got), len(rows) + 1)          # +1 表头
+
+
+class EnvCheckTest(unittest.TestCase):
+    """★ 2026-10-24「一键可用」：环境自检（键恒定、失败不抛）。"""
+
+    KEYS = {'data_dir', 'game', 'collector', 'meta_decks', 'untapped'}
+
+    def test_shape_is_stable(self):
+        from core import ui_state
+        st = ui_state.env_check()
+        self.assertEqual(set(st.keys()), self.KEYS)
+        for sub in ('data_dir', 'game', 'collector', 'meta_decks', 'untapped'):
+            self.assertIsInstance(st[sub], dict, sub)
+
+    def test_broken_storage_does_not_raise(self):
+        """库打不开 → meta_decks 段给 0，其余照常（不抛）。"""
+        from core import ui_state
+
+        class Boom:
+            def count_meta_decks(self):
+                raise RuntimeError('db gone')
+
+        st = ui_state.env_check(storage=Boom())
+        self.assertEqual(st['meta_decks']['count'], 0)
+        self.assertEqual(set(st.keys()), self.KEYS)
+
+    def test_line_renders(self):
+        """一行字渲染（纯函数）。"""
+        from core import ui_state
+        st = ui_state.env_check()
+        line = ui_state.env_check_line(st)
+        self.assertIsInstance(line, str)
+        self.assertTrue(line)

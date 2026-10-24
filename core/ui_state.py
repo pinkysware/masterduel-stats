@@ -2248,6 +2248,95 @@ def collector_status(now=None) -> Dict[str, object]:
     }
 
 
+# ===================================================== 环境自检（首启引导）
+
+def env_check(storage=None) -> Dict[str, object]:
+    """**环境自检**（2026-10-24「一键可用」）：首启引导窗 / 设置页入口的数据源。
+
+    形状（**键恒定**，任何一段失败给该段零值、**不抛** —— 照 :func:`data_status`
+    的纪律；引导页不能因为游戏没装就整个白屏）::
+
+        {'data_dir':  {'path': str, 'ok': bool},
+         'game':      {'dir': str, 'found': bool, 'running': bool},
+         'collector': {'running': bool, 'at': str|None},
+         'meta_decks': {'count': int},
+         'untapped':  {'present': bool}}
+
+    * `game.found` = 目录里有 `masterduel_Data`（= metadata 找得到，采集器能用）
+    * `game.running` = 有 masterduel.exe 进程（开着游戏时进程反查最准）
+    * `untapped.present` 只是**可选数据源**的提示，缺了不影响使用
+    """
+    from core import paths as _paths
+
+    def _data_dir() -> Dict[str, object]:
+        try:
+            p = _paths.DATA_DIR
+            ok = os.path.isdir(p)
+            try:
+                ok = ok or _paths.ensure_data_dirs() is not None
+            except Exception:                              # noqa: BLE001
+                pass
+            return {'path': p, 'ok': os.path.isdir(p)}
+        except Exception:                                  # noqa: BLE001
+            return {'path': '', 'ok': False}
+
+    def _game() -> Dict[str, object]:
+        out = {'dir': '', 'found': False, 'running': False}
+        try:
+            from core.memread.end_message import default_game_dir
+            d = default_game_dir()
+            out['dir'] = d or ''
+            out['found'] = os.path.isdir(
+                os.path.join(d or '', 'masterduel_Data'))
+        except Exception:                                  # noqa: BLE001
+            pass
+        try:
+            from core.memread.process import find_pids_by_name
+            out['running'] = bool(find_pids_by_name('masterduel.exe'))
+        except Exception:                                  # noqa: BLE001
+            out['running'] = False
+        return out
+
+    def _collector() -> Dict[str, object]:
+        st = collector_status()
+        return {'running': bool(st.get('running')), 'at': st.get('at')}
+
+    def _meta_decks() -> Dict[str, object]:
+        try:
+            if storage is None:
+                from core.storage import Storage
+                st = Storage()
+            else:
+                st = storage
+            return {'count': int(st.count_meta_decks() or 0)}
+        except Exception:                                  # noqa: BLE001
+            return {'count': 0}
+
+    def _untapped() -> Dict[str, object]:
+        try:
+            from core.log_tailer import DEFAULT_LOG_DIR
+            return {'present': os.path.isdir(DEFAULT_LOG_DIR)}
+        except Exception:                                  # noqa: BLE001
+            return {'present': False}
+
+    return {'data_dir': _data_dir(), 'game': _game(),
+            'collector': _collector(), 'meta_decks': _meta_decks(),
+            'untapped': _untapped()}
+
+
+def env_check_line(status) -> str:
+    """环境自检 -> 一行字（纯函数，单测直接锁；照 ``data_status_line``）。"""
+    t = _tr()
+    parts = []
+    g = status.get('game') or {}
+    parts.append(t('游戏') + ('✓' if g.get('found') else '✗'))
+    parts.append(t('采集器') + ('✓' if (status.get('collector') or {})
+                              .get('running') else '✗'))
+    md = (status.get('meta_decks') or {}).get('count') or 0
+    parts.append(t('卡组清单') + ' %d' % md)
+    return ' · '.join(parts)
+
+
 # ===================================================== 导出（D4c）
 
 #: 导出的列（**顺序即 CSV 列序**）。日期 / 时间**已分列**（Q16 口径）。

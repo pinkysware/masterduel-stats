@@ -450,9 +450,120 @@ PARENT_OFFSET = 0x58
 MAX_PARENT_DEPTH = 12
 
 
+#: 游戏在 Steam 里的目录名（注意 "Yu-Gi-Oh!" 后面是**两个空格** ——
+#: Steam 官方目录就叫这样，实测本机 D:\steam\...\Yu-Gi-Oh!  Master Duel）
+_GAME_DIRNAME = 'Yu-Gi-Oh!  Master Duel'
+
+#: 探测结果缓存 —— 游戏装哪不会变，一次进程反查/注册表就够了
+_game_dir_cache: Optional[str] = None
+
+
+def _game_dir_from_process() -> Optional[str]:
+    """从**运行中的游戏进程**反查安装目录（最准：开着游戏时 100% 命中）。"""
+    try:
+        from .process import exe_path, find_pids_by_name
+        for pid in find_pids_by_name('masterduel.exe'):
+            p = exe_path(pid)
+            if p:
+                d = os.path.dirname(p)
+                if os.path.basename(d).lower() == _GAME_DIRNAME.lower():
+                    return d
+                #: 主 exe 不在游戏目录根（比如某些启动器包一层）就往上找一层
+                up = os.path.dirname(d)
+                if os.path.basename(up).lower() == _GAME_DIRNAME.lower():
+                    return up
+                return d
+    except Exception:                                       # noqa: BLE001
+        pass
+    return None
+
+
+def _steam_library_dirs() -> list:
+    """Steam 的全部库目录（注册表 InstallPath + libraryfolders.vdf 里的附加库）。
+
+    只读注册表 + 只读文本文件 —— 用户没装 Steam 时返回空表，不抛。
+    """
+    import winreg
+    dirs = []
+    try:
+        for hive in (winreg.HKEY_LOCAL_MACHINE,):
+            for sub in (r'SOFTWARE\WOW6432Node\Valve\Steam',
+                        r'SOFTWARE\Valve\Steam'):
+                try:
+                    with winreg.OpenKey(hive, sub) as k:
+                        v, _ = winreg.QueryValueEx(k, 'InstallPath')
+                        if v:
+                            dirs.append(str(v))
+                            break
+                except OSError:
+                    continue
+            if dirs:
+                break
+    except Exception:                                       # noqa: BLE001
+        pass
+    if not dirs:
+        return []
+    #: libraryfolders.vdf：Steam 多库配置，行形如 `"path"  "D:\steam"`
+    extra = []
+    main = dirs[0]
+    vdf = os.path.join(main, 'steamapps', 'libraryfolders.vdf')
+    try:
+        with open(vdf, encoding='utf-8', errors='replace') as f:
+            import re as _re
+            for m in _re.finditer(r'"path"\s+"([^"]+)"', f.read()):
+                p = m.group(1).replace('\\\\', '\\')
+                if p and p not in extra:
+                    extra.append(p)
+    except OSError:
+        pass
+    return dirs + [p for p in extra if p not in dirs]
+
+
 def default_game_dir() -> str:
-    """游戏目录（``MD_GAME_DIR`` 环境变量可覆盖）。"""
-    return os.environ.get('MD_GAME_DIR') or DEFAULT_GAME_DIR
+    """游戏目录 —— **自动探测**，按可靠性依次：
+
+    1. ``MD_GAME_DIR`` 环境变量（手动覆盖，永远最优先）
+    2. **运行中的游戏进程反查**（开着游戏时 100% 准）
+    3. **Steam 注册表 + libraryfolders.vdf**：各库下找
+       ``steamapps/common/Yu-Gi-Oh!  Master Duel``（游戏没开也能找到）
+    4. 兜底：老的写死常量（开发机 D 盘；其他机器上基本没用，
+       留着是为了不改变现有调用方的行为）
+
+    ★ 2026-10-24 之前这里是「环境变量 or 写死的 D 盘路径」—— 任何游戏
+    不装在 D:\\steam 那个位置的机器上，采集器都读不到 global-metadata.dat
+    → attach 永远失败 → **整个统计功能全废**（贴吧用户「能打开但没统计」
+    的可能根因之一）。结果记模块级缓存（游戏装哪不会变）。
+    """
+    global _game_dir_cache
+    env = os.environ.get('MD_GAME_DIR')
+    if env:
+        return env                          # 手动指定不受缓存影响
+    #: 1.5) 向导「手动选择」写的 game_dir.ini（持久化，优先于自动探测）
+    ini = ''
+    try:
+        from core import paths as _paths
+        ini = _paths.read_game_dir_pref()
+    except Exception:                                      # noqa: BLE001
+        ini = ''
+    if ini and os.path.isdir(os.path.join(ini, 'masterduel_Data')):
+        return ini
+    if _game_dir_cache:
+        return _game_dir_cache
+    found = None
+    #: 2) 进程反查
+    found = _game_dir_from_process()
+    #: 3) Steam 库
+    if not found:
+        for lib in _steam_library_dirs():
+            cand = os.path.join(lib, 'steamapps', 'common', _GAME_DIRNAME)
+            if os.path.isdir(os.path.join(cand, 'masterduel_Data')):
+                found = cand
+                break
+    #: 4) 兜底（老常量）
+    if not found:
+        return DEFAULT_GAME_DIR
+    _game_dir_cache = found
+    return found
 
 
 def texts_key(texts) -> str:

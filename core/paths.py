@@ -58,6 +58,45 @@ def _config_path() -> str:
     return os.path.join(PROJ, CONFIG_NAME)
 
 
+#: 游戏**安装目录**的手动指定（向导「手动选择」写的；`core.memread` 的
+#: `default_game_dir()` 会读它）。与 paths.ini 同款：一行路径、放 PROJ 根。
+GAME_DIR_CONFIG = 'game_dir.ini'
+
+
+def game_dir_config_path() -> str:
+    return os.path.join(PROJ, GAME_DIR_CONFIG)
+
+
+def read_game_dir_pref() -> str:
+    """读手动指定的游戏目录；没有/读不出返回空串（= 走自动探测）。"""
+    try:
+        with open(game_dir_config_path(), 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    return line
+    except OSError:
+        pass
+    return ''
+
+
+def write_game_dir_pref(path: str) -> bool:
+    """写手动游戏目录（空串 = 清除，回到自动探测）。成功 True。"""
+    try:
+        p = game_dir_config_path()
+        if not path:
+            if os.path.exists(p):
+                os.remove(p)
+            return True
+        with open(p, 'w', encoding='utf-8', newline='') as f:
+            f.write('# Master Duel game install dir (one path per line).\n')
+            f.write('# Delete this file to go back to auto detection.\n')
+            f.write(path.rstrip('\\/') + '\n')
+        return True
+    except OSError:
+        return False
+
+
 def read_pref() -> str:
     """读「设置页指定的数据目录」；没有/读不出返回空串。"""
     try:

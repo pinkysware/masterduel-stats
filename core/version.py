@@ -24,7 +24,7 @@ GitHub Release。更糟的是 `build/build_installer.py` 的 ``default_version()
 from __future__ import annotations
 
 #: 当前版本。**发版时只改这一行**（改完记得同步到发布仓，否则打包脚本会拦下）。
-__version__ = '1.1.3'
+__version__ = '1.1.4'
 
 #: 语义化三段的默认值（解不出来时用 0 兜底，绝不抛）
 _ZERO = (0, 0, 0)

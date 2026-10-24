@@ -2154,6 +2154,12 @@ class Runtime(Hooks):
         """
         self.detach()
         self.last_attach_error = None
+        #: ★ 2026-10-24：game_dir 不再构造时定死 —— 每次重连都现探测
+        #:   （环境变量 → 运行中进程反查 → Steam 注册表；见
+        #:    core/memread/end_message.default_game_dir）。老代码把
+        #:    D 盘写死路径传进来后永不更新，游戏装在别处的机器上
+        #:    attach 永远失败 = 整个统计功能全废。
+        self.game_dir = default_game_dir()
         pids = find_pids_by_name('masterduel.exe')
         if not pids:
             self.last_attach_error = '没找到 masterduel.exe 进程'

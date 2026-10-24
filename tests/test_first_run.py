@@ -133,6 +133,13 @@ class FirstRunBase(unittest.TestCase):
         self._real_flag = fr.FLAG_KEY
         fr.FLAG_KEY = 'firstrun/test_flag_tmp'
         self.addCleanup(setattr, fr, 'FLAG_KEY', self._real_flag)
+        #: ★ 2026-10-24 离线基线：默认打桩为空 —— 旧测试只验「联网播种判定」，
+        #:    不该被主仓 data/ 里真实存在的 meta_decks_seed.json 干扰
+        #:    （灌了会把空库判定翻掉、多刷一次界面）。SeedFromPackageTest 自己放开。
+        from unittest import mock as _mk
+        self._seed_p = _mk.patch.object(fr, 'seed_rows', return_value=[])
+        self._seed_p.start()
+        self.addCleanup(self._seed_p.stop)
 
     def tearDown(self):
         pass
@@ -169,11 +176,34 @@ class TestJudgement(FirstRunBase):
         self.assertEqual(_FakeRunner.instances, [])
 
     def test_flag_prevents_second_run(self):
-        """已标记过 → 不重复起进程。"""
-        _MemSettings.store[fr.FLAG_KEY] = 1
+        """已标记过（**且值 = 当前数据目录**）→ 不重复起进程。"""
+        _MemSettings.store[fr.FLAG_KEY] = fr._dir_mark()
         app = _FakeApp(self.db)
         self.assertIsNone(fr.ensure_meta_decks(app))
         self.assertEqual(_FakeRunner.instances, [])
+
+    def test_flag_from_another_dir_rescues(self):
+        """★ 标志是别的目录写的（重装/换目录）→ **必须重新播种**。
+
+        贴吧用户实报（2026-10-24）：机器级标志存 1，重装到新目录后
+        新空库永远不播种 → meta_decks 0 行 → 卡组选择器搜不到任何卡组。
+        旧版值 `1` 与路径永不相等 → 升级上来的用户自动修一次。
+        """
+        for stale in (1, '1', 'd:\\other\\place', ''):
+            _MemSettings.store = {}
+            _MemSettings.store[fr.FLAG_KEY] = stale
+            app = _FakeApp(self.db)
+            r = fr.ensure_meta_decks(app)
+            self.assertIsNotNone(r, '标志 %r 不该挡住播种' % (stale,))
+            self.assertTrue(r.started)
+            _FakeRunner.instances = []
+
+    def test_non_empty_writes_dir_bound_flag(self):
+        """库非空时记下的标志 = 当前数据目录（不是 1）。"""
+        app = _FakeApp(self.db)
+        self._seed_decks(app)
+        fr.ensure_meta_decks(app)
+        self.assertEqual(_MemSettings.store.get(fr.FLAG_KEY), fr._dir_mark())
 
     def test_already_running_guard(self):
         """已在抓 → 不重复起。"""
@@ -238,3 +268,68 @@ class TestOnDone(FirstRunBase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SeedFromPackageTest(FirstRunBase):
+    """★ 2026-10-24「一键可用」：离线基线灌库（不联网就能搜卡组）。"""
+
+    def setUp(self):
+        FirstRunBase.setUp(self)
+        #: 放开基类的空桩：本类就是要真读（自己目录里的假 seed）
+        self._seed_p.stop()
+        self._seed_p2 = None
+
+    def _use_seed(self, rows):
+        """把 seed_rows 指到本类构造的行（不走文件，直给）。"""
+        from unittest import mock as _m
+        self._seed_p2 = _m.patch.object(fr, 'seed_rows',
+                                        return_value=list(rows))
+        self._seed_p2.start()
+        self.addCleanup(self._seed_p2.stop)
+
+    def test_empty_db_gets_seeded(self):
+        """空库 + 有基线 → 灌入且立刻可搜（source 保持站内口径）。"""
+        self._use_seed([
+            {'name': 'Sky Striker', 'kind': 'deck_type',
+             'name_cn': '闪刀姬', 'source': 'masterduelmeta'},
+        ])
+        app = _FakeApp(self.db)
+        n = fr.seed_from_package(app.storage)
+        self.assertEqual(n, 1)
+        got = app.storage.search_meta_decks('闪刀')
+        self.assertTrue(got, '灌完必须立刻搜得到')
+        self.assertEqual(got[0]['name'], 'Sky Striker')
+
+    def test_non_empty_db_untouched(self):
+        """库非空（用户已有数据）→ 基线不碰。"""
+        self._use_seed([
+            {'name': 'X', 'kind': 'deck_type', 'name_cn': '叉'},
+        ])
+        app = _FakeApp(self.db)
+        self._seed_decks(app)
+        self.assertEqual(fr.seed_from_package(app.storage), 0)
+
+    def test_broken_seed_is_silent(self):
+        """基线坏了/没有 → 返回 0，不抛（回落联网播种）。"""
+        self._use_seed([])      # 「没有基线」形态
+        self.assertEqual(fr.seed_from_package(_FakeApp(self.db).storage), 0)
+        #: rows 不是 list（坏了的 JSON 落到这个形态）→ 0 不抛
+        from unittest import mock as _m2
+        with _m2.patch.object(fr, 'seed_rows', return_value='not-a-list'):
+            self.assertEqual(
+                fr.seed_from_package(_FakeApp(self.db).storage), 0)
+
+    def test_seed_does_not_mark_custom(self):
+        """★ 灌基线不走 `--cn-only` 那条路：source 必须是站内口径。
+
+        （空库上跑 `--cn-only` 会把全部条目建成 source='custom'，
+        污染后续站内更新 —— 这是选 replace_meta_decks 直灌的原因。）
+        """
+        self._use_seed([
+            {'name': 'Branded', 'kind': 'deck_type', 'name_cn': '烙印',
+             'source': 'masterduelmeta'},
+        ])
+        app = _FakeApp(self.db)
+        fr.seed_from_package(app.storage)
+        rows = app.storage.list_meta_decks()
+        self.assertEqual([r['source'] for r in rows], ['masterduelmeta'])

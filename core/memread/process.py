@@ -524,6 +524,40 @@ def iter_pids(max_pids: int = 8192) -> Iterator[int]:
             yield pid
 
 
+def exe_path(pid: int) -> Optional[str]:
+    """取进程可执行文件的**完整路径**；拿不到返回 None（不抛）。
+
+    ★ 2026-10-24「一键可用」需求：`default_game_dir()` 要靠它从运行中的
+    游戏进程反查安装目录（别的机器上游戏不一定在 D 盘那个写死的位置）。
+
+    权限只申请 ``PROCESS_QUERY_LIMITED_INFORMATION``（0x1000，纯查询，
+    连内存都读不了）；与 `tools/duel_collector.py` 的 ``proc_image_name``
+    同款 API —— 那边只取了 basename，这边要**全路径**（目录才是目标）。
+    二者都不在 redline 清单（禁位不含 0x1000，禁 API 不含
+    QueryFullProcessImageNameW，见 redline.py）。
+    """
+    if os.name != 'nt':
+        return None
+    try:
+        k32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        k32.OpenProcess.restype = wintypes.HANDLE
+        h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False,
+                            int(pid))
+        if not h:
+            return None
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(len(buf))
+            ok = k32.QueryFullProcessImageNameW(h, 0, buf,
+                                                ctypes.byref(size))
+            return buf.value if ok else None
+        finally:
+            k32.CloseHandle(h)
+    except Exception:                                       # noqa: BLE001
+        return None
+
+
 def find_pids_by_name(name: str, main_only: bool = True) -> List[int]:
     """按**进程主模块名**找 pid，如 ``find_pids_by_name('masterduel.exe')``。
 

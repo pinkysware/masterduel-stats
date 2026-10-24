@@ -899,3 +899,65 @@ class AutoShowFloatingTest(SettingsPatchedTest):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CollectorGuardTest(unittest.TestCase):
+    """★ 2026-10-24 机主实机事故：采集器静默死 12 小时没人管。
+
+    `_collector_guard_tick()` 补常驻守护：每 5 分钟查一次心跳，
+    不新鲜就 `ensure_collector()`。这里用裸对象 + 打桩验证三条：
+    死了会拉、节流期内不重复拉、活着不拉。
+    """
+
+    def _bare_app(self):
+        from ui.app import MasterDuelUiApp
+        app = MasterDuelUiApp.__new__(MasterDuelUiApp)
+        app._demo = False
+        app._last_collector_guard = 0.0
+        return app
+
+    def test_dead_collector_gets_started(self):
+        """心跳死了（采集器不在）→ 拉起。"""
+        from ui import app as app_mod
+        from core import ui_state
+        app = self._bare_app()
+        started = []
+        with mock.patch.object(app_mod.ui_state, 'collector_status',
+                               lambda *a, **k: {'running': False}), \
+             mock.patch('ui.collector_ctl.ensure_collector',
+                        lambda *a, **k: started.append(1) or 99):
+            app._collector_guard_tick()
+        self.assertEqual(started, [1], '采集器死了必须拉起一次')
+
+    def test_throttled_within_window(self):
+        """5 分钟内第二次 → 不重复拉（节流）。"""
+        from ui import app as app_mod
+        app = self._bare_app()
+        started = []
+        with mock.patch.object(app_mod.ui_state, 'collector_status',
+                               lambda *a, **k: {'running': False}), \
+             mock.patch('ui.collector_ctl.ensure_collector',
+                        lambda *a, **k: started.append(1)):
+            app._collector_guard_tick()
+            app._collector_guard_tick()      # 立刻再拍：应被节流挡住
+        self.assertEqual(started, [1], '节流期内不能重复拉起')
+
+    def test_running_collector_untouched(self):
+        """心跳新鲜（在跑）→ 不拉。"""
+        from ui import app as app_mod
+        app = self._bare_app()
+        started = []
+        with mock.patch.object(app_mod.ui_state, 'collector_status',
+                               lambda *a, **k: {'running': True}), \
+             mock.patch('ui.collector_ctl.ensure_collector',
+                        lambda *a, **k: started.append(1)):
+            app._collector_guard_tick()
+        self.assertEqual(started, [], '采集器活着不该再拉')
+
+    def test_tick_calls_guard(self):
+        """tick() 里真的接了守护（防将来被删掉都不报错）。"""
+        from ui import app as app_mod
+        self.assertIn('self._collector_guard_tick()',
+                      open(os.path.join(PROJ, 'ui', 'app.py'),
+                           encoding='utf-8').read(),
+                      'tick() 没接采集器守护 —— 静默死亡事故会重演')
