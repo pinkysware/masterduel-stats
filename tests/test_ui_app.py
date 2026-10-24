@@ -840,6 +840,31 @@ class ShowNewDecksWritePathTest(SettingsPatchedTest):
 
 
 @unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class FloatingRelayoutTest(SettingsPatchedTest):
+    """★ 2026-10-24：勾「隐藏某列」必须**实时**重排悬浮窗（新机器实测只能重启生效）。
+
+    根因：`floating_relayout` 里写了 `self.deck_name_pool()` ——
+    MasterDuelUiApp 没有这个方法，AttributeError 被 `except Exception: pass`
+    吞掉，`win._relayout_columns()` 永远走不到。修复 = 模块级
+    `ui_state.deck_name_pool(self.storage)`。这个测试锁「重排链真的走到底」。
+    """
+
+    def test_relayout_reaches_columns(self):
+        from core import storage as storage_mod
+        import tempfile
+        a = app_mod.MasterDuelUiApp.__new__(app_mod.MasterDuelUiApp)
+        with tempfile.TemporaryDirectory() as td:
+            a.storage = storage_mod.Storage(os.path.join(td, 't.db'))
+            win = mock.MagicMock()
+            a.win = win
+            a.floating_relayout()
+            #: 🔴 修复前：`self.deck_name_pool()` 抛 AttributeError 被吞，
+            #:   下面两条都不会发生（实测 offscreen 全链复现）。
+            self.assertIsNone(win._last_layout)
+            win._relayout_columns.assert_called_once()
+            win.setMinimumWidth.assert_called_once()
+
+
 class AutoShowFloatingTest(SettingsPatchedTest):
     """游戏启动 → 自动弹悬浮窗（2026-10-05）。
 

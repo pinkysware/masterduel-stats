@@ -756,7 +756,27 @@ class SettingsIndexPage(QWidget):
         btn.setFixedHeight(btn.fontMetrics().height() + 12)
         btn.clicked.connect(self._pick_data_dir)
         h.addWidget(btn)
+        #: ★ 2026-10-24 用户：还要一个「打开」按钮**直接开目录**
+        #:   （排障时拿数据库 / 日志最常用，比一层层找 %LOCALAPPDATA% 省事）。
+        btn2 = QPushButton(tr('打开…'))
+        btn2.setFont(widgets.font(theme.F_BODY))
+        btn2.setFixedHeight(btn2.fontMetrics().height() + 12)
+        btn2.clicked.connect(self._open_data_dir)
+        h.addWidget(btn2)
         return box
+
+    def _open_data_dir(self):
+        """资源管理器里打开当前「游戏对局数据」目录（不存在就先建）。"""
+        from core import paths as _paths
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        import os as _os
+        d = _paths.DATA_DIR
+        try:
+            _os.makedirs(d, exist_ok=True)
+        except OSError:
+            pass
+        QDesktopServices.openUrl(QUrl.fromLocalFile(d))
 
     def _pick_data_dir(self):
         """选「游戏对局数据」目录（含「恢复自动」）。写完提示重启。"""

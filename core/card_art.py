@@ -242,11 +242,18 @@ def fetch_art(cid=None, name_en=None) -> Optional[str]:
 # ---------------------------------------------------------------- 纯卡绘（手坑格用）
 
 def cropped_path(cid) -> Optional[str]:
-    """**纯卡绘**本地缓存路径；没有缓存返回 None（纯本地，不联网）。"""
+    """**纯卡绘**本地缓存路径；没有缓存返回 None（纯本地，不联网）。
+
+    ★ 2026-10-24 两级回落（`paths.resolve`）：先查可写目录
+    ``DATA_DIR/card_art_cropped``（以后下载的落这里），没有再查**随包素材**
+    ``ASSET_DIR/card_art_cropped`` —— 12 张手坑的纯卡绘随包预置在那里。
+    背景：`fetch_cropped` 全项目**零调用**，新机器上缓存目录必然是空的，
+    不回落的话手坑格 100% 显示悠悠兜底（2026-10-24 用户实机报的全默认图）。
+    """
     konami = konami_id(cid)
     if not konami:
         return None
-    p = os.path.join(CROPPED_DIR, '%s.webp' % konami)
+    p = paths.resolve('card_art_cropped', '%s.webp' % konami)
     return p if os.path.exists(p) else None
 
 

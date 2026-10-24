@@ -63,6 +63,24 @@ class PatchPackageTest(unittest.TestCase):
         from build.build_patch import patch_entries
         self.assertIn('data/meta_decks_seed.json', set(patch_entries()))
 
+    def test_patch_includes_hand_trap_cropped_art(self):
+        """★ 2026-10-24：12 张手坑纯卡绘进补丁 —— patch 升级用户手坑格离线有图。"""
+        from build.build_patch import patch_entries
+        entries = [e for e in patch_entries()
+                   if e.startswith('data/card_art_cropped/')]
+        self.assertTrue(entries, '补丁没带手坑纯卡绘（data/card_art_cropped）')
+        self.assertGreaterEqual(len(entries), 12)
+
+    def test_installer_keeps_cropped_art(self):
+        """★ 2026-10-24：安装包不再排除 card_art_cropped（那是随包预置素材，
+        不是运行期缓存）—— 排除了新机器手坑格全是悠悠兜底图。"""
+        from build.build_installer import IGNORE_DATA
+        ignored = IGNORE_DATA('data', ['archive', 'card_art',
+                                       'card_art_cropped', 'fonts'])
+        self.assertIn('archive', ignored)
+        self.assertIn('card_art', ignored)
+        self.assertNotIn('card_art_cropped', ignored)
+
     def test_patch_entries_never_include_user_data_files(self):
         """逐个盯死**用户数据文件**：它们进了包就是覆盖用户的东西。"""
         from build.build_patch import patch_entries

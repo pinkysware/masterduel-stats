@@ -1017,7 +1017,15 @@ class MasterDuelUiApp(object):
             #   只是缺这一句调用。
             _set_max = getattr(win, 'set_max_width', None)
             if callable(_set_max):
-                _set_max(_fl.max_window_width(self.deck_name_pool()))
+                #: 🔴 2026-10-24 修：这里原来写 `self.deck_name_pool()` ——
+                #:   MasterDuelUiApp **没有这个方法**（正确用法是模块级
+                #:   `ui_state.deck_name_pool(self.storage)`，见构造处同款），
+                #:   AttributeError 被下面的 except 吞掉 -> _relayout_columns
+                #:   永远走不到 -> 勾「隐藏某列」只能重启生效
+                #:   （2026-10-24 用户新机器实测报）。
+                from core import ui_state as _uis
+                _set_max(_fl.max_window_width(
+                    _uis.deck_name_pool(self.storage)))
             win._last_layout = None          # 强制重排（别被缓存骗过去）
             win._relayout_columns()
         except Exception:                                # noqa: BLE001

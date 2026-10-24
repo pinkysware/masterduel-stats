@@ -184,5 +184,47 @@ class CacheTest(unittest.TestCase):
                 pass
 
 
+
+class CroppedFallbackTest(unittest.TestCase):
+    """★ 2026-10-24：纯卡绘**两级回落** —— 用户层没有、随包素材层有 → 读得到。
+
+    背景：`fetch_cropped` 全项目**零调用**，新机器缓存目录必空；12 张手坑
+    纯卡绘随包预置（assets 层），靠 `paths.resolve` 回落才读得到 ——
+    不回落则手坑格 100% 悠悠兜底（2026-10-24 用户实机报的全默认图）。
+    """
+
+    def _resolve_factory(self, td):
+        def fake(*parts):
+            user = os.path.join(td, *parts)
+            if os.path.exists(user):
+                return user
+            return os.path.join(PROJ, 'data', *parts)
+        return fake
+
+    def test_falls_back_to_package_assets(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            with mock.patch.object(card_art.paths, 'resolve',
+                                   self._resolve_factory(td)):
+                #: 灰流丽：游戏 id 12950 -> 14558127.webp（随包预置里有）
+                p = card_art.cropped_path('12950')
+            self.assertIsNotNone(p)
+            self.assertEqual(os.path.basename(p), '14558127.webp')
+            #: 来自随包层（不是空的用户层）
+            self.assertFalse(os.path.dirname(p).startswith(td))
+            self.assertTrue(os.path.exists(p))
+
+    def test_data_layer_wins(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            dst = os.path.join(td, 'card_art_cropped')
+            os.makedirs(dst)
+            with open(os.path.join(dst, '14558127.webp'), 'wb') as f:
+                f.write(b'x')
+            with mock.patch.object(card_art.paths, 'resolve',
+                                   self._resolve_factory(td)):
+                p = card_art.cropped_path('12950')
+            self.assertTrue(p.startswith(td))     # 用户层优先
+
 if __name__ == '__main__':
     unittest.main()
