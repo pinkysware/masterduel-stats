@@ -292,6 +292,26 @@ def build(version: str = None, out_dir: str = None) -> list:
     return [html_path, md_path]
 
 
+def emit_into(dst_dir: str, version: str = None) -> list:
+    """★ 2026-10-24 用户口径变更：手册**塞进压缩包**，不再单独发布 ——
+    打包脚本（full/patch/lite/installer）在出包前调这个，把
+    ``bug-guide.html`` / ``bug-guide.md``（**不带版本号**，升级自然覆盖）
+    生成到包根。返回写出的路径列表。
+    """
+    ver = version or read_version()
+    src = os.path.join(PROJ, MANUAL_REL)
+    with io.open(src, encoding='utf-8', newline='') as f:
+        md = f.read()
+    os.makedirs(dst_dir, exist_ok=True)
+    html_path = os.path.join(dst_dir, 'bug-guide.html')
+    md_path = os.path.join(dst_dir, 'bug-guide.md')
+    with io.open(html_path, 'w', encoding='utf-8', newline='') as f:
+        f.write(render_html(md, ver))
+    with io.open(md_path, 'w', encoding='utf-8', newline='') as f:
+        f.write(md)
+    return [html_path, md_path]
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description='把 Bug 定位手册打成独立发布产物（HTML + MD）')
