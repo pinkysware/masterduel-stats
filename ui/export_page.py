@@ -108,7 +108,108 @@ class ExportPage(QWidget):
         self.col.setSpacing(2)
         area.setWidget(host)
         outer.addWidget(area, 1)
+
+        # ★ 2026-10-24 用户：「导出应该能导出**整个软件数据**」—— 卸载重装
+        #   （保留数据仍不完全）/ 换机迁移，都靠这一个 zip 带走全部。
+        outer.addWidget(widgets.hairline())
+        bk_head = QHBoxLayout()
+        bk_head.setSpacing(theme.S_MD)
+        bk_head.addWidget(_lab(tr('全量备份'), 'body',
+                               size=theme.PAGE_F_BODY,
+                               weight=QFont.Weight.Medium))
+        bk_head.addStretch(1)
+        self.btn_backup = QPushButton(tr('备份全部数据…'))
+        self.btn_restore = QPushButton(tr('从备份恢复…'))
+        for btn in (self.btn_backup, self.btn_restore):
+            btn.setFont(widgets.font(theme.F_BODY))
+            btn.setFixedHeight(btn.fontMetrics().height() + 14)
+        self.btn_backup.setToolTip(
+            tr('把全部用户数据（数据库、对局记录、卡组覆盖表、自定义卡组图、')
+            + tr('状态与缓存）打包成一个 zip —— 卸载 / 换机前备一份。'))
+        self.btn_restore.setToolTip(
+            tr('选择备份 zip → 解到暂存区，重启界面后生效（现有数据会先保留，')
+            + tr('恢复是同名覆盖、不删其它文件）。'))
+        self.btn_backup.clicked.connect(self._do_backup)
+        self.btn_restore.clicked.connect(self._do_restore)
+        bk_head.addWidget(self.btn_backup)
+        bk_head.addWidget(self.btn_restore)
+        outer.addLayout(bk_head)
+
         self._preview = []
+
+    # ------------------------------------------------------------ 全量备份
+    def _do_backup(self) -> None:
+        """备份全部用户数据 → 一个 zip（文件对话框选保存位置）。"""
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from core import backup
+        import os as _os
+        import time as _time
+        default = 'masterduel-backup-%s.zip' % _time.strftime('%Y%m%d-%H%M')
+        dest, _f = QFileDialog.getSaveFileName(
+            self, tr('备份全部数据'), default, 'ZIP (*.zip)')
+        if not dest:
+            return
+        if not dest.lower().endswith('.zip'):
+            dest += '.zip'
+        try:
+            r = backup.make_backup(dest)
+        except OSError as e:
+            QMessageBox.warning(self, tr('备份失败'), '%s' % (e,))
+            return
+        QMessageBox.information(
+            self, tr('备份完成'),
+            tr('已备份 %d 个文件（%.1f MB）到：\n%s')
+            % (r['files'], r['bytes'] / 1048576.0, _os.path.abspath(dest)))
+
+    def _do_restore(self) -> None:
+        """从备份 zip 恢复 —— 先拦采集器，再确认，最后 stage + 提示重启。
+
+        真正应用在**下次启动**（core/backup.apply_pending）：界面 / 采集器
+        开着时 SQLite 被锁，热覆盖会 PermissionError，所以这里只解暂存区。
+        """
+        import zipfile
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from core import backup
+        from core import ui_state
+        try:
+            hb = ui_state.collector_status()
+        except Exception:                                  # noqa: BLE001
+            hb = {}
+        if hb.get('running'):
+            QMessageBox.warning(
+                self, tr('采集器正在运行'),
+                tr('恢复前请先退出采集器（托盘菜单 → 退出，或任务栏关掉')
+                + tr(' Duel Collector）再试 —— 它正锁着数据库。'))
+            return
+        src, _f = QFileDialog.getOpenFileName(
+            self, tr('从备份恢复'), '', 'ZIP (*.zip)')
+        if not src:
+            return
+        try:
+            with zipfile.ZipFile(src) as z:
+                stamp = backup.read_stamp(z)
+        except (OSError, zipfile.BadZipFile) as e:
+            QMessageBox.warning(self, tr('这不是有效的备份文件'), '%s' % (e,))
+            return
+        when = stamp.get('created_at') or '?'
+        n = sum(1 for x in zipfile.ZipFile(src).namelist()
+                if not x.endswith('/'))
+        ret = QMessageBox.question(
+            self, tr('确认恢复？'),
+            tr('备份时间：%s（%d 个文件）。\n\n恢复是**同名覆盖**：备份里有的')
+            + tr('文件会盖掉现在的，备份里没有的**保留不动**。\n现在只解到')
+            + tr('暂存区，**重启界面后生效**。'),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ret != QMessageBox.Yes:
+            return
+        try:
+            backup.stage_restore(src)
+        except (OSError, zipfile.BadZipFile) as e:
+            QMessageBox.warning(self, tr('恢复准备失败'), '%s' % (e,))
+            return
+        QMessageBox.information(
+            self, tr('已就绪'),
+            tr('备份已解到暂存区。请**重启界面**（设置 → 重启界面）完成恢复。'))
 
     # ------------------------------------------------------------ 筛选器
     #: ★ 筛选器 = **key 驱动**（审查 P0-1/P0-4）：分支/路由只认 'month'/'mode'，
