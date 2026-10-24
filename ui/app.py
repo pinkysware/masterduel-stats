@@ -40,6 +40,22 @@ from ui.fonts import prepare_app
 from ui.i18n import tr
 from ui.selector import MAX_SUGGEST, DeckSelectorPanel
 
+#: ★ 2026-10-24 用户拍板「低置信**老实显示未知卡组**」：解释率低于它的候选
+#:   不进 UI 建议（悬浮窗那格 / 选择器面板第一条）。
+#:   实测案例（都是用户当天报的「离谱建议」）：
+#:   * 对手是站外冷门自组（阿努比斯/王家神殿，21 张只解释 8 张）
+#:     → 第一名恐啡肽 conf=0.38，显示出来就是误导；
+#:   * 对局早期（前 3-12 张露出）结界像 conf=0.24~0.67 —— 一样不可信。
+#:   反例（必须继续显示）：狱神耀圣镜像局 5/5 全解释 conf=1.0。
+#:   ⚠️ 只滤 UI —— CLI 的 `--guess/--backtest` 仍看全量（回测要全貌）。
+SUGGEST_CONF_MIN = 0.5
+
+
+def gate_suggestions(cands, floor=SUGGEST_CONF_MIN):
+    """UI 建议的置信闸门：解释率低于 ``floor`` 的候选全部丢弃（纯函数）。"""
+    return [c for c in (cands or [])
+            if c.get('hits') and float(c.get('confidence') or 0) >= floor]
+
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCK_PATH = paths.data_path('.duel_ui.lock')
 #: 语言显示名 / 关窗选项的**单一来源在 `ui.theme`**（09-26 设置页优化挪的），
@@ -936,7 +952,9 @@ class MasterDuelUiApp(object):
                                        self._guess_groups)
         except Exception:
             return []
-        out = [c for c in cands if c.get('hits')][:MAX_SUGGEST]
+        #: ★ 置信闸门（2026-10-24）：低置信不显示 —— 站外冷门局的
+        #:   弱建议宁可「未知卡组」也不误导（用户拍板口径）。
+        out = gate_suggestions(cands)[:MAX_SUGGEST]
         meta = {d.get('name'): d
                 for d in (self.storage.list_meta_decks(include_hidden=False)
                           or [])}

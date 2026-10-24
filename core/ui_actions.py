@@ -22,6 +22,46 @@ from core.storage import MANUAL_RESULT_SRC
 #: 快捷方式文件名（放在系统「启动」目录里）
 SHORTCUT_NAME = 'MasterDuelStats.lnk'
 
+#: 🔴 2026-10-24 用户实报「没勾自启也自启」：安装器的 "Start with Windows"
+#:   选项写的是 **HKCU Run 注册表键**（installer.nsi 的 SecAutostart，
+#:   且默认勾选），而软件内开关一直只管「启动目录的 .lnk」—— 两条通道
+#:   互不知道，于是 Run 键在而开关显示「关」。统一口径：
+#:   * ``is_autostart`` = .lnk 在 **或** Run 键在（任一即视为「开」）；
+#:   * ``set_autostart(False)`` = 两条都清；
+#:   * ``set_autostart(True)`` = 只建 .lnk（软件内标准通道），**顺手清
+#:     Run 键** —— 两条都在会开机双启动。
+RUN_KEY_SUB = r'Software\Microsoft\Windows\CurrentVersion\Run'
+RUN_KEY_NAME = 'MasterDuelStats'
+
+
+def _run_key_exists() -> bool:
+    """HKCU Run 键里的安装器自启动项还在不在（读不了注册表 = False）。"""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_SUB) as k:
+            winreg.QueryValueEx(k, RUN_KEY_NAME)
+            return True
+    except OSError:
+        return False
+    except ImportError:                                  # pragma: no cover
+        return False
+
+
+def clear_run_key() -> bool:
+    """清掉安装器写的 Run 自启动键（幂等；读不了注册表返回 False）。"""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_SUB,
+                            0, winreg.KEY_SET_VALUE) as k:
+            winreg.DeleteValue(k, RUN_KEY_NAME)
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    except ImportError:                                  # pragma: no cover
+        return False
+
 _DEFAULT_ARGS_TMPL = (
     "$s = (New-Object -COM WScript.Shell).CreateShortcut('%s');"
     "$s.TargetPath = '%s';$s.Arguments = '%s';"
@@ -51,11 +91,13 @@ def shortcut_path(name: str = SHORTCUT_NAME) -> str:
 
 
 def is_autostart(name: str = SHORTCUT_NAME) -> bool:
-    """快捷方式在不在 —— 这就是「开没开」。"""
+    """「开没开」—— .lnk 在 **或** 安装器的 Run 键在（任一即开，2026-10-24 统一）。"""
     try:
-        return os.path.exists(shortcut_path(name))
+        if os.path.exists(shortcut_path(name)):
+            return True
     except Exception:
-        return False
+        pass
+    return _run_key_exists()
 
 
 def _default_runner(args: Sequence[str]) -> int:
@@ -85,7 +127,13 @@ def set_autostart(on: bool, target: str, arguments: str = '',
                 os.remove(path)
         except Exception:
             return False
+        #: ★ 关也要清安装器的 Run 键 —— 只删 .lnk 的话，装时勾过
+        #:   "Start with Windows" 的用户开关显示「关」却照样自启
+        #:   （2026-10-24 贴吧用户实报）。
+        clear_run_key()
         return not is_autostart(name)
+    #: ★ 开 = 只用 .lnk 通道，顺手清 Run 键 —— 两条并存会开机双启动。
+    clear_run_key()
 
     if not target:
         return False

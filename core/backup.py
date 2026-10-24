@@ -51,7 +51,8 @@ STAGING_NAME = '_restore_staging'
 PENDING_NAME = 'restore_pending.json'
 
 #: 备份时排除（相对 DATA_DIR 的名字；pid 重装后无意义，staging/pending 防套娃）
-EXCLUDE_NAMES = frozenset((STAGING_NAME, PENDING_NAME, 'duel_collector.pid'))
+EXCLUDE_NAMES = frozenset((STAGING_NAME, PENDING_NAME, 'duel_collector.pid',
+                               'collector_owner.json'))   # 同生共死的瞬态认领文件
 
 
 def _walk_files(base: str) -> List[str]:

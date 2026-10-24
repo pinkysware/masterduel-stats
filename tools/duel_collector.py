@@ -1230,6 +1230,38 @@ class DuelCollector(object):
             lines.append('首版 manifest（state=open, size=%d）' % size)
         return lines
 
+    def _salvage_dirless_record(self, rec, now):
+        """给「控制器从未找到」的局（秒投）补一个无动作流的 final 记录。
+
+        用 :func:`record_capture.write_record` 写契约 v1 最小目录 ——
+        game_mode / duel_settings / 卡组快照都用 duel_start 时抓到的值
+        （它们在局开始那一刻就有了，与控制器无关）。目录名撞车（同秒两局）
+        时加 `-s` 后缀，不覆盖已有记录。
+        """
+        from core.memread import record_capture as _rc
+        name = dir_name_for(rec.first_seen_at)
+        if os.path.exists(os.path.join(self.records_dir, name)):
+            name += '-s'
+        rec.dir_path = os.path.join(self.records_dir, name)
+        try:
+            _rc.write_record(
+                rec.dir_path,
+                {'logbase': {'size': 1, 'entries': {}}, 'payload': {}},
+                instance_hex=None, state='final',
+                first_seen_at=rec.first_seen_at, first_logbase_size=1,
+                last_saved_at=now_str(),
+                note='秒投局降级收口：控制器未找到、无动作流（胜负/积分照常入库）',
+                my_deck_snapshot=(rec.deck if isinstance(rec.deck, dict)
+                                  else None),
+                game_mode=rec.game_mode,
+                duel_settings=rec.settings)
+            return ['局结束但控制器未找到 —— 降级收口 %s（无动作流，'
+                    '胜负/积分照常入库）' % name]
+        except Exception as e:                            # noqa: BLE001
+            self.log('降级收口失败（这局丢了）：%r' % e)
+            rec.dir_path = None
+            return []
+
     def _finish_record(self, ts, now):
         """pvpFinished：最后一笔全量抓 -> final -> EM -> import（顺序固定）。
 
@@ -1246,6 +1278,13 @@ class DuelCollector(object):
             return lines
         rec.finalized = True
         self._last_finish_ts = now
+        #: ★ 2026-10-24 秒投局降级收口：对手第一回合投降时引擎常常还没
+        #:   就绪（hunt 没命中 / in_duel 提前翻 False），rec 连目录都没有 ——
+        #:   原来这一局**静默丢**（只剩一条无主 EM）。这里补一个无动作流的
+        #:   final 目录，让 EM/import/段位/DP 链照常走：胜负靠 EM 文案，
+        #:   DP/段位靠结算画面，丢的只是动作流细节。
+        if rec.dir_path is None:
+            lines += self._salvage_dirless_record(rec, now)
         try:
             lines += self._finish_record_steps(rec, now)
         finally:
@@ -2680,6 +2719,51 @@ def clear_pid_file():
         pass
 
 
+# ★ 2026-10-24「采集器与界面同生共死」（用户拍板：不允许一个开着一个关着）。
+#   认领制：界面（ui/collector_ctl）拉起/打开时写 OWNER 文件认领采集器；
+#   采集器每拍检查 —— owner 不在了进入 OWNER_GRACE_SEC 秒宽限（给「重启
+#   界面」留认领窗口，新界面起来 ensure 时覆写 owner 即完成接管），
+#   到点无人认领就优雅退出。没有 owner 文件 = 独立模式（手动 CLI 不受约束，
+#   但界面启动时会把在跑的独立实例收掉重起为受管实例 —— 见 ensure_collector）。
+OWNER_PATH = paths.data_path('archive', 'collector_owner.json')
+OWNER_GRACE_SEC = 90.0
+
+
+def write_owner_file(pid, born=None):
+    """界面认领采集器（覆写即换主）。born 用进程创建时间防 pid 复用。"""
+    os.makedirs(os.path.dirname(OWNER_PATH), exist_ok=True)
+    with open(OWNER_PATH, 'w', encoding='utf-8', newline='') as f:
+        json.dump({'owner_pid': int(pid), 'owner_born': born,
+                   'at': now_str()}, f, ensure_ascii=False)
+
+
+def read_owner_file():
+    try:
+        with open(OWNER_PATH, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) and d.get('owner_pid') else None
+    except (OSError, ValueError):
+        return None
+
+
+def clear_owner_file():
+    try:
+        os.remove(OWNER_PATH)
+    except OSError:
+        pass
+
+
+def owner_alive(owner, alive_fn=None):
+    """owner 记录对应的界面进程是否还活着（None=没有记录=独立模式）。"""
+    if not owner:
+        return None
+    fn = alive_fn or pid_alive
+    try:
+        return bool(fn(int(owner['owner_pid']), owner.get('owner_born')))
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
 def proc_image_name(pid):
     """取 pid 的**可执行文件名**（小写）；不存在 / 无权限时返回 None。"""
     try:
@@ -2924,12 +3008,27 @@ def main(argv=None):
     tries = 0
     lost_watcher = LostWatcher()          # 内存定位自愈（2026-10-14 事故）
     exit_code = 0
+    owner_grace_until = None      # 同生共死的宽限截止（None=主人活着/独立）
 
     def _tb(e):
         """兜底日志带全 traceback —— 静默死亡唯一的目击证人就是它。"""
         return ''.join(traceback.format_exception(type(e), e, e.__traceback__))
     try:
         while deadline is None or time.time() < deadline:
+            # ★ 同生共死（2026-10-24）：每拍看一眼界面认领人还在不在。
+            own = read_owner_file()
+            if own is not None:
+                if owner_alive(own):
+                    owner_grace_until = None     # 主人活着，解除宽限
+                elif owner_grace_until is None:
+                    owner_grace_until = time.time() + OWNER_GRACE_SEC
+                    log('界面(pid=%s)不在了 —— %.0f 秒内没人认领就退出'
+                        % (own.get('owner_pid'), OWNER_GRACE_SEC))
+                elif time.time() >= owner_grace_until:
+                    log('界面退出后无人认领 —— 同生共死，采集器退出')
+                    break
+            else:
+                owner_grace_until = None         # 无认领 = 独立模式
             pids = find_pids_by_name('masterduel.exe')
             if not pids:
                 if connected_pid:

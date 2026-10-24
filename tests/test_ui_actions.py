@@ -4,11 +4,13 @@
 ★ 纪律：**测试不许真的建快捷方式、不许真的调 PowerShell** ——
 ``set_autostart`` 的 ``runner`` 与「启动目录」都注入成临时目录。
 """
+import io
 import os
 import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
@@ -152,7 +154,7 @@ class AutostartTest(unittest.TestCase):
 
     def test_turn_on(self):
         self.name = ui_actions.SHORTCUT_NAME
-        ok = ui_actions.set_autostart(True, target=r'C:\py\pythonw.exe',
+        ok = ui_actions.set_autostart(True, target='C:/py/pythonw.exe',
                                       arguments=r'tools\duel_ui.py',
                                       workdir=r'E:\proj', runner=self._runner)
         self.assertTrue(ok)
@@ -203,6 +205,69 @@ class StartupDirTest(unittest.TestCase):
         finally:
             if saved is not None:
                 os.environ['APPDATA'] = saved
+
+
+
+class AutostartRunKeyUnifyTest(unittest.TestCase):
+    """★ 2026-10-24：安装器 Run 键与软件内 .lnk 两条通道统一管理。
+
+    贴吧用户实报「没勾软件自启也开机自启」—— 安装器的 "Start with
+    Windows"（默认勾选）写 HKCU Run 键，软件内开关只看 .lnk，互不知道。
+    """
+
+    def setUp(self):
+        from unittest import mock
+        import shutil
+        self._mock = mock
+        self._td = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self._td, ignore_errors=True)
+        p = mock.patch.object(ui_actions, 'startup_dir',
+                              lambda: self._td)
+        p.start()
+        self.addCleanup(p.stop)
+        self.calls = []
+
+    def test_is_autostart_true_when_only_run_key(self):
+        """只有 Run 键（装时勾过）也算「开」—— 开关不再显示假「关」。"""
+        with mock.patch.object(ui_actions, '_run_key_exists',
+                               return_value=True):
+            self.assertTrue(ui_actions.is_autostart())
+
+    def test_turn_off_clears_both_channels(self):
+        """关 = .lnk 和 Run 键两条都清。"""
+        io.open(os.path.join(self._td, ui_actions.SHORTCUT_NAME), 'w').close()
+        cleared = []
+        run_key_state = {'on': True}
+
+        def fake_clear():
+            cleared.append(1)
+            run_key_state['on'] = False      # 清完再查就没了（真实语义）
+            return True
+        with mock.patch.object(ui_actions, '_run_key_exists',
+                               lambda: run_key_state['on']),              mock.patch.object(ui_actions, 'clear_run_key', fake_clear):
+            ok = ui_actions.set_autostart(False, target='x')
+        self.assertTrue(ok)
+        self.assertEqual(cleared, [1])
+        self.assertFalse(os.path.exists(
+            os.path.join(self._td, ui_actions.SHORTCUT_NAME)))
+
+    def test_turn_on_also_clears_run_key(self):
+        """开 = 只用 .lnk 通道 + 清 Run 键（两条并存会开机双启动）。"""
+        cleared = []
+
+        def fake_runner(args):
+            io.open(os.path.join(self._td, ui_actions.SHORTCUT_NAME),
+                    'w').close()
+            return 0
+        with mock.patch.object(ui_actions, '_run_key_exists',
+                               return_value=False),              mock.patch.object(ui_actions, 'clear_run_key',
+                               lambda: cleared.append(1) or True):
+            ok = ui_actions.set_autostart(
+                True, target='C:/py/pythonw.exe',
+                arguments='tools/duel_ui.py', runner=fake_runner)
+        self.assertTrue(ok)
+        self.assertEqual(cleared, [1])
+        self.assertTrue(ui_actions.is_autostart.__doc__ is not None)
 
 
 if __name__ == '__main__':

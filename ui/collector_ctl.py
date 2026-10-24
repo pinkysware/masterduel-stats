@@ -115,7 +115,15 @@ def stop_collector(timeout_ms: int = 1500) -> str:
     if not alive:
         return 'not-running'
 
-    return _terminate(int(pid), timeout_ms)
+    how = _terminate(int(pid), timeout_ms)
+    if how in ('stopped', 'forced'):
+        try:
+            sys.path.insert(0, os.path.join(PROJ, 'tools'))
+            from duel_collector import clear_owner_file
+            clear_owner_file()
+        except Exception:                                # noqa: BLE001
+            pass
+    return how
 
 
 def collector_running() -> bool:
@@ -172,14 +180,36 @@ def start_collector(minutes: int = 0, interval: int = 2.0) -> Optional[int]:
                                 creationflags=flags)
     except Exception:                                    # noqa: BLE001
         return None
+    #: ★ 同生共死（2026-10-24）：拉起即认领 —— owner 写**本界面进程**，
+    #:   采集器每拍查我们；界面退出（stop_collector）或崩溃后 90 秒内
+    #:   没有新界面认领，它就自己退。
+    _claim_ownership()
     _log('[collector_ctl] 采集器不在，已拉起 pid=%s' % proc.pid)
     return proc.pid
 
 
+def _claim_ownership() -> None:
+    """以当前界面进程身份认领采集器（覆写 owner 文件 = 换主/续期）。"""
+    try:
+        sys.path.insert(0, os.path.join(PROJ, 'tools'))
+        from duel_collector import write_owner_file, proc_born
+        write_owner_file(os.getpid(), proc_born(os.getpid()))
+    except Exception as e:                               # noqa: BLE001
+        _log('[collector_ctl] 认领失败（采集器仍会跑，只是不受管）：%r' % (e,))
+
+
 def ensure_collector(minutes: int = 0) -> Optional[int]:
-    """界面启动时的保险：**采集器不在就拉起来**（在则什么都不做）。"""
+    """界面启动时的保险：**采集器不在就拉起来**；在跑就**认领**它。
+
+    ★ 2026-10-24 同生共死：在跑也**必须认领**（覆写 owner 文件）——
+    * 上个界面退出/崩溃留下的实例（宽限期内）→ 接管续用，不丢正在打的局；
+    * 手动 CLI 起的独立实例（无 owner）→ 也接管（用户口径：界面开着时
+      采集器必须归它管，不许游离）。
+    """
     try:
         if collector_running():
+            _claim_ownership()
+            _log('[collector_ctl] 采集器已在跑，已认领（owner=本界面）')
             return None
         return start_collector(minutes=minutes)
     except Exception:                                    # noqa: BLE001

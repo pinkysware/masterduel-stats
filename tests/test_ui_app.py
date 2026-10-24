@@ -840,6 +840,49 @@ class ShowNewDecksWritePathTest(SettingsPatchedTest):
 
 
 @unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class SuggestConfidenceGateTest(unittest.TestCase):
+    """★ 2026-10-24 用户拍板：低置信建议不显示（老实「未知卡组」）。
+
+    起因：对手是站外冷门自组（阿努比斯/王家）时 21 张只解释 8 张，
+    第一名 conf=0.38 —— 显示出来就是误导（用户实测报「离谱建议」）。
+    """
+
+    def test_gate_filters_low_confidence(self):
+        cands = [{'name': 'A', 'hits': 8, 'confidence': 0.38},
+                 {'name': 'B', 'hits': 5, 'confidence': 0.49},
+                 {'name': 'C', 'hits': 5, 'confidence': 0.5},
+                 {'name': 'D', 'hits': 5, 'confidence': 1.0},
+                 {'name': 'E', 'hits': 0, 'confidence': 0.9}]   # 0 命中也不许进
+        got = app_mod.gate_suggestions(cands)
+        self.assertEqual([c['name'] for c in got], ['C', 'D'])
+
+    def test_gate_floor_override_and_empty(self):
+        self.assertEqual(app_mod.gate_suggestions(None), [])
+        self.assertEqual(app_mod.gate_suggestions([]), [])
+        keep = app_mod.gate_suggestions(
+            [{'name': 'X', 'hits': 2, 'confidence': 0.3}], floor=0.25)
+        self.assertEqual([c['name'] for c in keep], ['X'])
+
+    def test_real_cases_high_keeps_low_drops(self):
+        """两条实测：耀圣镜像局（5/5 解释）保留；阿努比斯站外局（8/21）压掉。"""
+        sys.path.insert(0, os.path.join(PROJ))
+        from core import deck_guess
+        idx, groups = deck_guess.load_index()
+        strong = [c for c in deck_guess.suggest(
+            {'opp_revealed_ids': [22565, 22159, 12950, 22523, 9455]},
+            idx, groups) if c.get('hits')]
+        weak = [c for c in deck_guess.suggest(
+            {'opp_revealed_ids': [18311, 21353, 5530, 13293, 21044, 13631,
+                                  6541, 17728, 5980, 21035, 21037, 21059,
+                                  19049, 21040, 21215, 22586, 21036, 20257,
+                                  5231, 8606, 20231]}, idx, groups)
+            if c.get('hits')]
+        self.assertTrue(app_mod.gate_suggestions(strong),
+                        '耀圣镜像局的建议不该被压掉')
+        self.assertEqual(app_mod.gate_suggestions(weak), [],
+                         '站外冷门局的弱建议必须整体压掉')
+
+
 class FloatingRelayoutTest(SettingsPatchedTest):
     """★ 2026-10-24：勾「隐藏某列」必须**实时**重排悬浮窗（新机器实测只能重启生效）。
 

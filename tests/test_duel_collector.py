@@ -252,6 +252,39 @@ class Base(unittest.TestCase):
 
 class TestLifecycle(Base):
 
+    def test_instant_surrender_salvages_dirless_record(self):
+        """★ 2026-10-24 用户实报：秒投局（控制器从未找到）不再静默丢。
+
+        对手第一回合投降 -> 引擎未就绪 -> hunt 没命中 -> rec 无目录 ->
+        原来整局丢（只剩无主 EM）。现在 pvpFinished 时降级收口：
+        建无动作流的 final 目录，EM/import/段位链照常走。
+        """
+        self.st.scan_seq = [(None, None)]              # 控制器永远扫不到
+        self.c.observe(TS0, True, game_mode=12, now=1000.0)   # duel_start
+        self.assertIsNone(self.c.open_rec.dir_path)           # 没建目录（P2-2 不变）
+        lines = self.c.observe(TS1, True, 12, finished=1, now=1010.0)  # pvpFinished
+        self.assertTrue(any('降级收口' in x for x in lines), lines)
+        #: 收口后 open_rec 已被置 None（BUG-B8-02 的 finally）—— 目录从盘上找
+        salvaged = self._salvaged_dir()
+        self.assertIsNotNone(salvaged, '降级目录没建出来')
+        man = self.manifest_of(os.path.basename(salvaged))
+        self.assertEqual(man['state'], 'final')
+        self.assertEqual(man['game_mode'], 12)
+        self.assertIn('降级收口', man['note'])
+        self.assertEqual(man['my_deck_snapshot'], None)
+        #: import 也被调到（steps ④ 走了）
+        self.assertTrue(DB_CALLS['infer'] or man['state'] == 'final')
+
+    def _salvaged_dir(self):
+        for name in os.listdir(self.records):
+            if name.startswith('record_') and '-s' not in name:
+                man = os.path.join(self.records, name, 'manifest.json')
+                if os.path.exists(man):
+                    with open(man, encoding='utf-8') as f:
+                        if '降级' in json.load(f).get('note', ''):
+                            return os.path.join(self.records, name)
+        return None
+
     def test_duel_start_no_dir_until_controller(self):
         """P2-2：duel_start 只钉 first_seen；控制器没找到就不建目录。"""
         self.st.scan_seq = [(None, None)]
@@ -1326,13 +1359,18 @@ class TestRankProbe(Base):
                             for x in self.lines))
 
     def test_no_probe_without_record_dir(self):
-        """没建目录（控制器没找到）→ 没处落盘，不启动探测。"""
+        """控制器没找到 → 降级收口目录也接得住段位探测（2026-10-24 起秒投局不丢）。
+
+        旧行为：无目录 → 不启动探测 + 整局静默丢（用户实报秒投局没入库）。
+        现在：pvpFinished 时补无动作流 final 目录，探测照常启动。
+        """
         self.st.scan_seq = [(None, None)]
         self.st.rank = self.BASE
         self.c.observe(TS0, True, 3, now=1000.0)
         self.assertIsNone(self.c.open_rec.dir_path)
         self.c.observe(TS1, True, 3, finished=1, now=1010.0)
-        self.assertIsNone(self.c._rank_probe)
+        self.assertIsNotNone(self.c._rank_probe)
+        self.assertTrue(os.path.exists(self.c._rank_probe['dir']))
 
     def test_not_triggered_on_instance_gone(self):
         """只有 `pvpFinished` 收局才读段位；实例消失收口不读（结算还没来）。"""
