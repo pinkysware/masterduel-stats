@@ -517,6 +517,13 @@ class MasterDuelUiApp(object):
         # 标注写入内存（重启还原），真库永不被写（2026-09-15 用户定）。
         self._db_path = db_path
         self._demo = bool(demo) or demo_from_settings()
+        #: ★ 2026-10-24 诊断：UI 日志落盘（pythonw 下 stdout 是 None，
+        #:   print 全丢 —— 从此 tee 进 archive/ui_logs/，诊断包带上）。
+        try:
+            from core import diagnostics
+            diagnostics.install_ui_log()
+        except Exception:                                  # noqa: BLE001
+            pass
         #: ★ 2026-10-24「全量备份/恢复」：**打开任何 db 之前**应用 pending 的
         #:   恢复（见 core/backup.py）。失败（采集器还锁着库等）不炸启动 ——
         #:   pending 留着，下次启动再试。

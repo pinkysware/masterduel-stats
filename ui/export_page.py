@@ -120,7 +120,8 @@ class ExportPage(QWidget):
         bk_head.addStretch(1)
         self.btn_backup = QPushButton(tr('备份全部数据…'))
         self.btn_restore = QPushButton(tr('从备份恢复…'))
-        for btn in (self.btn_backup, self.btn_restore):
+        self.btn_diag = QPushButton(tr('导出诊断包…'))
+        for btn in (self.btn_backup, self.btn_restore, self.btn_diag):
             btn.setFont(widgets.font(theme.F_BODY))
             btn.setFixedHeight(btn.fontMetrics().height() + 14)
         self.btn_backup.setToolTip(
@@ -129,8 +130,12 @@ class ExportPage(QWidget):
         self.btn_restore.setToolTip(
             tr('选择备份 zip → 解到暂存区，重启界面后生效（现有数据会先保留，')
             + tr('恢复是同名覆盖、不删其它文件）。'))
+        self.btn_diag.setToolTip(
+            tr('环境快照（版本/路径/设置/库概况）+ 各日志尾部，打成 zip')
+            + tr(' —— 报问题时把这个发给开发者。'))
         self.btn_backup.clicked.connect(self._do_backup)
         self.btn_restore.clicked.connect(self._do_restore)
+        self.btn_diag.clicked.connect(self._do_diag)
         bk_head.addWidget(self.btn_backup)
         bk_head.addWidget(self.btn_restore)
         outer.addLayout(bk_head)
@@ -210,6 +215,32 @@ class ExportPage(QWidget):
         QMessageBox.information(
             self, tr('已就绪'),
             tr('备份已解到暂存区。请**重启界面**（设置 → 重启界面）完成恢复。'))
+
+    def _do_diag(self) -> None:
+        """导出诊断包（环境快照 + 日志尾部）—— 报问题给开发者用。"""
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from core import diagnostics
+        import os as _os
+        import time as _time
+        default = 'masterduel-diag-%s.zip' % _time.strftime('%Y%m%d-%H%M%S')
+        dest, _f = QFileDialog.getSaveFileName(
+            self, tr('导出诊断包'), default, 'ZIP (*.zip)')
+        if not dest:
+            return
+        if not dest.lower().endswith('.zip'):
+            dest += '.zip'
+        try:
+            r = diagnostics.make_bundle(dest)
+        except Exception as e:                          # noqa: BLE001
+            QMessageBox.warning(self, tr('导出失败'), '%r' % (e,))
+            return
+        cut = ('；截断 %d 个大文件（全量在数据目录）' % len(r['truncated'])
+               if r['truncated'] else '')
+        QMessageBox.information(
+            self, tr('诊断包已导出'),
+            tr('环境快照 + %d 个日志文件（%.1f KB）%s。\n%s')
+            % (r['log_files'], r['bytes'] / 1024.0, cut,
+               _os.path.abspath(dest)))
 
     # ------------------------------------------------------------ 筛选器
     #: ★ 筛选器 = **key 驱动**（审查 P0-1/P0-4）：分支/路由只认 'month'/'mode'，
