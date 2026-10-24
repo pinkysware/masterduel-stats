@@ -840,6 +840,50 @@ class ShowNewDecksWritePathTest(SettingsPatchedTest):
 
 
 @unittest.skipUnless(HAVE_QT, '没装 PySide6')
+class AutoAdoptTest(unittest.TestCase):
+    """★ 2026-10-24 用户需求：高置信建议自动入库（不用手点确认）。
+
+    三条安全线：conf>=0.85 / hits>=4 / 第一名明显胜出（并列不选边）。
+    """
+
+    def _c(self, name, hits, conf, bayes=-3.0):
+        return {'name': name, 'hits': hits, 'confidence': conf, 'bayes': bayes}
+
+    def test_high_confidence_adopts(self):
+        got = app_mod.auto_adoptable(
+            [self._c('狱神耀圣', 7, 1.0), self._c('Elfnote', 5, 0.7, -8.0)])
+        self.assertIsNotNone(got)
+        self.assertEqual(got['name'], '狱神耀圣')
+
+    def test_too_few_hits_rejected(self):
+        #: 两三张泛用凑巧全中（conf=1.0 但 hits=3）不自动
+        self.assertIsNone(app_mod.auto_adoptable(
+            [self._c('X', 3, 1.0), self._c('Y', 2, 0.6, -9.0)]))
+
+    def test_low_confidence_rejected(self):
+        #: 捕食植物 0.88 会过（>0.85）；结界像 0.67 不自动
+        self.assertIsNotNone(app_mod.auto_adoptable(
+            [self._c('Predaplant', 7, 0.88, -4.0), self._c('Z', 5, 0.6, -9.0)]))
+        self.assertIsNone(app_mod.auto_adoptable(
+            [self._c('Banquet', 5, 0.67, -5.0), self._c('Z', 4, 0.5, -9.0)]))
+
+    def test_tie_rejected(self):
+        #: 狱神耀圣与 Elfnote 同 hits 同 bayes —— 机器不替用户选
+        self.assertIsNone(app_mod.auto_adoptable(
+            [self._c('狱神耀圣', 7, 1.0, -3.2), self._c('Elfnote', 7, 1.0, -3.2)]))
+        #: bayes 拉开一点（-3.2 vs -3.6）就该自动
+        self.assertIsNotNone(app_mod.auto_adoptable(
+            [self._c('狱神耀圣', 7, 1.0, -3.2), self._c('Elfnote', 7, 1.0, -3.6)]))
+
+    def test_empty_and_second_lower_hits(self):
+        self.assertIsNone(app_mod.auto_adoptable([]))
+        self.assertIsNone(app_mod.auto_adoptable(None))
+        #: 第二名 hits 更少但 bayes 更高 —— 看合计：仍按第一名（hits 主排序）
+        got = app_mod.auto_adoptable(
+            [self._c('A', 8, 0.9, -5.0), self._c('B', 6, 0.7, -2.0)])
+        self.assertIsNotNone(got)
+
+
 class SuggestConfidenceGateTest(unittest.TestCase):
     """★ 2026-10-24 用户拍板：低置信建议不显示（老实「未知卡组」）。
 

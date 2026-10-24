@@ -56,6 +56,40 @@ def gate_suggestions(cands, floor=SUGGEST_CONF_MIN):
     return [c for c in (cands or [])
             if c.get('hits') and float(c.get('confidence') or 0) >= floor]
 
+
+#: ★ 2026-10-24 用户需求：「置信度高于某个比例就直接入库，不需要手点」。
+#:   自动采纳的三条安全线（缺一不自动，退回显示建议/未知卡组）：
+#:   1. 置信度 >= 0.85（解释率八成五以上 —— 实测：耀圣镜像 1.0、朱罗纪
+#:      1.0、捕食植物 0.88 会自动；阿努比斯站外局 0.38、结界像 0.24~0.67
+#:      不会）；
+#:   2. 命中 >= 4 张 —— 两三张泛用恰好全中也会 conf=1.0，样本太少不算数；
+#:   3. 第一名**明显胜过**第二名（bayes 差 > 0.01）—— 狱神耀圣与 Elfnote
+#:      同分并列时机器不能替用户选（那是口径问题不是识别问题）。
+AUTO_ADOPT_CONF_MIN = 0.85
+AUTO_ADOPT_MIN_HITS = 4
+
+
+def auto_adoptable(cands):
+    """从候选里挑「可以自动入库的那条」（不满足三条安全线返回 None）。
+
+    ``cands`` = gate_suggestions 过滤后的列表。纯函数，单测锁。
+    """
+    cs = list(cands or [])
+    if not cs:
+        return None
+    top = cs[0]
+    if int(top.get('hits') or 0) < AUTO_ADOPT_MIN_HITS:
+        return None
+    if float(top.get('confidence') or 0) < AUTO_ADOPT_CONF_MIN:
+        return None
+    if len(cs) > 1:
+        second = cs[1]
+        if (int(second.get('hits') or 0) >= int(top.get('hits') or 0)
+                and float(second.get('bayes') or 0)
+                >= float(top.get('bayes') or 0) - 0.01):
+            return None                    # 并列 —— 机器不选边
+    return top
+
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOCK_PATH = paths.data_path('.duel_ui.lock')
 #: 语言显示名 / 关窗选项的**单一来源在 `ui.theme`**（09-26 设置页优化挪的），
@@ -766,11 +800,32 @@ class MasterDuelUiApp(object):
                 continue
             key = self._sug_key(row.get('opp_revealed_ids'))
             if key not in cache:
-                cands = self.guess_for(row)
-                cache[key] = cands[0] if cands else None
-            cand = cache[key]
+                cache[key] = self.guess_for(row)
+            cands = cache[key] or []
+            cand = cands[0] if cands else None
             if not cand:
                 continue
+            #: ★ 2026-10-24 高置信自动入库（用户需求）：三条安全线全过
+            #:   （见 auto_adoptable）就直接标掉 —— 行下一拍变已标注，
+            #:   不用再手点。note 记 auto:conf 留痕，想改随时点格重标。
+            if getattr(self, '_demo', False):
+                auto = None                       # demo 沙盒不写真库
+            else:
+                auto = auto_adoptable(cands)
+            if auto is not None:
+                try:
+                    from core import ui_actions
+                    ok, _msg = ui_actions.mark_meta_deck(
+                        self.storage, row.get('match_id'), auto,
+                        disp=deck_display(auto, lang) or auto.get('name'),
+                        note='auto:conf=%.2f' % float(auto['confidence']))
+                    if ok:
+                        print('[auto-adopt] %s -> %s (conf=%.2f, hits=%s)'
+                              % (row.get('match_id'), auto.get('name'),
+                                 float(auto['confidence']), auto.get('hits')))
+                        continue                  # 已入库：这拍不挂建议
+                except Exception as _e:                     # noqa: BLE001
+                    print('[auto-adopt] 失败（退回显示建议）：%r' % (_e,))
             row['suggest_deck'] = cand
             row['suggest_name'] = deck_display(cand, lang) or cand.get('name')
             row['suggest_img'] = self._deck_images().resolve(cand.get('name'))
