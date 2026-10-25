@@ -245,8 +245,6 @@ def group_duels(scans, gap_sec=None):
         else:
             target.append(it)
     return groups
-
-
 def _logbase_continues(group, item):
     """item 是不是 group 那局的**延续** —— 而不是「地址被复用的新局」。
 

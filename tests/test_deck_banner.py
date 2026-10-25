@@ -98,7 +98,7 @@ class BannerWidgetTest(unittest.TestCase):
         self.assertEqual(mode, 'waiting')
         self.assertTrue(self.banner.isVisible())
         self.assertFalse(self.banner.btn_ok.isVisible())
-        self.assertIn('卡组编辑', self.banner.label.text())
+        self.assertIn('编辑牌组', self.banner.label.text())   # 2026-10-25 untapped 同款引导
 
     def test_confirm_has_fixed_title_no_name(self):
         """★ 三轮拍板：「我方卡组：卡图(不带名字)，刷新键，确认」。

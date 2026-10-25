@@ -292,10 +292,10 @@ class TestPairing(Base):
         self.assertIn('my_deck_name_src', cols, '旧库必须被补列')
 
     def test_my_deck_filled_from_current_deck(self):
-        """空名 + 天梯/巅峰 -> 用「当前卡组」补（src=current-deck）。
+        """空名 -> 用「当前卡组」补（src=current-deck）。
 
-        ⚠️ 活动局**不补**（那局的牌来自活动容器，拿当前卡组填是错的）——
-        另一半用例见 :meth:`test_my_deck_not_filled_for_event_mode`。
+        ★ 2026-10-25 用户拍板：**全模式放开**（自动识别没有卡组，再用手动填的）
+        —— 天梯 / 巅峰 / 活动的用例分别在下面三个测试。
         """
         name = self.make_record('record_20260916_140000', versioned=True,
                                 state='final')
@@ -306,6 +306,21 @@ class TestPairing(Base):
             self.run_import(apply=True)
         row = self.row_by_id('rec:record_20260916_140000')
         self.assertEqual(row['my_deck_name'], 'Blue-Eyes')   # 临时库没 meta 清单 -> 落回 key
+        self.assertEqual(row['my_deck_name_src'], 'current-deck')
+
+    def test_my_deck_filled_for_peak_too(self):
+        """★ 巅峰（19）也兜 —— 2026-10-25 放开（旧口径「只禁巅峰」作废：
+        专用槽通道已通，空快照只剩 rare 场景，手动填的值即用户声明的当前
+        卡组，错标随时可在悬浮窗卡图重选）。"""
+        name = self.make_record('record_20260916_140050', versioned=True,
+                                state='final')
+        self._set_mode(name, 19)
+        with mock.patch.object(imp, '_current_my_deck',
+                               return_value={'name': 'Blue-Eyes',
+                                             'at': '2026-09-16 13:00:00'}):
+            self.run_import(apply=True)
+        row = self.row_by_id('rec:record_20260916_140050')
+        self.assertEqual(row['my_deck_name'], 'Blue-Eyes')
         self.assertEqual(row['my_deck_name_src'], 'current-deck')
 
     def test_my_deck_filled_for_event_mode_too(self):

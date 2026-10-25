@@ -261,6 +261,11 @@ def _recent_row(m, nxt, decks, disp_name=None) -> dict:
     started = str(m.get('started_at') or '')
     today = datetime.date.today().isoformat()
     r_before = (m.get('my_rank_before'), m.get('my_rate_before'))
+    if r_before[0] is None and m.get('my_rank_after') is not None:
+        # ★ 2026-10-25：局前段位没读到（开局拍 timeout/掉线局，14:18/14:30
+        # 两局实锤）-> 用**局后段位**画徽章（与看板「局前/局后段位」列一致）。
+        # 判负局前后通常同段位；真掉段时 before 本来就读到了，不走这条。
+        r_before = (m.get('my_rank_after'), m.get('my_rate_after'))
     group = M.group(m.get('game_mode'))
     # ⚠️ 段位变化**只在天梯局算**（2026-09-15 用户口径：巅峰赛只显示
     # 巅峰图标，没有段位）—— `r_after` 取的是「下一局」开打前的段位，

@@ -367,6 +367,19 @@ def process(records_dir=DEFAULT_RECORDS, storage=None, apply=False,
                     if got is not None:
                         sibling = got
                         break
+            else:
+                # ★ 2026-10-25：**两行共存态**也认领 —— 「旧目录行（采集器中途
+                #   退出被强收入库）+ 新主目录行（重启接管后再入库）」都在时，
+                #   own 非 None 走不到上面，全量重跑同样修不掉（用户实报
+                #   「同一对手出现两行」，2026-10-25 13:42/13:50 同局两行）。
+                #   同组 = 同局判定已由 group_duels 负责（含 final-then-new 等
+                #   防线），这里按 record_dir 认领兄弟行：标注搬过来（补空）、
+                #   删兄弟行 —— 与 B8-08 同语义。
+                for sib in sorted(s['name'] for s in g if s['name'] != rid):
+                    got = storage.get_match('rec:' + sib)
+                    if got is not None:
+                        sibling = got
+                        break
             if own is not None:
                 pair, stage = None, 'own-record-row'
                 # 沿用自己行里已入库的时间锚——否则 to_row 出行 started_at=None，
@@ -447,13 +460,14 @@ def process(records_dir=DEFAULT_RECORDS, storage=None, apply=False,
             #    ⚠️ 只在该局**没读到自己的牌**、且**本局不早于记录时刻**时才补（别改写历史局）。
             if not (meta_updates.get('my_deck_name') or duel['meta'].get('my_deck_name')):
                 cur = _current_my_deck()
-                # ★ 09-28：`current-deck` 兜底只对**天梯（mode=3）**生效 ——
-                #   天梯/巅峰是两个独立的卡组槽位（现场枚举 ClientWork 实锤），
-                #   巅峰局的「当前卡组」（=天梯那份）不是当局实际用的牌，兜了必错标。
+                # ★ 2026-10-25 用户拍板：`current-deck` 兜底**全模式放开** ——
+                #   「自动识别没有卡组，再用手动填的」。09-28 的「只禁巅峰
+                #   （双槽位错标风险）」作废：巅峰/DC 杯的专用槽通道
+                #   （read_ratedeck / read_cupdeck）已通，空快照只剩 rare 场景，
+                #   此时用户手动指定的值就是他声明的当前卡组（错标责任在填写，
+                #   随时可在悬浮窗卡图重选）。24h 时效与 fresh 守卫照旧。
                 gm = (duel['meta'].get('game_mode')
                       or meta_updates.get('game_mode'))
-                if cur and gm == 19:      # 只禁巅峰（09-28 双槽位实锤）；
-                    cur = None            # 活动局(21/DRDeck)维持 09-16 口径照兜
                 started = meta_updates.get('started_at') or duel['meta'].get('started_at')
                 fresh = (not cur) or not cur.get('at') or not started \
                     or str(started) >= str(cur['at'])

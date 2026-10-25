@@ -155,6 +155,10 @@ class StubHooks(Hooks):
         # 巅峰 own-deck（09-28）：默认 None；要测分流时给 self.peak_deck 赋值
         return getattr(self, 'peak_deck', None)
 
+    def snapshot_cup_deck(self):
+        # DC 杯 own-deck（2026-10-25）：默认 None；要测分流时给 self.cup_deck 赋值
+        return getattr(self, 'cup_deck', None)
+
     def read_my_rank(self):
         if self.rank_seq:
             return self.rank_seq.pop(0)
@@ -2373,6 +2377,31 @@ class TestToolsOnSysPath(unittest.TestCase):
                 os.path.dirname(os.path.abspath(spec.origin)),
                 [_dc._HERE],
                 '%s 不该只在 %s 里找得到' % (mod, _dc._HERE))
+
+
+class TestCupDeckSnapshot(Base):
+    """DC 杯（gm=12）快照分流 —— 2026-10-25 实机 CUPDeckList 实锤的回归锁。
+
+    * 分流：gm=12 走 `snapshot_cup_deck`（不走常规快照）；
+    * 防线：gm=12 + **常规 Deck 容器**的快照仍要丢（CUPDeck 专用槽放行）。
+    """
+
+    CUP = {'deck_id': None, 'deck_name': '狱神耀圣', 'container': 'CUPDeck',
+           'ids': [20500, 8933, 14990]}
+
+    def test_cup_deck_kept_on_gm12(self):
+        self.st.cup_deck = dict(self.CUP)
+        self.c.observe('2026-10-25T12:00:00', True, 12, now=1000.0)
+        rec = self.c.open_rec
+        self.assertIsNotNone(rec.deck, 'DC 杯专用槽快照不许被 trusted 门丢掉')
+        self.assertEqual(rec.deck['container'], 'CUPDeck')
+
+    def test_regular_deck_still_dropped_on_gm12(self):
+        """防线不回退：gm=12 读到常规 Deck 容器 = 大厅错值，必须丢。"""
+        self.st.cup_deck = None
+        self.st.deck = {'deck_name': '大厅残留', 'ids': [4007]}   # 无 container = 常规
+        self.c.observe('2026-10-25T12:01:00', True, 12, now=1001.0)
+        self.assertIsNone(self.c.open_rec.deck, '常规快照在 gm=12 必须按口径丢弃')
 
 
 if __name__ == '__main__':

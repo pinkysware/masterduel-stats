@@ -553,7 +553,18 @@ _T = {
     "点击修正这一局的胜负（人工修正优先，不会被自动解析覆盖）": ("Click to fix the result (manual fixes take priority over auto-parse)", "クリックで勝敗を修正（手動修正は自動解析より優先）"),
     "点击关闭后": ("When Close Is Clicked", "閉じるをクリックした時"),
     "点击选择对手卡组": ("Click to pick the opponent deck", "クリックで相手デッキを選択"),
-    "点卡图手动选，或进游戏卡组编辑界面自动获取": ("Click the art to pick manually, or open the in-game Deck Editor to auto-detect", "カード画像をクリックして手動選択、またはゲーム内のデッキ編集画面で自動取得"),
+    "点卡图手动选；或点开游戏「编辑牌组」再返回即可识别": (
+        "Click the art to pick manually; or open \u300cEdit Deck\u300d in game and"
+        " return \u2014 it is read there",
+        "カード画像をクリックして手動選択；ゲーム内の「デッキ編集」を開いて"
+        "戻ると自動取得できます"),
+    "天梯 / 巅峰自动识别；DC 杯与活动局的卡表只在「编辑牌组」打开期间可读 —— 进游戏点开「编辑牌组」再返回，各模式都能识别/兜底": (
+        "Ladder / Peak are auto-detected; Duelist Cup and event decks are"
+        " only readable while the in-game \u300cEdit Deck\u300d screen is open"
+        " \u2014 open it and return: every mode is detected or falls back",
+        "ランク/レートは自動取得。デュエリストカップ/イベントのデッキは"
+        "「デッキ編集」を開いている間のみ読み取れます —— 開いて戻れば"
+        "全モードで自動取得/補完されます"),
     "点开 %s 的战绩": ("Click to view matches of %s", "%s の戦績を表示"),
     "点悬浮窗的 × 是隐藏到托盘还是退出": ("Whether the overlay × hides to the tray or quits", "オーバーレイの × でトレイに隠すか終了するか"),
     "界面吃 demo 战绩（不读不写真库）": ("UI uses demo records (reads/writes no real database)", "UI はデモ戦績を使用（実 DB は読み書きしません）"),

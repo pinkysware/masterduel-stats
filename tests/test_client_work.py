@@ -128,7 +128,56 @@ class TestRatedeck(unittest.TestCase):
         self.assertEqual(d['ids'], [20500])
 
 
-class TestSnapshot(unittest.TestCase):
+class TestCupDeck(unittest.TestCase):
+    """read_cupdeck —— DC 杯槽位 `CUPDeckList`（2026-10-25 实机定性）。"""
+
+    def _build(self, mem, parts=None):
+        """搭 s_data：CUPDeck 元数据 + CUPDeckList {m,e,s}（parts 给 ids）。"""
+        cw_ti = build_named_typeinfo(mem, 'ClientWork', [('s_data', 0x08)])
+        sb = mem.alloc(0x40)
+        mem.put_u64(cw_ti, 0xB8, sb)
+        kv = {'CUPDeck': build_str_dict(mem, {
+            'name': build_string(mem, 'IDS_DUELISTCUP_REG_001'),
+            'stage': build_string(mem, '2')})}
+        if parts is not None:
+            cup_parts = {}
+            for part, ids in parts.items():
+                if ids:
+                    cup_parts[part] = build_str_dict(mem, {
+                        'ids': build_ref_list(
+                            mem, [build_boxed_int(mem, v) for v in ids])})
+            kv['CUPDeckList'] = build_str_dict(mem, cup_parts)
+        sdata = build_str_dict(mem, kv)
+        mem.put_u64(sb, 0x08, sdata)
+        return ObjProc(mem), cw_ti
+
+    def test_full_chain(self):
+        mem = FakeMem()
+        proc, cw_ti = self._build(
+            mem, parts={'m': [20500, 8933], 'e': [14990], 's': []})
+        d = client_work.read_cupdeck(proc, None, 'tbl', cw_ti=cw_ti)
+        self.assertEqual(d['ids'], [20500, 8933, 14990])
+        self.assertEqual(d['main'], [20500, 8933])
+        self.assertEqual(d['extra'], [14990])
+        self.assertEqual(d['container'], 'CUPDeck')
+        self.assertIsNone(d['deck_name'])       # REG 键不是卡组名，不编
+        self.assertIsNone(d['deck_id'])
+
+    def test_not_loaded_is_none(self):
+        """大厅（未选卡组）CUPDeckList = 0 -> None。"""
+        mem = FakeMem()
+        proc, cw_ti = self._build(mem, parts=None)
+        self.assertIsNone(
+            client_work.read_cupdeck(proc, None, 'tbl', cw_ti=cw_ti))
+
+    def test_empty_parts_is_none(self):
+        mem = FakeMem()
+        proc, cw_ti = self._build(mem, parts={})
+        self.assertIsNone(
+            client_work.read_cupdeck(proc, None, 'tbl', cw_ti=cw_ti))
+
+
+class TestParameterized(unittest.TestCase):
 
     def test_full_chain(self):
         mem = FakeMem()

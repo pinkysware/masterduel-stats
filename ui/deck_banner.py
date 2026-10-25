@@ -184,7 +184,12 @@ class DeckConfirmBanner(QWidget):
             self._img_path = img or ''
             self.thumb.set_image(self._img_path, dim=not known)
         if mode == 'waiting':
-            self.label.setText(tr('点卡图手动选，或进游戏卡组编辑界面自动获取'))
+            self.label.setText(
+                tr('点卡图手动选；或点开游戏「编辑牌组」再返回即可识别'))
+            self.label.setToolTip(tr(
+                '天梯 / 巅峰自动识别；DC 杯与活动局的卡表只在「编辑牌组」'
+                '打开期间可读 —— 进游戏点开「编辑牌组」再返回，'
+                '各模式都能识别/兜底'))
             self.btn_ok.hide()
         else:
             #: 用户 2026-09-22 拍板：**不带名字**（卡图即信息，格子窄）

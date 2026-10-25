@@ -25,15 +25,17 @@ REC_MIN = os.path.join(FIX, 'record_20260913_122146')
 REC_FULL = os.path.join(FIX, 'record_20260913_123714')
 
 
-def _scan(name, instance, fs, ls, size=10, first_logbase_size=None):
+def _scan(name, instance, fs, ls, size=10, first_logbase_size=None,
+          state_src='legacy'):
     """手工构造 scan_record 形状（group_duels / pick_main 的纯逻辑测试用）。
 
     `first_logbase_size` = 首见时的 logbase size（同局延续性判据用；
     None = 老 manifest 判不出，按旧口径放行）。
+    `state_src` = 'legacy'（存量推定，无收口证据）/ 'manifest'（明写 final）。
     """
     return {
         'dir': os.path.join('x', name), 'name': name, 'manifest': {},
-        'state': 'final', 'state_src': 'legacy',
+        'state': 'final', 'state_src': state_src,
         'first_seen': dr.parse_dt(fs), 'last_saved': dr.parse_dt(ls),
         'capture_approx': True, 'logbase_size': size,
         'first_logbase_size': first_logbase_size,

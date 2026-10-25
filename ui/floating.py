@@ -1628,7 +1628,8 @@ class FloatingWindow(QWidget):
         self.deck_banner = DeckConfirmBanner()
         self.deck_banner.confirmed.connect(self._confirm_deck_banner)
         self.deck_banner.pick_requested.connect(self._pick_my_deck)
-        self.deck_banner.refresh_requested.connect(self.refresh_deck_banner)
+        self.deck_banner.refresh_requested.connect(
+            self.refresh_deck_banner_from_memory)
         self.deck_banner.visibility_changed.connect(self._on_banner_visibility)
         box.addWidget(self.deck_banner)
         self._banner_hair = widgets.hairline()
@@ -2121,6 +2122,24 @@ class FloatingWindow(QWidget):
         """提示条显隐 → 发丝线跟着显隐 + 高度重算（提示条有自己的高度）。"""
         self._banner_hair.setVisible(visible)
         self._apply_height()
+
+    def refresh_deck_banner_from_memory(self) -> None:
+        """「刷新」按钮：真读一次内存（三槽位按具体度回落）并写回状态文件。
+
+        旧行为只重读 `my_deck.json`（文件里是什么就显示什么 —— 用户实报
+        「刷不出我的天梯卡组」）。游戏没开 / 读不到时回落为纯文件重读，
+        并用弹窗告知原因（不静默）。
+        """
+        try:
+            from core.memread import my_deck_live
+            state, err = my_deck_live.read_my_deck_live()
+            if state is None and err:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.information(self, tr('我方卡组'), tr(err) if
+                                        tr(err) != err else err)
+        except Exception as _e:                              # noqa: BLE001
+            print('[banner] live 刷新失败（回落文件重读）：%r' % (_e,))
+        self.refresh_deck_banner()
 
     def refresh_deck_banner(self, img_resolver=None) -> str:
         """按 `my_deck.json` 当前状态刷提示条（**窗口每轮启动 + 每次快照**都调）。

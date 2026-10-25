@@ -340,6 +340,42 @@ class Hooks(object):
         except Exception:
             return None
 
+    def snapshot_cup_deck(self):
+        """DC 杯局 own-deck：``CUPDeckList``（2026-10-25 实机，见
+        `client_work.read_cupdeck`）。名字与 id 拿不到 —— 整副牌走原型识别
+        （`identify_by_cards`）。大厅期间未加载 -> None（开局分流时 DC 杯
+        界面必然已选定，实测选定即加载）。
+        """
+        sp = getattr(self, 'sp', None)
+        mirror = getattr(self, 'mirror', None)
+        tbl = getattr(self, 'tbl', None)
+        if sp is None or mirror is None or tbl is None:
+            return None
+        try:
+            from core.memread.client_work import find_clientwork, read_cupdeck
+            cw_ti = getattr(self, '_cw_ti', None)
+            if cw_ti is None:
+                tc = getattr(self, 'ticache', None)
+                if tc is not None:
+                    cw_ti = tc.get('YgomSystem.Utility', 'ClientWork') or None
+                    self._cw_ti = cw_ti
+            if cw_ti is None:
+                cw_ti = find_clientwork(sp, mirror, tbl)
+                self._cw_ti = cw_ti
+            if cw_ti:
+                rd = read_cupdeck(sp, mirror, tbl, cw_ti=cw_ti)
+                if rd and rd.get('ids'):
+                    from core.memread.my_deck_watch import identify_by_cards
+                    deck = dict(rd)
+                    deck['deck_name'] = identify_by_cards(rd['ids'])
+                    self.log('DC 杯快照（CUPDeckList）：%s（%d 张）'
+                             % (deck.get('deck_name') or '（未识别）',
+                                len(rd['ids'])))
+                    return deck
+        except Exception:
+            pass
+        return None
+
     def poll_my_deck(self, now=None):
         """编辑界面卡组观察者（`core.memread.my_deck_watch`）；没接给 None。
 
@@ -937,16 +973,20 @@ class DuelCollector(object):
         self._hunt_overdue_logged = False
         self._last_seen_size = None
         self._pending_reuse = None
+        # ★ 2026-10-25：按模式分流专用槽位 —— 巅峰 = ``Deck.ratedeck_id``
+        #   （read_ratedeck），DC 杯 = ``CUPDeckList``（read_cupdeck）；
+        #   天梯与其它模式照旧走常规 Deck 容器。
         if game_mode == 19:
-            # ★ 09-28：巅峰 own-deck = **编辑实例**（DTDeck 容器空、Deck 是天梯
-            #   那份）—— 用户配合实测：巅峰界面里编辑实例=他巅峰选的牌。
             deck = self.hooks.snapshot_peak_deck()
+        elif game_mode == 12:
+            deck = self.hooks.snapshot_cup_deck()
         else:
             deck = self.hooks.snapshot_deck()
         game_mode_known = game_mode is not None
         if deck is not None and game_mode_known \
-                and game_mode not in DECK_SNAPSHOT_TRUSTED_MODES:
-            deck = None                   # 非可信集（口径同下：常规快照是错值）
+                and game_mode not in DECK_SNAPSHOT_TRUSTED_MODES \
+                and (deck.get('container') or 'Deck') == 'Deck':
+            deck = None                   # 常规快照在活动局 = 大厅错值（专用槽除外）
         self._deck_snapshot_pending = (deck is None)
         self._deck_pending_at = None if deck is not None else now
         # 局前段位：ClientWork `Duel.rank`（下标与 name/pcode 对齐，my_index 已判好）
@@ -992,7 +1032,8 @@ class DuelCollector(object):
         # 快照一起误丢；改成「模式未知时**先留着**」—— 层 0 保留原样证据，
         # 采信与否交给出口（duel_record.to_row 的兜底闸门）。
         if deck is not None and game_mode is not None \
-                and game_mode not in DECK_SNAPSHOT_TRUSTED_MODES:
+                and game_mode not in DECK_SNAPSHOT_TRUSTED_MODES \
+                and (deck.get('container') or 'Deck') == 'Deck':
             self.log('game_mode=%s 非可信集：常规快照不可信（读到大厅的 %s），'
                      '按口径存 null' % (game_mode, deck.get('deck_name')))
             deck = None
@@ -1627,13 +1668,16 @@ class DuelCollector(object):
             return [line]      # ← 之前漏了把日志行带进返回值，observe 拍上就不显示
         if rec.game_mode == 19:
             deck = self.hooks.snapshot_peak_deck()
+        elif rec.game_mode == 12:
+            deck = self.hooks.snapshot_cup_deck()
         else:
             deck = self.hooks.snapshot_deck()
         if deck is None:
             return []
         self._deck_snapshot_pending = False
         game_mode = rec.game_mode
-        if game_mode is not None and game_mode not in DECK_SNAPSHOT_TRUSTED_MODES:
+        if game_mode is not None and game_mode not in DECK_SNAPSHOT_TRUSTED_MODES \
+                and (deck.get('container') or 'Deck') == 'Deck':
             return ['对局内快照重试读到 %s，但 mode=%s 非可信集，按口径丢弃'
                     % (deck.get('deck_name'), game_mode)]
         rec.deck = deck

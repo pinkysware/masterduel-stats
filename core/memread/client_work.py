@@ -239,3 +239,45 @@ def read_ratedeck(proc, mirror, tbl, cw_ti=None):
                 'main': main, 'extra': extra, 'container': 'Ratedeck'}
     except Exception:
         return None
+
+def read_cupdeck(proc, mirror, tbl, cw_ti=None):
+    """DC 杯（Duelist Cup）选牌的逐卡表 —— ``CUPDeckList``（2026-10-25 实机）。
+
+    用户在 DC 杯里**选定卡组**后加载：**顶层直接 {m/e/s}**（与天梯容器按
+    ``<卡组id>: {m,e,s,t}`` 分键不同 —— DC 杯槽只有一套，无 id 层；s 实测
+    0 张）。元数据在 ``CUPDeck``（``name='IDS_DUELISTCUP_REG_001'`` 是
+    **本地化键**，不是用户卡组名；``stage=2`` 与 cup_dp 的阶段口径同源）。
+
+    ⚠️ 大厅里 ``CUPDeckList`` 是 0（未加载）—— 只有 DC 杯界面选定/对局时有值。
+    名字与 id 都拿不到 -> 交给调用方识别（``identify_by_cards``）。
+    未加载 -> ``None``。
+    """
+    try:
+        sdata = _sdata_addr(proc, mirror, tbl, cw_ti)
+        if not sdata:
+            return None
+        got = dict(dict_items(proc, mirror, sdata) or [])
+        dl = got.get('CUPDeckList')
+        if not dl or dl < 0x10000:
+            return None
+        parts = dict(dict_items(proc, mirror, dl) or {})
+        if not parts:
+            return None
+        main: list = []
+        extra: list = []
+        for part, pv in parts.items():
+            if not pv or pv < 0x10000:
+                continue
+            sub = dict(dict_items(proc, mirror, pv) or {})
+            ids = int_list(proc, mirror, sub.get('ids')) or []
+            if str(part) == 'e':
+                extra = ids
+            else:
+                main.extend(ids)          # m 为主；s（DC 杯实测 0）一并并入
+        ids = main + extra
+        if not ids:
+            return None
+        return {'deck_id': None, 'deck_name': None, 'ids': ids,
+                'main': main, 'extra': extra, 'container': 'CUPDeck'}
+    except Exception:
+        return None
