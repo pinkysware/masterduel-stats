@@ -74,7 +74,10 @@ MANUAL_RESULT_SRC = 'manual'
 AUTO_RESULT_SRCS = ('winbit', 'duel_code', 'text')
 #: ⚠️ 'text'（结算文案判据，2026-10-03 投票仲裁引入）也算自动来源 ——
 #:   否则文案判的结果会被当成人工值锁死，后续 winbit 覆盖不进来。
-AUTO_MY_DECK_NAME_SRCS = ('snapshot-name', 'm5-guess', 'current-deck')
+#: `log-deck`（2026-10-26）：活动/租借局从 Untapped 日志 deckId 取的显示名 ——
+#: 自动来源，重解析允许刷新；它不是人工值，别把一行租借卡组钉死。
+AUTO_MY_DECK_NAME_SRCS = ('snapshot-name', 'm5-guess', 'current-deck',
+                          'log-deck')
 
 #: 对局模式。**日志里的 `Starting Duel` 不只代表天梯对局**，判据见
 #: `archive_matches.split_matches`（看进入 DuelClient 之前的那次界面跳转）。

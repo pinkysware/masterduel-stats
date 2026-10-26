@@ -687,3 +687,182 @@ class RecordDurationTest(unittest.TestCase):
         self.assertIsNone(idr._duration_sec('2026-10-17 23:32:30',
                                             '2026-10-17 23:30:00'))
 
+
+class TestEventLoanerName(Base):
+    """活动/租借局：日志 deckId -> decks.json 显示名（2026-10-26 用户口径）。
+
+    只写 matches.my_deck_name，**不**建 my_decks / meta_decks / 参照库条目。
+    """
+
+    LOG_LINES = [
+        '[2026-10-26 17:44:47.000] [info]  [Ygom.handleScryEvent] '
+        'Starting Duel with deckId=DT_53_Loaner_2, isDeckKnown=true',
+        '[2026-10-26 17:49:26.000] [info]  [Ygom.handleScryEvent] '
+        'Game ended: result=Lose deckId=DT_53_Loaner_2',
+        '[2026-10-26 17:49:45.000] [info]  [Ygom.handleScryEvent] '
+        'Selected deck changed: DT_53_Loaner_3',
+        '[2026-10-26 17:50:02.896] [info]  [Ygom.handleScryEvent] '
+        'Starting Duel with deckId=DT_53_Loaner_3, isDeckKnown=true',
+        '[2026-10-26 18:01:02.000] [info]  [Ygom.handleScryEvent] '
+        'Starting Duel with deckId=DT_53_Loaner_3, isDeckKnown=true',
+    ]
+
+    def setUp(self):
+        super().setUp()
+        self.log = os.path.join(self.tmp, 'log.log')
+        self.decks = os.path.join(self.tmp, 'decks.json')
+        with open(self.log, 'w', encoding='utf-8', newline='') as f:
+            f.write('\n'.join(self.LOG_LINES) + '\n')
+        self._write_decks({
+            'DT_53_Loaner_2': {'name': '☆2 太古的鼓动',
+                               'main': {'4861': 3}, 'extra': {}},
+            'DT_53_Loaner_3': {'name': '☆3 天空的波动',
+                               'main': {'4861': 3, '4862': 2}, 'extra': {}},
+        })
+
+    def _write_decks(self, decks):
+        with open(self.decks, 'w', encoding='utf-8', newline='') as f:
+            json.dump(decks, f, ensure_ascii=False)
+
+    def _set_mode(self, name, mode):
+        path = os.path.join(self.records, name, 'manifest.json')
+        with open(path, encoding='utf-8') as f:
+            man = json.load(f)
+        man['game_mode'] = mode
+        with open(path, 'w', encoding='utf-8', newline='') as f:
+            json.dump(man, f, ensure_ascii=False, indent=1)
+
+    def _run(self, apply=True):
+        return imp.process(records_dir=self.records, storage=self.storage,
+                           apply=apply, em_path=self.em, dm_path=self.dm,
+                           log_paths=[self.log], decks_path=self.decks)
+
+    def _make_event_record(self, name='record_20261026_175003'):
+        dst = self.make_record(name, instance='0x1d1', versioned=True,
+                               state='final', saved_at='2026-10-26 17:55:00')
+        self._set_mode(name, 15)
+        return dst
+
+    def _deck_rows(self):
+        conn = sqlite3.connect(self.db)
+        try:
+            my = conn.execute('SELECT COUNT(*) FROM my_decks').fetchone()[0]
+            meta = conn.execute('SELECT COUNT(*) FROM meta_decks').fetchone()[0]
+        finally:
+            conn.close()
+        return my, meta
+
+    # ---- 纯解析 -------------------------------------------------------
+
+    def test_nearest_duel_and_name(self):
+        got = imp._load_log_deck('2026-10-26 17:50:03',
+                                 log_paths=[self.log],
+                                 decks_path=self.decks)
+        self.assertEqual(got['deck_id'], 'DT_53_Loaner_3')
+        self.assertEqual(got['name'], '☆3 天空的波动')
+        self.assertLess(got['delta_sec'], 2)
+
+    def test_previous_duel(self):
+        got = imp._load_log_deck('2026-10-26 17:45:00',
+                                 log_paths=[self.log],
+                                 decks_path=self.decks)
+        self.assertEqual(got['name'], '☆2 太古的鼓动')
+        self.assertLess(got['delta_sec'], 30)
+
+    def test_outside_window(self):
+        self.assertIsNone(imp._load_log_deck('2026-10-26 20:00:00',
+                                             log_paths=[self.log],
+                                             decks_path=self.decks))
+
+    def test_id_fallback_when_decks_json_has_no_name(self):
+        self._write_decks({'DT_53_Loaner_3': {}})
+        got = imp._load_log_deck('2026-10-26 17:50:03',
+                                 log_paths=[self.log],
+                                 decks_path=self.decks)
+        self.assertEqual(got['name'], 'DT_53_Loaner_3')   # 至少显示 id
+
+    def test_numeric_id_without_name_is_ignored(self):
+        """纯数字 deckId + decks.json 没名字 -> 不填（数字对用户没意义）。"""
+        log = os.path.join(self.tmp, 'numeric.log')
+        with open(log, 'w', encoding='utf-8', newline='') as f:
+            f.write('[2026-10-26 17:50:02.000] [info]  [Ygom.handleScryEvent] '
+                    'Starting Duel with deckId=48171157, isDeckKnown=true')
+        self._write_decks({})
+        self.assertIsNone(imp._load_log_deck('2026-10-26 17:50:03',
+                                             log_paths=[log],
+                                             decks_path=self.decks))
+
+    # ---- 整链路入库 ---------------------------------------------------
+
+    def test_import_sets_name_without_deck_rows(self):
+        self._make_event_record()
+        self._run(apply=True)
+        row = self.row_by_id('rec:record_20261026_175003')
+        self.assertEqual(row['my_deck_name'], '☆3 天空的波动')
+        self.assertEqual(row['my_deck_name_src'], 'log-deck')
+        self.assertEqual(row['deck_source'], 'log')
+        self.assertIsNone(row['my_deck_id'])      # 不触发 my_decks 外键占位
+        self.assertEqual(self._deck_rows(), (0, 0))   # 不建卡组条目
+
+    def test_log_deck_wins_over_current_deck(self):
+        """日志给出名字后，不再被「当前卡组」兜底盖掉。"""
+        self._make_event_record()
+        with mock.patch.object(imp, '_current_my_deck',
+                               return_value={'name': '大厅那副',
+                                             'at': '2026-10-26 17:00:00'}):
+            self._run(apply=True)
+        row = self.row_by_id('rec:record_20261026_175003')
+        self.assertEqual(row['my_deck_name'], '☆3 天空的波动')
+        self.assertEqual(row['my_deck_name_src'], 'log-deck')
+
+    def test_reimport_can_refresh(self):
+        """log-deck 是自动来源：重解析改得动（别被当人工值钉死）。"""
+        self._make_event_record()
+        self._run(apply=True)
+        self._write_decks({'DT_53_Loaner_3': {'name': '改名了', 'main': {}}})
+        self._run(apply=True)
+        row = self.row_by_id('rec:record_20261026_175003')
+        self.assertEqual(row['my_deck_name'], '改名了')
+        self.assertEqual(row['my_deck_name_src'], 'log-deck')
+
+    def _assert_log_deck_not_used(self, name, mode, at='2026-10-26 18:01:03'):
+        """非活动模式不许走日志 deckId（即使日志里刚好有一局）。"""
+        if mode is not None:
+            self._set_mode(name, mode)
+        with mock.patch.object(imp, '_current_my_deck', return_value=None):
+            rep = self._run(apply=True)
+        row = self.row_by_id('rec:' + name)
+        self.assertIsNone(row['my_deck_name'], row)
+        self.assertNotEqual(row['my_deck_name_src'], 'log-deck')
+        self.assertIsNone(row['my_deck_id'])
+        self.assertEqual(self._deck_rows(), (0, 0))
+        # 日志本身是能解析出名字的 —— 证明拦在模式门，不是拦在解析
+        got = imp._load_log_deck(at, log_paths=[self.log],
+                                 decks_path=self.decks)
+        self.assertEqual(got['name'], '☆3 天空的波动')
+
+    def test_ranked_does_not_use_log_deck(self):
+        name = 'record_20261026_180003'
+        self.make_record(name, instance='0x1d2', versioned=True,
+                         state='final', saved_at='2026-10-26 18:05:00')
+        self._assert_log_deck_not_used(name, 3, at='2026-10-26 18:00:03')
+
+    def test_peak_does_not_use_log_deck(self):
+        name = 'record_20261026_180103'
+        self.make_record(name, instance='0x1d3', versioned=True,
+                         state='final', saved_at='2026-10-26 18:05:00')
+        self._assert_log_deck_not_used(name, 19, at='2026-10-26 18:01:03')
+
+    def test_dc_cup_does_not_use_log_deck(self):
+        """12（DC 杯）也是活动，但用户口径：**只有活动比赛**有租借卡组。"""
+        name = 'record_20261026_180203'
+        self.make_record(name, instance='0x1d4', versioned=True,
+                         state='final', saved_at='2026-10-26 18:05:00')
+        self._assert_log_deck_not_used(name, 12, at='2026-10-26 18:01:03')
+
+    def test_unknown_mode_does_not_use_log_deck(self):
+        """模式判不出（None）也不猜 —— 宁可留空。"""
+        name = 'record_20261026_180303'
+        self.make_record(name, instance='0x1d5', versioned=True,
+                         state='final', saved_at='2026-10-26 18:05:00')
+        self._assert_log_deck_not_used(name, None, at='2026-10-26 18:01:03')

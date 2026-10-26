@@ -1119,14 +1119,15 @@ def to_row(duel):
     # 判据用**注入/兜底之后的 game_mode**（这是本函数独有的信息优势，见
     # docs/活动局快照防线方案.md §七）。判不出（None）也不采信，与采集侧同口径。
     # 采信规则（2026-09-16 细化）：**模式/容器只约束「快照来源」的名字** ——
-    # * 来源是「当前卡组」（编辑界面读的）或 M5 整副牌猜的 -> 一律采信（活动局正是靠它们）；
+    # * 来源是「当前卡组」（编辑界面读的）、M5 整副牌猜的、或**日志 deckId**
+    #   （活动/租借局：只拿显示名，不建卡组条目）-> 一律采信；
     # * 来源是快照 -> 老口径：3/19 信；其它模式只有「不是大厅 Deck 容器」才信（老坑见
     #   docs/活动局快照防线方案.md），这样大厅卡组冒充活动卡组的情况仍然挡得住。
     _src = meta.get('my_deck_name_src')
     _snap = meta.get('my_deck_snapshot') or {}
     _cont = _snap.get('container') if isinstance(_snap, dict) else None
     _mode = meta.get('game_mode')
-    if _src in ('current-deck', 'm5-guess'):
+    if _src in ('current-deck', 'm5-guess', 'log-deck'):
         trusted = True
     elif _mode in DECK_SNAPSHOT_TRUSTED_MODES:
         trusted = True
@@ -1152,12 +1153,15 @@ def to_row(duel):
         'duration_sec': meta.get('duration_sec'),
         'my_deck_id': snap_id,
         'my_deck_name': snap_name,
-        # 名字来源（2026-09-16）：snapshot-name / m5-guess / current-deck —— 猜的必须留痕
+        # 名字来源（2026-09-16）：snapshot-name / m5-guess / current-deck；
+        # 2026-10-26 加 log-deck（活动/租借局从日志 deckId 取的显示名，不建条目）
         'my_deck_name_src': meta.get('my_deck_name_src'),
-        # 三值：snapshot=读到且已采信 / snapshot-untrusted=读到但模式不可信（活动局）/ unknown=没读到
-        'deck_source': ('snapshot' if snap_id else
-                        ('snapshot-untrusted' if meta.get('my_deck_id')
-                         else 'unknown')),
+        # 四值：log=日志 deckId 直接给的显示名 / snapshot=读到且已采信 /
+        #      snapshot-untrusted=读到但模式不可信（活动局）/ unknown=没读到
+        'deck_source': ('log' if (_src == 'log-deck' and snap_name) else
+                        ('snapshot' if snap_id else
+                         ('snapshot-untrusted' if meta.get('my_deck_id')
+                          else 'unknown'))),
         'mode': _mode_of(meta.get('game_mode')),
         'game_mode': meta.get('game_mode'),
         'origin': 'record',

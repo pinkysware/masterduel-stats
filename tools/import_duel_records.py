@@ -45,12 +45,18 @@ from datetime import timedelta as _td
 PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJ not in sys.path:
     sys.path.insert(0, PROJ)
+#: 同目录的 ``archive_matches`` 要用（活动/租借局的 deckId -> 卡组名）。
+#: ⚠️ 直接跑脚本时 ``sys.path[0]`` 不一定是本目录（安装版嵌入式 Python
+#:    实测：只有 PROJ，没有 tools）—— 不补这一行，懒加载会静默失败。
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 from core import paths
 from core import duel_record
 from core.memread.end_message import (arbitrate_result,
                                      result_from_duel_code)
-from core.storage import DECK_SNAPSHOT_TRUSTED_MODES, Storage
+from core.storage import DECK_SNAPSHOT_TRUSTED_MODES, Storage, mode_group
 
 DEFAULT_RECORDS = paths.data_path('archive', 'duel_records')
 DEFAULT_END_MESSAGES = paths.data_path('archive', 'end_messages.jsonl')
@@ -245,6 +251,82 @@ def _meta_display(storage, key):
     return None
 
 
+#: 日志 deckId 与记录开局时刻的最大允许偏差（秒）。实测采集侧 first_seen
+#: 比日志 `Starting Duel` 晚 0~13 秒；再宽就会认到相邻局（活动连打通常
+#: 隔 3~5 分钟）。
+LOG_DECK_MAX_DELTA_SEC = 180.0
+
+
+def _load_log_deck(started_at, log_paths=None, decks_path=None,
+                   max_delta_sec=LOG_DECK_MAX_DELTA_SEC):
+    """开局时刻 -> Untapped 日志里的 deckId -> ``ygom/decks.json`` 的显示名。
+
+    只给**活动/租借局**补一个显示名（用户 2026-10-26 口径：直接显示
+    「☆3 天空的波动」，**不**往 ``my_decks`` / ``meta_decks`` / 参照库加条目）。
+    返回 ``{'deck_id', 'name', 'main', 'extra', 'delta_sec'}``；取不到 ``None``。
+
+    ⚠️ 复用 ``tools/archive_matches.py`` 的日志切段逻辑（``split_matches`` /
+    ``resolve_deck``）—— 它已经处理了 ``Starting Duel with deckId=`` 与
+    ``Selected deck changed:`` 兜底，别再写第二份正则。
+    """
+    if not started_at:
+        return None
+    t0 = duel_record.parse_dt(started_at)
+    if t0 is None:
+        return None
+    try:
+        import archive_matches as am
+    except Exception:                                        # noqa: BLE001
+        return None
+    paths = list(log_paths) if log_paths is not None else list(am.LOGS)
+    lines = []
+    for p in paths:
+        try:
+            with open(p, 'r', encoding='utf-8', errors='replace') as f:
+                lines.extend(f.read().splitlines())
+        except OSError:
+            continue
+    if not lines:
+        return None
+    try:
+        segs = am.split_matches(lines)
+    except Exception:                                        # noqa: BLE001
+        return None                 # 日志坏行 / 版本差异：别拖垮整局入库
+    best = None                     # (delta_sec, deck_id)
+    for seg in segs:
+        try:
+            did, _src = am.resolve_deck(seg)
+            if not did:
+                continue
+            ts = duel_record.parse_dt(seg.get('start_time'))
+            if ts is None:
+                continue
+            delta = abs((ts - t0).total_seconds())
+        except Exception:                                    # noqa: BLE001
+            continue                # 单个残段认不出就跳过
+        if best is None or delta < best[0]:
+            best = (delta, did)
+    if best is None or best[0] > float(max_delta_sec):
+        return None
+    delta, did = best
+    dpath = decks_path if decks_path is not None else am.DECKS_JSON
+    try:
+        with open(dpath, 'r', encoding='utf-8') as f:
+            decks = json.load(f)
+    except (OSError, ValueError):
+        decks = {}
+    entry = decks.get(str(did)) or {}
+    name = entry.get('name')
+    if not name and any(not ch.isdigit() for ch in str(did)):
+        name = str(did)              # decks.json 没名字：至少显示 id（DT_* 可读）
+    if not name:
+        return None
+    return {'deck_id': str(did), 'name': name,
+            'main': entry.get('main') or {},
+            'extra': entry.get('extra') or {},
+            'delta_sec': delta}
+
+
 def _duration_sec(started_at, ended_at):
     """两个定宽时刻文本 -> 整数秒；任一缺失 / 解析失败 / 负数 -> None。
 
@@ -264,12 +346,16 @@ def _duration_sec(started_at, ended_at):
 
 def process(records_dir=DEFAULT_RECORDS, storage=None, apply=False,
             em_path=DEFAULT_END_MESSAGES, dm_path=DEFAULT_DUEL_MODES,
-            only=None):
+            only=None, log_paths=None, decks_path=None):
     """主流程。返回报告 dict；``apply=False`` 时不写 duel.json、不写库。
 
     :param only: 只处理含该目录名的局（M6 采集器收局后的增量入口）。
         分组仍在**全量扫描**结果上做 —— 同局多目录的并档关系不丢；
         没有匹配目录时报 ``not-found``（空库/手滑都看得见）。
+    :param log_paths: Untapped 日志路径（默认 ``archive_matches.LOGS``）——
+        活动/租借局用它取 deckId，再查 ``decks.json`` 拿显示名。
+    :param decks_path: Untapped 的 ``ygom/decks.json``（默认
+        ``archive_matches.DECKS_JSON``）；只读，不写库、不建卡组条目。
     """
     # ★ 先保证库结构是最新的（老库缺后来加的列就 ALTER 补上）。
     # 为什么必须在这儿：采集器**每局**都直接调本函数入库，它不会自己跑迁移 ——
@@ -453,43 +539,66 @@ def process(records_dir=DEFAULT_RECORDS, storage=None, apply=False,
                     meta_updates['result_note'] = (
                         '%s%s' % (text, '；' + note if note else ''))
 
-            # -- 我方卡组兜底（2026-09-16 用户口径）：编辑界面读过一次的「当前卡组」，
-            #    该局自己没读到牌时沿用。**活动局同样要填** —— 用户澄清「天梯已经能自动拿，
-            #    这套就是给活动对局用的」，且实机核实过：骰子拉力的活动卡组位 `DRDeck`
-            #    里就是他自组的那套（41 主 + 15 额外，与编辑界面读到的卡一致）。
-            #    ⚠️ 只在该局**没读到自己的牌**、且**本局不早于记录时刻**时才补（别改写历史局）。
+            # -- 我方卡组兜底：先看**日志 deckId**（只给活动比赛），再用「当前卡组」。
+            #    ⚠️ 只在该局**没读到自己的牌**时才补。
             if not (meta_updates.get('my_deck_name') or duel['meta'].get('my_deck_name')):
-                cur = _current_my_deck()
-                # ★ 2026-10-25 用户拍板：`current-deck` 兜底**全模式放开** ——
-                #   「自动识别没有卡组，再用手动填的」。09-28 的「只禁巅峰
-                #   （双槽位错标风险）」作废：巅峰/DC 杯的专用槽通道
-                #   （read_ratedeck / read_cupdeck）已通，空快照只剩 rare 场景，
-                #   此时用户手动指定的值就是他声明的当前卡组（错标责任在填写，
-                #   随时可在悬浮窗卡图重选）。24h 时效与 fresh 守卫照旧。
-                gm = (duel['meta'].get('game_mode')
-                      or meta_updates.get('game_mode'))
-                started = meta_updates.get('started_at') or duel['meta'].get('started_at')
-                fresh = (not cur) or not cur.get('at') or not started \
-                    or str(started) >= str(cur['at'])
-                # ★ 2026-09-22 实测事故：`my_deck.json` 残留上一场的卡组名（用户换了
-                #   卡组但没进编辑界面 / 大厅识别还没纠正），这场局就被 `current-deck`
-                #   兜底**错标**。兜底只对「识别时刻之后不久」的局可信 ——
-                #   状态文件太旧就不许再兜（宁可留空，别标错）。
-                stale = False
-                if cur and cur.get('at') and started:
-                    try:
-                        import datetime as _dt
-                        at = _dt.datetime.strptime(str(cur['at'])[:19],
-                                                   '%Y-%m-%d %H:%M:%S')
-                        st = _dt.datetime.strptime(str(started)[:19],
-                                                   '%Y-%m-%d %H:%M:%S')
-                        stale = abs((st - at).total_seconds()) > MY_DECK_MAX_AGE_SEC
-                    except (TypeError, ValueError):
-                        stale = False
-                if cur and fresh and not stale:
-                    meta_updates['my_deck_name'] = (_meta_display(storage, cur['name'])
-                                                    or cur['name'])
-                    meta_updates['my_deck_name_src'] = 'current-deck'
+                gm = (meta_updates.get('game_mode')
+                      or duel['meta'].get('game_mode'))
+                started = (meta_updates.get('started_at')
+                           or duel['meta'].get('started_at'))
+                # ★ 2026-10-26 用户口径：**只有活动比赛有租借卡组** —— 日志
+                #   deckId 这条路**只对 mode_group='event'** 生效（`DT_53_Loaner_3`
+                #   -> decks.json 的「☆3 天空的波动」）。天梯 3 / 巅峰 19 /
+                #   DC 杯 12 / 单人 9 / 模式判不出（None）**一律不碰**。
+                #   也**不**建 `my_decks` / `meta_decks` / 参照库条目，**不写
+                #   my_deck_id**（否则 upsert 会按外键自动补一行 my_decks）。
+                try:
+                    gm_group = mode_group(gm)
+                except (TypeError, ValueError):
+                    gm_group = None      # 脏 game_mode：当「判不出」，不猜
+                if gm_group == 'event':
+                    ld = _load_log_deck(started, log_paths=log_paths,
+                                        decks_path=decks_path)
+                    if ld:
+                        meta_updates['my_deck_name'] = ld['name']
+                        meta_updates['my_deck_name_src'] = 'log-deck'
+                        item['log_deck'] = {
+                            'deck_id': ld['deck_id'],
+                            'delta_sec': round(ld['delta_sec'], 1)}
+
+                # -- 「当前卡组」兜底（2026-09-16 用户口径）：编辑界面读过一次的
+                #    「当前卡组」，该局自己没读到牌时沿用。**活动局同样要填** ——
+                #    用户澄清「天梯已经能自动拿，这套就是给活动对局用的」。日志
+                #    已经给出名字时**不走这条**（别拿大厅卡组盖掉租借卡组）。
+                if not meta_updates.get('my_deck_name'):
+                    cur = _current_my_deck()
+                    # ★ 2026-10-25 用户拍板：`current-deck` 兜底**全模式放开** ——
+                    #   「自动识别没有卡组，再用手动填的」。09-28 的「只禁巅峰
+                    #   （双槽位错标风险）」作废：巅峰/DC 杯的专用槽通道
+                    #   （read_ratedeck / read_cupdeck）已通，空快照只剩 rare 场景，
+                    #   此时用户手动指定的值就是他声明的当前卡组（错标责任在填写，
+                    #   随时可在悬浮窗卡图重选）。24h 时效与 fresh 守卫照旧。
+                    fresh = (not cur) or not cur.get('at') or not started \
+                        or str(started) >= str(cur['at'])
+                    # ★ 2026-09-22 实测事故：`my_deck.json` 残留上一场的卡组名（用户
+                    #   换了卡组但没进编辑界面 / 大厅识别还没纠正），这场局就被
+                    #   `current-deck` 兜底**错标**。兜底只对「识别时刻之后不久」的
+                    #   局可信 —— 状态文件太旧就不许再兜（宁可留空，别标错）。
+                    stale = False
+                    if cur and cur.get('at') and started:
+                        try:
+                            import datetime as _dt
+                            at = _dt.datetime.strptime(str(cur['at'])[:19],
+                                                       '%Y-%m-%d %H:%M:%S')
+                            st = _dt.datetime.strptime(str(started)[:19],
+                                                       '%Y-%m-%d %H:%M:%S')
+                            stale = abs((st - at).total_seconds()) > MY_DECK_MAX_AGE_SEC
+                        except (TypeError, ValueError):
+                            stale = False
+                    if cur and fresh and not stale:
+                        meta_updates['my_deck_name'] = (
+                            _meta_display(storage, cur['name']) or cur['name'])
+                        meta_updates['my_deck_name_src'] = 'current-deck'
 
             # -- went_first：seat 判出后才能映射（不猜）
             seat = duel['meta'].get('seat')
@@ -604,6 +713,11 @@ def _print_report(report):
         upd = it.get('meta_updates') or {}
         if upd:
             print('  注入：' + json.dumps(upd, ensure_ascii=False))
+        if it.get('log_deck'):
+            ld = it['log_deck']
+            print('  我方卡组（日志 deckId）：%s（%s，距开局 %.1fs）'
+                  % (upd.get('my_deck_name') or '?', ld.get('deck_id'),
+                     ld.get('delta_sec') or 0.0))
         if it.get('hand_traps'):
             ht = it['hand_traps']
             print('  手坑：我方 %s / 对手 %s'
