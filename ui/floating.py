@@ -2124,22 +2124,165 @@ class FloatingWindow(QWidget):
         self._apply_height()
 
     def refresh_deck_banner_from_memory(self) -> None:
-        """「刷新」按钮：真读一次内存（三槽位按具体度回落）并写回状态文件。
+        """「刷新」按钮：**后台**读一次内存并写回状态文件。
+
+        ⚠️ **必须异步**（用户 2026-10-28 实报「点刷新卡 10 秒」）：
+           内存定位（全进程扫 metadata 镜像 3.75s + 全内存扫类名 6.11s）
+           远超一次点击能接受的时间；同步跑会把 UI 主线程整个卡住
+           （窗口无响应、动画停）。真读数据只要 0.01s。
+
+        做法：起一个 `QProcess` 跑 `core.memread.my_deck_live` 的 CLI
+        （模块已带 `__main__` 入口，输出一行 JSON），完成回调再刷横幅 ——
+        与项目其它「跑脚本」的地方同一套路（`ui/script_runner.py`），
+        **不引入线程**。
 
         旧行为只重读 `my_deck.json`（文件里是什么就显示什么 —— 用户实报
         「刷不出我的天梯卡组」）。游戏没开 / 读不到时回落为纯文件重读，
         并用弹窗告知原因（不静默）。
         """
-        try:
-            from core.memread import my_deck_live
-            state, err = my_deck_live.read_my_deck_live()
-            if state is None and err:
+        running = getattr(self, '_live_proc', None)
+        if running is not None and running.state() != QProcess.NotRunning:
+            return                       # 上一次还在跑：忽略重复点击
+        self.deck_banner.set_notice(tr('读取中…'), theme.INK_MUTED)
+
+        from PySide6.QtCore import QProcess
+        proc = QProcess(self)
+        self._live_proc = proc
+        self._live_out = b''
+
+        def _on_read():
+            try:
+                self._live_out += bytes(proc.readAllStandardOutput())
+            except Exception:                                # noqa: BLE001
+                pass
+
+        def _on_finish(_code, _status):
+            raw = self._live_out.decode('utf-8', 'replace').strip()
+            errout = bytes(proc.readAllStandardError()).decode('utf-8', 'replace')
+            self._live_proc = None
+            print('[banner] live 读取结束 code=%s out=%r err=%r'
+                  % (_code, raw[:200], errout[:400]))
+            self.deck_banner.set_notice('', '')
+            rec = {}
+            try:
+                import json as _json
+                rec = _json.loads(raw.splitlines()[-1]) if raw else {}
+            except Exception:                                # noqa: BLE001
+                rec = {}
+            err = (rec.get('error') or '').strip()
+            if not rec.get('ok') and err:
                 from PySide6.QtWidgets import QMessageBox
-                QMessageBox.information(self, tr('我方卡组'), tr(err) if
-                                        tr(err) != err else err)
+                QMessageBox.information(self, tr('我方卡组'), err)
+            self.refresh_deck_banner(getattr(self, '_img_resolver', None))
+
+        proc.readyReadStandardOutput.connect(_on_read)
+        proc.finished.connect(_on_finish)
+        try:
+            from PySide6.QtCore import QProcessEnvironment
+            env = QProcessEnvironment.systemEnvironment()
+            env.insert('PYTHONIOENCODING', 'utf-8')
+            env.insert('PYTHONUTF8', '1')
+            import sys as _sys
+            proc.setProcessEnvironment(env)
+            proc.setWorkingDirectory(paths.PROJ)
+            proc.start(_sys.executable,
+                       ['-m', 'core.memread.my_deck_live'])
+            if not proc.waitForStarted(3000):
+                print('[banner] live 进程**没能启动**（workingDir=%s exe=%s）'
+                      % (paths.PROJ, _sys.executable))
+                self._live_proc = None
+                self.deck_banner.set_notice('', '')
+                self.refresh_deck_banner()
+                return
         except Exception as _e:                              # noqa: BLE001
-            print('[banner] live 刷新失败（回落文件重读）：%r' % (_e,))
-        self.refresh_deck_banner()
+            print('[banner] live 刷新启动失败（回落文件重读）：%r' % (_e,))
+            self._live_proc = None
+            self.deck_banner.set_notice('', '')
+            self.refresh_deck_banner()
+
+    def announce_deck_status(self, state=None) -> str:
+        """进匹配界面时提示我方卡组识别状态（用户 2026-10-28，对齐 untapped）。
+
+        untapped 的做法：绿勾 +「准备好决斗了」弹 ~2.5 秒；
+        红叉 +「未知牌组」+ 一行「怎么办」。
+
+        我们的做法（**不新开窗口，复用横幅**）：
+        * ``known``  -> 横幅照常显示（卡图 + 确认），并在标题后面挂一个
+                        **短暂的绿字「已识别」** —— 2.5 秒后自动恢复
+        * 其它三态  -> 横幅显示「未识别」红字 + 具体该怎么办（按模式给文案）
+
+        这样不会像 untapped 那样多一个浮层，也不抢游戏的视觉焦点。
+        返回状态值（known / unknown_live / unknown）—— 单测直接锁。
+        """
+        from core import deck_status as DS
+        if state is None:
+            try:
+                from core import my_deck
+                state = my_deck.load()
+            except Exception:                            # noqa: BLE001
+                state = {}
+        value = DS.deck_state(state)
+        mode_group = None
+        try:
+            mode_group = self._current_mode_group()
+        except Exception:                                # noqa: BLE001
+            mode_group = None
+        if value == DS.STATE_KNOWN:
+            self._flash_banner_title(tr('已识别'), theme.WIN)
+            return value
+        hint_key = DS.hint_for(value, mode_group)
+        if hint_key:
+            self._flash_banner_title(tr('未识别'), theme.WARN,
+                                     hint_key=hint_key, hold=True)
+        return value
+
+    def _current_mode_group(self):
+        """当前对局模式分组（``ranked`` / ``peak`` / ``dc`` / ``event`` / None）。
+
+        用最近一局的 mode —— 匹配界面里还没有本局数据，只能用上一局的
+        作参照（同一天同一模式连着打的概率最高）。取不到给 None。
+        """
+        try:
+            snap = getattr(self, '_snap', None)
+            rows = getattr(snap, 'rows', None) if snap is not None else None
+            if rows:
+                return getattr(rows[0], 'mode_group', None)
+        except Exception:                                # noqa: BLE001
+            pass
+        return None
+
+    def _flash_banner_title(self, text: str, color: str,
+                            hint_key: str = '', hold: bool = False) -> None:
+        """在横幅标题后面闪一段彩色文字（2.5 秒后恢复）。
+
+        :param hold: True 时不自动恢复（等下一次 refresh 覆盖）——
+                     用于「未识别」这种需要用户看到的提示。
+        """
+        try:
+            self.deck_banner.set_notice(text, color, hint_key=hint_key)
+        except Exception as _e:                          # noqa: BLE001
+            print('[banner] 提示设置失败：%r' % (_e,))
+            return
+        if hold:
+            return
+        key = getattr(self, '_banner_timer', None)
+        if key is not None:
+            try:
+                key.stop()
+            except Exception:                            # noqa: BLE001
+                pass
+        t = QTimer(self)
+        t.setSingleShot(True)
+        t.setInterval(2500)
+        t.timeout.connect(self._clear_banner_notice)
+        self._banner_timer = t
+        t.start()
+
+    def _clear_banner_notice(self) -> None:
+        try:
+            self.deck_banner.set_notice('', '')
+        except Exception:                                # noqa: BLE001
+            pass
 
     def refresh_deck_banner(self, img_resolver=None) -> str:
         """按 `my_deck.json` 当前状态刷提示条（**窗口每轮启动 + 每次快照**都调）。
@@ -2148,6 +2291,11 @@ class FloatingWindow(QWidget):
         """
         from core import my_deck
         state = my_deck.load()
+        if callable(img_resolver):
+            #: 记住 resolver —— 异步读取完成时会再调一次本函数（那时没有
+            #: 调用方能传参），不记就会丢卡图（2026-10-28 实测：读到名字
+            #: 但横幅只有文字没有卡图）。
+            self._img_resolver = img_resolver
         img = ''
         if state.get('name') and callable(img_resolver):
             try:

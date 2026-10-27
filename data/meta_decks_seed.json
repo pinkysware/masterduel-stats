@@ -1,28 +1,13 @@
 {
  "version": 1,
- "fetched_at": "2026-10-24T14:03:30",
+ "fetched_at": "2026-10-28T01:30:20",
  "rows": [
-  {
-   "name": "HEROs",
-   "kind": "deck_type",
-   "tier": "Trending",
-   "power": 1,
-   "popularity": null,
-   "slug": "HEROs",
-   "img_url": null,
-   "name_cn": "英雄",
-   "name_ja": "HERO",
-   "name_display": "",
-   "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/HEROs.webp"
-  },
   {
    "name": "Sky Striker",
    "kind": "deck_type",
    "tier": "Trending",
    "power": 1,
-   "popularity": 2.72,
+   "popularity": 2.77,
    "slug": "Sky%20Striker",
    "img_url": null,
    "name_cn": "闪刀姬",
@@ -31,15 +16,14 @@
    "aliases": [
     "炫岚闪刀姬"
    ],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Sky_Striker.webp"
+   "hidden": 0
   },
   {
    "name": "Orcust",
    "kind": "deck_type",
    "tier": "Trending",
    "power": 1,
-   "popularity": 2.11,
+   "popularity": 2.34,
    "slug": "Orcust",
    "img_url": null,
    "name_cn": "自奏",
@@ -49,41 +33,21 @@
     "自奏圣乐",
     "自鸣天琴"
    ],
-   "hidden": 0,
-   "img_file": "data/deck_images/Orcust.webp"
-  },
-  {
-   "name": "Phantom Knights",
-   "kind": "deck_type",
-   "tier": "Trending",
-   "power": 1,
-   "popularity": 2.57,
-   "slug": "Phantom%20Knights",
-   "img_url": null,
-   "name_cn": "幻影骑士团",
-   "name_ja": "幻影",
-   "name_display": "",
-   "aliases": [
-    "升阶魔法",
-    "暗幻影骑士团"
-   ],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Phantom_Knights.webp"
+   "hidden": 0
   },
   {
    "name": "Lunalight",
    "kind": "deck_type",
    "tier": "Trending",
    "power": 1,
-   "popularity": 1.81,
+   "popularity": null,
    "slug": "Lunalight",
    "img_url": null,
    "name_cn": "月光",
    "name_ja": "月光",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Lunalight.webp"
+   "hidden": 0
   },
   {
    "name": "Synchrons",
@@ -100,8 +64,7 @@
     "废品同步士",
     "废品同调士"
    ],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Synchrons.webp"
+   "hidden": 0
   },
   {
    "name": "Infernoble Knight",
@@ -115,8 +78,7 @@
    "name_ja": "焔聖騎士",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Infernoble_Knight.webp"
+   "hidden": 0
   },
   {
    "name": "Gem-Knights",
@@ -132,23 +94,21 @@
    "aliases": [
     "秘石骑士"
    ],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Gem-Knights.webp"
+   "hidden": 0
   },
   {
    "name": "Resonators",
    "kind": "deck_type",
    "tier": "Trending",
    "power": 1,
-   "popularity": 2.11,
+   "popularity": 2.19,
    "slug": "Resonators",
    "img_url": null,
    "name_cn": "红莲魔龙",
    "name_ja": "リゾネーター",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Resonators.webp"
+   "hidden": 0
   },
   {
    "name": "Tellarknight",
@@ -164,8 +124,7 @@
    "aliases": [
     "卫星骑士"
    ],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Tellarknight.webp"
+   "hidden": 0
   },
   {
    "name": "Magnet Warrior",
@@ -179,8 +138,7 @@
    "name_ja": "磁石",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Magnet_Warrior.webp"
+   "hidden": 0
   },
   {
    "name": "Mitsurugi Orcust",
@@ -194,38 +152,21 @@
    "name_ja": "巳剣オルフェゴール",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Mitsurugi_Orcust.webp"
+   "hidden": 0
   },
   {
    "name": "Yummy",
    "kind": "deck_type",
    "tier": "Trending",
    "power": 1,
-   "popularity": 1.81,
+   "popularity": null,
    "slug": "Yummy",
    "img_url": null,
    "name_cn": "黯蜜",
    "name_ja": "ヤミー",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Yummy.webp"
-  },
-  {
-   "name": "K9",
-   "kind": "deck_type",
-   "tier": "Trending",
-   "power": 1,
-   "popularity": null,
-   "slug": "K9",
-   "img_url": null,
-   "name_cn": "K9",
-   "name_ja": "K９",
-   "name_display": "",
-   "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/K9.webp"
+   "hidden": 0
   },
   {
    "name": "Pumpking Zombies",
@@ -242,38 +183,83 @@
     "Zombies",
     "不死均"
    ],
-   "hidden": 0,
-   "img_file": "data/deck_images/Pumpking_Zombies.webp"
+   "hidden": 0
+  },
+  {
+   "name": "GMX",
+   "kind": "deck_type",
+   "tier": "Trending",
+   "power": 1,
+   "popularity": null,
+   "slug": "GMX",
+   "img_url": null,
+   "name_cn": "恐龙GMX",
+   "name_ja": "GMX",
+   "name_display": "",
+   "aliases": [],
+   "hidden": 0
   },
   {
    "name": "Blue-Eyes",
    "kind": "deck_type",
    "tier": "Trending",
    "power": 1.5,
-   "popularity": 1.66,
+   "popularity": 1.61,
    "slug": "Blue-Eyes",
    "img_url": null,
    "name_cn": "青眼白龙",
    "name_ja": "ブルーアイズ",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Blue-Eyes.webp"
+   "hidden": 0
+  },
+  {
+   "name": "Kewl Tune",
+   "kind": "deck_type",
+   "tier": "Trending",
+   "power": 1.5,
+   "popularity": null,
+   "slug": "Kewl%20Tune",
+   "img_url": null,
+   "name_cn": "杀手旋律",
+   "name_ja": "キラーチューン",
+   "name_display": "",
+   "aliases": [
+    "杀手级调整曲",
+    "Kewl Tune Engine"
+   ],
+   "hidden": 0
   },
   {
    "name": "Power Patron",
    "kind": "deck_type",
    "tier": "Trending",
    "power": 1.5,
-   "popularity": 2.42,
+   "popularity": 1.75,
    "slug": "Power%20Patron",
    "img_url": null,
    "name_cn": "狱神",
    "name_ja": "",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Power_Patron.webp"
+   "hidden": 0
+  },
+  {
+   "name": "Phantom Knights",
+   "kind": "deck_type",
+   "tier": "Trending",
+   "power": 2,
+   "popularity": 2.48,
+   "slug": "Phantom%20Knights",
+   "img_url": null,
+   "name_cn": "幻影骑士团",
+   "name_ja": "幻影",
+   "name_display": "",
+   "aliases": [
+    "升阶魔法",
+    "暗幻影骑士团"
+   ],
+   "hidden": 0
   },
   {
    "name": "Darklord",
@@ -287,26 +273,7 @@
    "name_ja": "堕天使",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Darklord.webp"
-  },
-  {
-   "name": "Invoked",
-   "kind": "deck_type",
-   "tier": "Trending",
-   "power": 2,
-   "popularity": 4.68,
-   "slug": "Invoked",
-   "img_url": null,
-   "name_cn": "召唤师",
-   "name_ja": "",
-   "name_display": "",
-   "aliases": [
-    "召唤兽",
-    "魔术师"
-   ],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Invoked.webp"
+   "hidden": 0
   },
   {
    "name": "Phantom Knights Orcust",
@@ -320,15 +287,14 @@
    "name_ja": "",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Phantom_Knights_Orcust.webp"
+   "hidden": 0
   },
   {
    "name": "Tearlaments",
    "kind": "deck_type",
    "tier": "Trending",
    "power": 2,
-   "popularity": null,
+   "popularity": 1.46,
    "slug": "Tearlaments",
    "img_url": null,
    "name_cn": "珠泪",
@@ -337,141 +303,70 @@
    "aliases": [
     "泪冠哀歌"
    ],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Tearlaments.webp"
-  },
-  {
-   "name": "Radiant Typhoon Zoodiac",
-   "kind": "deck_type",
-   "tier": "Trending",
-   "power": 2,
-   "popularity": null,
-   "slug": "Radiant%20Typhoon%20Zoodiac",
-   "img_url": null,
-   "name_cn": "十二兽绚岚",
-   "name_ja": "絢嵐十二獣",
-   "name_display": "",
-   "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Radiant_Typhoon_Zoodiac.webp"
-  },
-  {
-   "name": "Magistus Fairy Tail",
-   "kind": "deck_type",
-   "tier": "Trending",
-   "power": 2,
-   "popularity": 2.27,
-   "slug": "Magistus%20Fairy%20Tail",
-   "img_url": null,
-   "name_cn": "伟魔妖精传姬",
-   "name_ja": "マギストス妖精伝姫",
-   "name_display": "",
-   "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Magistus_Fairy_Tail.webp"
-  },
-  {
-   "name": "GMX",
-   "kind": "deck_type",
-   "tier": "Trending",
-   "power": 2,
-   "popularity": null,
-   "slug": "GMX",
-   "img_url": null,
-   "name_cn": "恐龙GMX",
-   "name_ja": "GMX",
-   "name_display": "",
-   "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/GMX.webp"
-  },
-  {
-   "name": "Kewl Tune",
-   "kind": "deck_type",
-   "tier": "Trending",
-   "power": 2.5,
-   "popularity": null,
-   "slug": "Kewl%20Tune",
-   "img_url": null,
-   "name_cn": "杀手旋律",
-   "name_ja": "キラーチューン",
-   "name_display": "",
-   "aliases": [
-    "杀手级调整曲",
-    "Kewl Tune Engine"
-   ],
-   "hidden": 0,
-   "img_file": "data/deck_images/Kewl_Tune.webp"
+   "hidden": 0
   },
   {
    "name": "Maliss",
    "kind": "deck_type",
-   "tier": "Tier3",
-   "power": 3,
-   "popularity": 2.57,
+   "tier": "Trending",
+   "power": 2,
+   "popularity": 2.48,
    "slug": "Maliss",
    "img_url": null,
    "name_cn": "码丽丝",
    "name_ja": "M∀LICE",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Maliss.webp"
+   "hidden": 0
   },
   {
-   "name": "Artmage",
+   "name": "K9",
    "kind": "deck_type",
-   "tier": "Tier3",
-   "power": 3,
-   "popularity": 3.47,
-   "slug": "Artmage",
+   "tier": "Trending",
+   "power": 2,
+   "popularity": null,
+   "slug": "K9",
    "img_url": null,
-   "name_cn": "神艺",
-   "name_ja": "アルトメギア",
-   "name_display": "",
-   "aliases": [
-    "神艺学",
-    "狱神神艺"
-   ],
-   "hidden": 0,
-   "img_file": "data/deck_images/Artmage.webp"
-  },
-  {
-   "name": "Mitsurugi",
-   "kind": "deck_type",
-   "tier": "Tier3",
-   "power": 3.5,
-   "popularity": 1.66,
-   "slug": "Mitsurugi",
-   "img_url": null,
-   "name_cn": "巳剑",
-   "name_ja": "巳剣",
+   "name_cn": "K9",
+   "name_ja": "K９",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Mitsurugi.webp"
+   "hidden": 0
   },
   {
-   "name": "DoomZ",
+   "name": "Radiant Typhoon Zoodiac",
    "kind": "deck_type",
-   "tier": "Tier3",
-   "power": 3.5,
-   "popularity": 3.93,
-   "slug": "DoomZ",
+   "tier": "Trending",
+   "power": 2,
+   "popularity": 1.46,
+   "slug": "Radiant%20Typhoon%20Zoodiac",
    "img_url": null,
-   "name_cn": "终刻",
-   "name_ja": "",
+   "name_cn": "十二兽绚岚",
+   "name_ja": "絢嵐十二獣",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/DoomZ.webp"
+   "hidden": 0
+  },
+  {
+   "name": "Magistus Fairy Tail",
+   "kind": "deck_type",
+   "tier": "Trending",
+   "power": 2,
+   "popularity": 2.04,
+   "slug": "Magistus%20Fairy%20Tail",
+   "img_url": null,
+   "name_cn": "伟魔妖精传姬",
+   "name_ja": "マギストス妖精伝姫",
+   "name_display": "",
+   "aliases": [],
+   "hidden": 0
   },
   {
    "name": "Vanquish Soul K9",
    "kind": "deck_type",
    "tier": "Tier3",
-   "power": 4,
-   "popularity": null,
+   "power": 3,
+   "popularity": 1.75,
    "slug": "Vanquish%20Soul%20K9",
    "img_url": null,
    "name_cn": "K9VS",
@@ -481,29 +376,75 @@
     "VSK9",
     "对击斗魂"
    ],
-   "hidden": 0,
-   "img_file": "data/deck_images/Vanquish_Soul_K9.webp"
+   "hidden": 0
   },
   {
-   "name": "Elfnote Kewl Tune",
+   "name": "Mitsurugi",
    "kind": "deck_type",
-   "tier": "Tier2",
-   "power": 9.5,
-   "popularity": 3.78,
-   "slug": "Elfnote%20Kewl%20Tune",
+   "tier": "Tier3",
+   "power": 3.5,
+   "popularity": 1.61,
+   "slug": "Mitsurugi",
    "img_url": null,
-   "name_cn": "耀圣杀手旋律",
-   "name_ja": "エルフェンノーツキラーチューン",
+   "name_cn": "巳剑",
+   "name_ja": "巳剣",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Elfnote_Kewl_Tune.webp"
+   "hidden": 0
+  },
+  {
+   "name": "Artmage",
+   "kind": "deck_type",
+   "tier": "Tier3",
+   "power": 4,
+   "popularity": 3.36,
+   "slug": "Artmage",
+   "img_url": null,
+   "name_cn": "神艺",
+   "name_ja": "アルトメギア",
+   "name_display": "",
+   "aliases": [
+    "神艺学",
+    "狱神神艺"
+   ],
+   "hidden": 0
+  },
+  {
+   "name": "Invoked",
+   "kind": "deck_type",
+   "tier": "Tier3",
+   "power": 5,
+   "popularity": 5.4,
+   "slug": "Invoked",
+   "img_url": null,
+   "name_cn": "召唤师",
+   "name_ja": "",
+   "name_display": "",
+   "aliases": [
+    "召唤兽",
+    "魔术师"
+   ],
+   "hidden": 0
+  },
+  {
+   "name": "DoomZ",
+   "kind": "deck_type",
+   "tier": "Tier3",
+   "power": 5.5,
+   "popularity": 3.5,
+   "slug": "DoomZ",
+   "img_url": null,
+   "name_cn": "终刻",
+   "name_ja": "",
+   "name_display": "",
+   "aliases": [],
+   "hidden": 0
   },
   {
    "name": "Branded",
    "kind": "deck_type",
-   "tier": "Tier2",
-   "power": 10.5,
+   "tier": "Tier3",
+   "power": 6.5,
    "popularity": 4.23,
    "slug": "Branded",
    "img_url": null,
@@ -511,15 +452,28 @@
    "name_ja": "烙印",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Branded.webp"
+   "hidden": 0
+  },
+  {
+   "name": "Elfnote Kewl Tune",
+   "kind": "deck_type",
+   "tier": "Tier2",
+   "power": 9.5,
+   "popularity": 3.8,
+   "slug": "Elfnote%20Kewl%20Tune",
+   "img_url": null,
+   "name_cn": "耀圣杀手旋律",
+   "name_ja": "エルフェンノーツキラーチューン",
+   "name_display": "",
+   "aliases": [],
+   "hidden": 0
   },
   {
    "name": "Dracotail",
    "kind": "deck_type",
    "tier": "Tier2",
    "power": 10.5,
-   "popularity": 5.74,
+   "popularity": 5.69,
    "slug": "Dracotail",
    "img_url": null,
    "name_cn": "烙印星辰",
@@ -529,15 +483,14 @@
     "星辰",
     "BrandedDracotail"
    ],
-   "hidden": 0,
-   "img_file": "data/deck_images/Dracotail.webp"
+   "hidden": 0
   },
   {
    "name": "Elfnote",
    "kind": "deck_type",
    "tier": "Tier1",
-   "power": 14,
-   "popularity": 12.24,
+   "power": 15,
+   "popularity": 11.82,
    "slug": "Elfnote",
    "img_url": null,
    "name_cn": "耀圣",
@@ -547,8 +500,7 @@
     "耀圣诗章",
     "Elfnote Engine"
    ],
-   "hidden": 0,
-   "img_file": "data/deck_images/Elfnote.webp"
+   "hidden": 0
   },
   {
    "name": "Charmer",
@@ -559,15 +511,14 @@
    "slug": "Charmer",
    "img_url": null,
    "master1": 0,
-   "new_cards": 1,
-   "img_file": "data/deck_images/Charmer.webp"
+   "new_cards": 1
   },
   {
    "name": "Clown Crew",
    "kind": "deck_type",
    "tier": "Tier3",
    "power": null,
-   "popularity": 3.78,
+   "popularity": 3.65,
    "slug": "Clown%20Crew",
    "img_url": null,
    "master1": 11,
@@ -578,8 +529,7 @@
    "aliases": [
     "道化一座"
    ],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/Clown_Crew.webp"
+   "hidden": 0
   },
   {
    "name": "Elfnote White Forest",
@@ -590,13 +540,12 @@
    "slug": "Elfnote%20White%20Forest",
    "img_url": null,
    "master1": 0,
-   "new_cards": 2,
+   "new_cards": 3,
    "name_cn": "耀圣白森",
    "name_ja": "",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Elfnote_White_Forest.webp"
+   "hidden": 0
   },
   {
    "name": "Evil Eye Unchained",
@@ -612,29 +561,7 @@
    "name_ja": "",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Evil_Eye_Unchained.webp"
-  },
-  {
-   "name": "Ghoti",
-   "kind": "deck_type",
-   "tier": null,
-   "power": null,
-   "popularity": null,
-   "slug": "Ghoti",
-   "img_url": null,
-   "master1": 1,
-   "new_cards": 0,
-   "name_cn": "异鱼",
-   "name_ja": "",
-   "name_display": "",
-   "aliases": [
-    "魊影",
-    "戈蒂世",
-    "游魊"
-   ],
-   "hidden": 0,
-   "img_file": "data/deck_images/Ghoti.webp"
+   "hidden": 0
   },
   {
    "name": "Goblin Biker",
@@ -645,8 +572,23 @@
    "slug": "Goblin%20Biker",
    "img_url": null,
    "master1": 0,
-   "new_cards": 2,
-   "img_file": "data/deck_images/Goblin_Biker.webp"
+   "new_cards": 2
+  },
+  {
+   "name": "HEROs",
+   "kind": "deck_type",
+   "tier": "Trending",
+   "power": null,
+   "popularity": null,
+   "slug": "HEROs",
+   "img_url": null,
+   "master1": 4,
+   "new_cards": 0,
+   "name_cn": "英雄",
+   "name_ja": "HERO",
+   "name_display": "",
+   "aliases": [],
+   "hidden": 0
   },
   {
    "name": "Insect",
@@ -657,25 +599,7 @@
    "slug": "Insect",
    "img_url": null,
    "master1": 0,
-   "new_cards": 1,
-   "img_file": "data/deck_images/Insect.webp"
-  },
-  {
-   "name": "Lightsworn",
-   "kind": "deck_type",
-   "tier": null,
-   "power": null,
-   "popularity": null,
-   "slug": "Lightsworn",
-   "img_url": null,
-   "master1": 1,
-   "new_cards": 0,
-   "name_cn": "光道",
-   "name_ja": "",
-   "name_display": "",
-   "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Lightsworn.webp"
+   "new_cards": 1
   },
   {
    "name": "Magistus Charmer",
@@ -686,13 +610,12 @@
    "slug": "Magistus%20Charmer",
    "img_url": null,
    "master1": 0,
-   "new_cards": 2,
+   "new_cards": 3,
    "name_cn": "灵使",
    "name_ja": "",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Magistus_Charmer.webp"
+   "hidden": 0
   },
   {
    "name": "Megalith",
@@ -703,8 +626,18 @@
    "slug": "Megalith",
    "img_url": null,
    "master1": 0,
-   "new_cards": 1,
-   "img_file": "data/deck_images/Megalith.webp"
+   "new_cards": 1
+  },
+  {
+   "name": "Pendulum Magician",
+   "kind": "deck_type",
+   "tier": null,
+   "power": null,
+   "popularity": null,
+   "slug": "Pendulum%20Magician",
+   "img_url": null,
+   "master1": 0,
+   "new_cards": 1
   },
   {
    "name": "R.B.",
@@ -720,8 +653,23 @@
    "name_ja": "R.B.",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images_custom/R.B.webp"
+   "hidden": 0
+  },
+  {
+   "name": "Raidraptor",
+   "kind": "deck_type",
+   "tier": null,
+   "power": null,
+   "popularity": null,
+   "slug": "Raidraptor",
+   "img_url": null,
+   "master1": 1,
+   "new_cards": 1,
+   "name_cn": "急袭猛禽",
+   "name_ja": "",
+   "name_display": "",
+   "aliases": [],
+   "hidden": 0
   },
   {
    "name": "Ryu-Ge",
@@ -737,8 +685,18 @@
    "name_ja": "",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Ryu-Ge.webp"
+   "hidden": 0
+  },
+  {
+   "name": "SPYRAL",
+   "kind": "deck_type",
+   "tier": null,
+   "power": null,
+   "popularity": null,
+   "slug": "SPYRAL",
+   "img_url": null,
+   "master1": 0,
+   "new_cards": 1
   },
   {
    "name": "Snake-Eye",
@@ -749,13 +707,12 @@
    "slug": "Snake-Eye",
    "img_url": null,
    "master1": 1,
-   "new_cards": 1,
+   "new_cards": 2,
    "name_cn": "蛇眼",
    "name_ja": "",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Snake-Eye.webp"
+   "hidden": 0
   },
   {
    "name": "Snake-Eye Yummy",
@@ -771,8 +728,7 @@
    "name_ja": "蛇眼ヤミー",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Snake-Eye_Yummy.webp"
+   "hidden": 0
   },
   {
    "name": "Spright",
@@ -784,24 +740,11 @@
    "img_url": null,
    "master1": 1,
    "new_cards": 0,
-   "img_file": "data/deck_images/Spright.webp"
-  },
-  {
-   "name": "Super Quant",
-   "kind": "deck_type",
-   "tier": null,
-   "power": null,
-   "popularity": null,
-   "slug": "Super%20Quant",
-   "img_url": null,
-   "master1": 1,
-   "new_cards": 0,
-   "name_cn": "超级量子",
+   "name_cn": "电光闪灵",
    "name_ja": "",
    "name_display": "",
    "aliases": [],
-   "hidden": 0,
-   "img_file": "data/deck_images/Super_Quant.webp"
+   "hidden": 0
   },
   {
    "name": "Vaalmonica",
@@ -813,7 +756,11 @@
    "img_url": null,
    "master1": 0,
    "new_cards": 1,
-   "img_file": "data/deck_images/Vaalmonica.webp"
+   "name_cn": "华耳琴璃",
+   "name_ja": "",
+   "name_display": "",
+   "aliases": [],
+   "hidden": 0
   },
   {
    "name": "Vaylantz",
@@ -824,8 +771,7 @@
    "slug": "Vaylantz",
    "img_url": null,
    "master1": 0,
-   "new_cards": 1,
-   "img_file": "data/deck_images/Vaylantz.webp"
+   "new_cards": 1
   },
   {
    "name": "Warrior Combo",
@@ -836,32 +782,40 @@
    "slug": "Warrior%20Combo",
    "img_url": null,
    "master1": 0,
-   "new_cards": 2,
-   "img_file": "data/deck_images/Warrior_Combo.webp"
+   "new_cards": 2
+  },
+  {
+   "name": "Weather Painter",
+   "kind": "deck_type",
+   "tier": null,
+   "power": null,
+   "popularity": null,
+   "slug": "Weather%20Painter",
+   "img_url": null,
+   "master1": 0,
+   "new_cards": 1
   },
   {
    "name": "Elfnote Engine",
    "kind": "engine",
    "tier": "Tier1",
-   "power": 23.5,
+   "power": 24.5,
    "popularity": null,
    "slug": "Elfnote",
    "img_url": "https://imgserv.duellinksmeta.com/v2/mdm/engines/6a001a7598bf9172d4b21b91",
    "hidden": 1,
-   "name_cn": "耀圣混轴",
-   "img_file": "data/deck_images/Elfnote_Engine.webp"
+   "name_cn": "耀圣混轴"
   },
   {
    "name": "Kewl Tune Engine",
    "kind": "engine",
-   "tier": "Tier1",
-   "power": 12.0,
+   "tier": "Tier2",
+   "power": 11.0,
    "popularity": null,
    "slug": "Kewl%20Tune",
    "img_url": "https://imgserv.duellinksmeta.com/v2/mdm/engines/6a9e2d2d4b1edeb511ebe35d",
    "hidden": 1,
-   "name_cn": "杀手旋律混轴",
-   "img_file": "data/deck_images/Kewl_Tune_Engine.webp"
+   "name_cn": "杀手旋律混轴"
   },
   {
    "name": "K9 Engine",
@@ -872,20 +826,18 @@
    "slug": "K9",
    "img_url": "https://imgserv.duellinksmeta.com/v2/mdm/engines/698530b445ed5d23e7f57042",
    "hidden": 1,
-   "name_cn": "K9混轴",
-   "img_file": "data/deck_images/K9_Engine.webp"
+   "name_cn": "K9混轴"
   },
   {
    "name": "Phantom Knights Engine",
    "kind": "engine",
    "tier": "Tier3",
-   "power": 3.0,
+   "power": 4.0,
    "popularity": null,
    "slug": "Phantom%20Knights",
    "img_url": "https://imgserv.duellinksmeta.com/v2/mdm/engines/634f1327a0c66598c33e8399",
    "hidden": 1,
-   "name_cn": "幻影骑士团混轴",
-   "img_file": "data/deck_images/Phantom_Knights_Engine.webp"
+   "name_cn": "幻影骑士团混轴"
   },
   {
    "name": "Yummy Engine",
@@ -1509,7 +1461,9 @@
    "name_ja": "ジュラック",
    "name_display": "",
    "aliases": [
-    "侏罗系"
+    "侏罗系",
+    "侏罗纪",
+    "恐龙"
    ],
    "hidden": 0,
    "tier": "Trending",
@@ -2119,6 +2073,42 @@
    "source": "custom"
   },
   {
+   "name": "Ghoti",
+   "kind": "deck_type",
+   "name_cn": "异鱼",
+   "name_ja": null,
+   "name_display": "",
+   "aliases": [
+    "魊影",
+    "戈蒂世",
+    "游魊"
+   ],
+   "hidden": 0,
+   "tier": null,
+   "power": null,
+   "popularity": null,
+   "slug": null,
+   "img_url": null,
+   "img_file": "data/deck_images/Ghoti.webp",
+   "source": "custom"
+  },
+  {
+   "name": "Lightsworn",
+   "kind": "deck_type",
+   "name_cn": "光道",
+   "name_ja": null,
+   "name_display": "",
+   "aliases": [],
+   "hidden": 0,
+   "tier": null,
+   "power": null,
+   "popularity": null,
+   "slug": null,
+   "img_url": null,
+   "img_file": "data/deck_images/Lightsworn.webp",
+   "source": "custom"
+  },
+  {
    "name": "Mayakashi",
    "kind": "deck_type",
    "name_cn": "魔妖",
@@ -2164,6 +2154,22 @@
    "slug": null,
    "img_url": null,
    "img_file": "data/deck_images/Dragon_Link.webp",
+   "source": "custom"
+  },
+  {
+   "name": "Super Quant",
+   "kind": "deck_type",
+   "name_cn": "超级量子",
+   "name_ja": null,
+   "name_display": "",
+   "aliases": [],
+   "hidden": 0,
+   "tier": null,
+   "power": null,
+   "popularity": null,
+   "slug": null,
+   "img_url": null,
+   "img_file": "data/deck_images/Super_Quant.webp",
    "source": "custom"
   },
   {
@@ -2276,6 +2282,22 @@
    "slug": null,
    "img_url": null,
    "img_file": "data/deck_images_custom/电子界均.webp",
+   "source": "custom"
+  },
+  {
+   "name": "黄金柜自奏",
+   "kind": "deck_type",
+   "name_cn": "黄金柜自奏",
+   "name_ja": null,
+   "name_display": "",
+   "aliases": [],
+   "hidden": 0,
+   "tier": null,
+   "power": null,
+   "popularity": null,
+   "slug": null,
+   "img_url": null,
+   "img_file": "data/deck_images_custom/黄金柜自奏.webp",
    "source": "custom"
   }
  ]

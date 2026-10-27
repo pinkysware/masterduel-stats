@@ -121,6 +121,21 @@ path to the right `python.exe` into a `python_path.txt` file next to
   fetches (official card DB, public meta lists); your duel database, records
   and personal state never leave `data/`.
 
+## Credits
+
+Recognising your own custom decks relies on an external deck-screenshot service:
+
+* **[GetDeck](https://github.com/Souls-R/getdeck)** ([get-deck.com](https://get-deck.com)) —
+  a Master Duel deck-screenshot recogniser, deck-code generator and sharing tool.
+  Upload a deck screenshot and it identifies every card; you can then generate a
+  deck code or a shareable image. **All recognition runs locally in your browser —
+  images are never uploaded** (stack: Next.js / React / ONNX Runtime Web /
+  Rust WebAssembly / pHash; YOLO for card detection plus perceptual-hash lookup
+  against a bundled card database).
+  How this app uses it: export a `.ydk` from GetDeck, then use
+  "Decks → Import YDK" here to save it as a deck fingerprint, so the app can
+  recognise your own deck even when it is not in the reference library.
+
 ## Disclaimer
 
 * Unofficial fan tool, not affiliated with KONAMI. Game assets (card art,

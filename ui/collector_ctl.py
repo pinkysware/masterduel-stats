@@ -173,8 +173,12 @@ def start_collector(minutes: int = 0, interval: int = 2.0) -> Optional[int]:
     _w = os.path.join(os.path.dirname(exe), 'pythonw.exe')
     if os.path.exists(_w):
         exe = _w
+    #: ★ `--emit-state` **必须带**（2026-10-28）：它写
+    #:   `data/archive/duel_state.json`，悬浮窗的「进匹配界面提示卡组识别状态」
+    #:   和将来的游戏内浮层都靠它。原来这里不带 —— 那个文件永远不生成，
+    #:   功能静默不生效（默认关是给手动 CLI 用的，UI 拉起的常驻实例应该开）。
     args = [exe, script, '--minutes', str(int(minutes)),
-            '--interval', str(interval)]
+            '--interval', str(interval), '--emit-state']
     try:
         proc = subprocess.Popen(args, cwd=PROJ, close_fds=True,
                                 creationflags=flags)

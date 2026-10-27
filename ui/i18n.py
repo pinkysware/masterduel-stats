@@ -57,6 +57,25 @@ _T = {
     '礼盒': ('Gift Box', 'プレゼントボックス'),
     '设置': ('Settings', '設定'),
 
+    # ---- 匹配界面卡组提示（2026-10-28，对齐 untapped DeckStatus）--------
+    '读取中…': ('Reading deck…', 'デッキ読み込み中…'),
+    '已识别': ('Deck detected', 'デッキ認識済み'),
+    '未识别': ('Deck not detected', 'デッキ未認識'),
+    # ⚠️ 本项目的约定是「**中文原文就是键**」—— 所以下面四条键本身就写成
+    #    用户能直接读的中文句子（`deck_status.hint_for()` 返回的就是这些键）。
+    '卡表已读到 —— 点卡图手动选名字': (
+        'Card list loaded — click the deck image to pick its name',
+        'デッキリストは読み込み済み — デッキ画像をクリックして名前を選択'),
+    '点卡组框，重新选一次卡组': (
+        'Click the Deck Box and re-select the deck',
+        'デッキアイコンをクリックし、デッキを再選択してください'),
+    '点卡组框，「编辑牌组」后返回': (
+        'Click the Deck Box, "Edit Deck" and return',
+        'デッキアイコンをクリックし、「デッキ編集」を選んで戻ってください'),
+    '点卡组框，「更换牌组」后重新选': (
+        'Click the Deck Box, "Change Decks", and re-select the deck',
+        'デッキアイコンをクリックし、「デッキ変更」を選んでデッキを再選択してください'),
+
     # ---- 战绩页 ----------------------------------------------------------
     '按月': ('By Month', '月別'),
     '全部历史': ('All Time', '全期間'),
@@ -166,6 +185,63 @@ _T = {
     # ---- 查卡页 ----------------------------------------------------------
     '官网查卡（Konami 数据库）': ('Official DB (Konami)', '公式DB（Konami）'),
     '百鸽查卡（ygocdb）': ('ygocdb', 'ygocdb'),
+    '导入 YDK': ('Import YDK', 'YDKを読み込む'),
+    '导入': ('Import', '読み込む'),
+    '浏览…': ('Browse…', '参照…'),
+    '选择一个 .ydk 文件…': ('Pick a .ydk file…', '.ydk ファイルを選択…'),
+    '卡组名：': ('Deck name:', 'デッキ名：'),
+    '这副牌在软件里叫什么': ('What this deck is called in this app',
+                        'このデッキを本アプリで何と呼ぶか'),
+    'YDK 卡组文件 (*.ydk);;所有文件 (*.*)': (
+        'YDK deck files (*.ydk);;All files (*.*)',
+        'YDKデッキファイル (*.ydk);;すべてのファイル (*.*)'),
+    '选择 YDK 文件': ('Select a YDK file', 'YDKファイルを選択'),
+    '导入 .ydk 文件，让软件认出你的自组卡组（参照库里没有的）': (
+        'Import a .ydk file so the app can recognise your own deck '
+        '(one that is not in the reference library)',
+        '.ydk ファイルを読み込み、参照ライブラリに無い自分のデッキを認識させます'),
+    'YDK 可从 get-deck.com 把卡组截图识别后导出（查卡页有链接）。': (
+        'You can get a YDK from get-deck.com — upload a deck screenshot there '
+        'and export (the Card Search page has the link).',
+        'YDK は get-deck.com でデッキ画像を認識させて書き出せます（カード検索ページにリンクあり）。'),
+    'YDK 可从 get-deck.com 把卡组截图识别后导出（查卡页有链接）。\n'
+    '导入后，软件识别我方卡组时会比对「是不是这副」。': (
+        'You can get a YDK from get-deck.com: upload a deck screenshot and export '
+        '(the Card Search page has the link).\n'
+        'Once imported, the app compares your deck against it.',
+        'YDK は get-deck.com でデッキ画像を認識させて書き出せます（カード検索ページにリンクあり）。\n'
+        '読み込むと、自分のデッキかどうかを照合します。'),
+    '主卡组 %d 张 · 额外 %d 张 · 换算后共 %d 张（%d 种）': (
+        'Main %d · Extra %d → %d cards (%d unique) after id conversion',
+        'メイン %d・エクストラ %d → ID変換後 %d 枚（%d 種）'),
+    '有 %d 张卡软件认不出（卡表里没有），这些不会参与比对：%s': (
+        '%d cards are unknown to the app (not in the card table); '
+        'they are excluded from matching: %s',
+        '%d 枚のカードを認識できません（カード表に無い）。照合には使いません：%s'),
+    '这个文件里的卡软件一张都认不出': (
+        'None of the cards in this file are known to the app',
+        'このファイル内のカードを1枚も認識できません'),
+    '已保存卡组指纹「%s」（%d 张卡）。\n以后识别我方卡组时会比对它。': (
+        'Saved deck fingerprint "%s" (%d cards).\n'
+        'It will be used when recognising your own deck.',
+        'デッキ指紋「%s」を保存しました（%d 枚）。\n今後、自分のデッキ認識時に照合します。'),
+    '导入失败：': ('Import failed: ', '読み込み失敗：'),
+    'GetDeck（卡组图 → YDK）': ('GetDeck (deck image → YDK)', 'GetDeck（デッキ画像→YDK）'),
+    '识别卡组截图并导出 YDK（识别在浏览器本地完成，图片不上传）；软件可导入 YDK 来认出你的自组卡组': (
+        'Recognises a deck screenshot and exports a .ydk — recognition runs locally '
+        'in your browser, images are never uploaded. Import the .ydk here to let the '
+        'app recognise your own deck',
+        'デッキ画像を認識して .ydk を書き出します（認識はブラウザ内で完結し、画像はアップロードされません）。'
+        '本アプリに .ydk を読み込むと、自分のデッキを認識できます'),
+    '① 在这个网站上传卡组截图（游戏里「编辑牌组」界面截一张即可）\n'
+    '② 识别完成后点导出，得到 .ydk 文件\n'
+    '③ 回到本软件：卡组页 →「导入 YDK」→ 选中那个文件': (
+        '① Upload a deck screenshot here (one shot of the in-game "Edit Deck" screen is enough)\n'
+        '② When recognition finishes, export it to get a .ydk file\n'
+        '③ Back in this app: Decks page → "Import YDK" → pick that file',
+        '① ここにデッキ画像をアップロード（ゲーム内「デッキ編集」画面のスクリーンショット1枚で可）\n'
+        '② 認識が終わったらエクスポートして .ydk ファイルを取得\n'
+        '③ 本アプリに戻り、デッキページ →「YDKを読み込む」→ そのファイルを選択'),
     '点链接用默认浏览器打开；上方搜索框是本地三语候选'
     '（离线），点候选拿卡 id 跳 ygocdb。':
         ('Links open in your browser. The search box above gives local '

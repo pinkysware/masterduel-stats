@@ -2405,13 +2405,22 @@ class CardsLinksPage(QWidget):
     这里是常用查卡站直达。
     """
 
+    #: ``(标题, URL, 说明, 步骤)`` —— ``步骤`` 是可选的多行引导（空 = 不显示）。
+    #: ★ 2026-10-28 加 get-deck.com：它能把卡组图识别成 YDK，
+    #: 而 YDK 是我方卡组指纹的来源之一（见 docs/游戏内浮层功能计划.md §十）。
     LINKS = (
         ('官网查卡（Konami 数据库）', 'https://www.db.yugioh-card.com/',
-         '官方卡片数据库，效果文/ rulings 的最终口径'),
+         '官方卡片数据库，效果文/ rulings 的最终口径', ''),
         ('百鸽查卡（ygocdb）', 'https://ygocdb.com/',
-         '中文圈最全的卡查，三语名/卡图/查卡组构筑'),
+         '中文圈最全的卡查，三语名/卡图/查卡组构筑', ''),
         ('masterduelmeta', 'https://www.masterduelmeta.com/',
-         'MD 环境站：Tier 榜 / 卡组构成 / 使用率（本项目参照库的数据源）'),
+         'MD 环境站：Tier 榜 / 卡组构成 / 使用率（本项目参照库的数据源）', ''),
+        ('GetDeck（卡组图 → YDK）', 'https://get-deck.com/',
+         '识别卡组截图并导出 YDK（识别在浏览器本地完成，图片不上传）；'
+         '软件可导入 YDK 来认出你的自组卡组',
+         '① 在这个网站上传卡组截图（游戏里「编辑牌组」界面截一张即可）\n'
+         '② 识别完成后点导出，得到 .ydk 文件\n'
+         '③ 回到本软件：卡组页 →「导入 YDK」→ 选中那个文件'),
     )
 
     def __init__(self, parent=None):
@@ -2425,7 +2434,9 @@ class CardsLinksPage(QWidget):
                        '（离线），点候选拿卡 id 跳 ygocdb。'), 'muted')
         note.setWordWrap(True)
         lay.addWidget(note)
-        for title, url, desc in self.LINKS:
+        for item in self.LINKS:
+            title, url, desc = item[0], item[1], item[2]
+            steps = item[3] if len(item) > 3 else ''
             link = QLabel('<a href="%s">%s</a>' % (url, tr(title)))
             link.setTextFormat(Qt.RichText)
             link.setOpenExternalLinks(True)
@@ -2441,6 +2452,12 @@ class CardsLinksPage(QWidget):
             d = _lab('%s · %s' % (url, tr(desc)), 'muted', size=theme.PAGE_F_SMALL)
             d.setWordWrap(True)
             lay.addWidget(d)
+            if steps:
+                st = _lab(tr(steps), 'muted', size=theme.PAGE_F_SMALL)
+                st.setWordWrap(True)
+                #: 步骤用左边距缩进，跟说明文字区分开（不新造颜色）
+                st.setContentsMargins(theme.S_LG, 0, 0, 0)
+                lay.addWidget(st)
         lay.addStretch(1)
 
 class DashboardWindow(QWidget):
@@ -2460,7 +2477,8 @@ class DashboardWindow(QWidget):
     def __init__(self, on_pick_deck=None, loader=None,
                  on_pick_result=None, analysis_loader=None, tier_loader=None,
                  banlist_loader=None, deckview_loader=None,
-                 on_fetch_decks=None, script_runner_factory=None,
+                 on_fetch_decks=None, on_import_ydk=None,
+                 script_runner_factory=None,
                  opp_deck_images=None, storage=None,
                  collector_loader=None, export_saver=None,
                  export_loader=None,
@@ -2473,7 +2491,9 @@ class DashboardWindow(QWidget):
         self._tier_loader = tier_loader
         self._banlist_loader = banlist_loader
         self._deckview_loader = deckview_loader
-        self._on_fetch_decks = on_fetch_decks              # Q17（app 侧接）
+        self._on_fetch_decks = on_fetch_decks
+        #: 导入 YDK -> 存卡组指纹（2026-10-28；app 侧接）
+        self._on_import_ydk = on_import_ydk
         #: 悬浮窗「隐藏某列」改了 -> 通知 app 让它重排（用户 2026-10-17 要**实时**生效）
         self._on_floating_layout_changed = on_floating_layout_changed
         #: 「卡组名管理」页签的卡组图解析（`(名字) -> 路径`；app 侧给 `DeckImages.resolve`）
@@ -2651,6 +2671,10 @@ class DashboardWindow(QWidget):
                 page.saved.connect(self._reload_deckview)   # 覆盖表改了 → 重取
                 if callable(self._on_fetch_decks):
                     page.fetch_requested.connect(self._on_fetch_decks)
+                #: ★ 导入 YDK -> 存卡组指纹（2026-10-28）
+                if callable(self._on_import_ydk):
+                    page.import_ydk_requested.connect(
+                        lambda _c=False: self._on_import_ydk(self))
                 self.pages[key] = page
                 self.stack.addWidget(page)
                 continue

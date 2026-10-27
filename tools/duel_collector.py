@@ -67,6 +67,8 @@ from core import modes as _M
 from core import paths
 from core.app_service import DuelSessionTracker, EV_DUEL_END, EV_DUEL_START
 from core.memread import record_capture as rc
+from core.memread.current_view import (find_manager_typeinfo,
+                                       read_current_view)
 from core.memread.end_message import (EndMessageReader, arbitrate_result,
                                       default_game_dir, is_junk_texts,
                                       make_record, result_from_duel_code,
@@ -2247,6 +2249,9 @@ class Runtime(Hooks):
         self.dc_ti = 0
         self.ctrl_ti = 0
         self.ctrl_fields = None
+        #: 视图栈管理器 TypeInfo（`core.memread.current_view`，2026-10-28）。
+        #: ⚠️ 全内存扫描很贵（3–10 秒），**必须缓存**，只在 attach 时查一次。
+        self.cw_ti = 0
         self.em_reader = EndMessageReader(game_dir=game_dir)
         self._deck_watch = None      # 编辑界面卡组观察者（懒建；attach 时重建）
         self._peak_watch = None      # 巅峰 own-deck 观察者（懒建；同上）
@@ -2314,6 +2319,9 @@ class Runtime(Hooks):
             ctis = find_typeinfo(proc, self.mirror, self.tbl,
                                  'YgomGame.Duel', 'DuelLogController')
             self.ctrl_ti = ctis[0] if ctis else 0
+            # 视图栈管理器（可选增强：定位不到不影响采集主干）
+            self.cw_ti = find_manager_typeinfo(
+                proc, self.mirror, self.tbl)
         except Exception as e:                               # noqa: BLE001
             # 记下**具体哪一步**（异常类型 + 文本），别只留一个 False
             self.last_attach_error = '%s: %s' % (type(e).__name__, e)
@@ -2346,6 +2354,7 @@ class Runtime(Hooks):
         self.sp = self.pid = None
         self.mirror = self.tbl = None
         self.engine_ti = self.dc_ti = self.ctrl_ti = 0
+        self.cw_ti = 0
 
     # -- Hooks 实现 --
     def proc(self):
@@ -2672,9 +2681,23 @@ class Runtime(Hooks):
                 self.log('⚠️ --emit-state 连续 30 拍读帧失败（见前序日志）')
             return None
 
+    def read_current_view(self):
+        """当前界面（视图栈）。读不到给 None —— 只是增强，不算采集失败。
+
+        ⚠️ `cw_ti` 是 attach 时缓存的全内存扫描结果，**这里不再重扫**。
+        """
+        if not (self.sp and self.mirror and self.cw_ti):
+            return None
+        try:
+            cv = read_current_view(self.sp, self.mirror, cw_ti=self.cw_ti)
+            return cv.to_dict() if cv is not None else None
+        except Exception:
+            return None
+
     def write_duel_state_file(self, frame):
         os.makedirs(os.path.dirname(EMIT_STATE_PATH), exist_ok=True)
-        data = {'at': now_str(), 'state': frame}
+        data = {'at': now_str(), 'state': frame,
+                'view': self.read_current_view()}
         with open(EMIT_STATE_PATH, 'w', encoding='utf-8',
                   newline='') as f:
             json.dump(data, f, ensure_ascii=False)

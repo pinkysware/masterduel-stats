@@ -158,6 +158,8 @@ class DecksPage(QWidget):
 
     #: 点了「获取新卡组名」（Q17）—— app 侧接
     fetch_requested = Signal()
+    #: 点了「导入 YDK」（卡组指纹）—— app 侧接（弹文件框 + 存指纹）
+    import_ydk_requested = Signal()
     #: 构成页签里换了卡组（参数 = 站内英文名）—— 窗口据此重新取数
     deck_selected = Signal(str)
     #: 点了「← 回 Tier 表」
@@ -186,6 +188,18 @@ class DecksPage(QWidget):
         self.btn_fetch.setMinimumWidth(130)
         self.btn_fetch.clicked.connect(lambda _c=False: self.fetch_requested.emit())
         head.addWidget(self.btn_fetch)
+        #: ★ 2026-10-28：导入 YDK 建「卡组指纹」——用于识别我方自组卡组
+        #: （参照库里没有的冷门卡组）。文件可由 get-deck.com 从卡组图导出。
+        self.btn_import_ydk = QPushButton(tr('导入 YDK'))
+        self.btn_import_ydk.setFont(widgets.font(theme.F_BODY))
+        self.btn_import_ydk.setFixedHeight(
+            self.btn_import_ydk.fontMetrics().height() + 14)
+        self.btn_import_ydk.setMinimumWidth(110)
+        self.btn_import_ydk.setToolTip(tr(
+            '导入 .ydk 文件，让软件认出你的自组卡组（参照库里没有的）'))
+        self.btn_import_ydk.clicked.connect(
+            lambda _c=False: self.import_ydk_requested.emit())
+        head.addWidget(self.btn_import_ydk)
         self._tabs_group = QButtonGroup(self)
         self._tabs_group.setExclusive(True)
         self.tab_buttons = {}

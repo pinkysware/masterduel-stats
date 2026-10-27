@@ -105,6 +105,18 @@ python tools\duel_ui.py            # 悬浮窗 + 看板
 * 除少数显式点击的联网操作（官网查卡、公开榜单抓取）外，工具不联网；
   战绩库、对局记录、个人状态全部留在本机 `data/`。
 
+## 致谢
+
+本工具的自组卡组识别依赖外部卡组截图识别服务，特此致谢：
+
+* **[GetDeck](https://github.com/Souls-R/getdeck)**（[get-deck.com](https://get-deck.com)）——
+  Master Duel 卡组截图识别、卡组码生成与分享工具。
+  上传卡组截图后自动识别每张卡，可一键生成卡组码与分享图。
+  **所有识别都在你的浏览器本地完成，图片不会被上传**（技术栈：Next.js / React /
+  ONNX Runtime Web / Rust WebAssembly / pHash；YOLO 检测卡位 + 感知哈希比对本地卡库）。
+  本工具的用法：在 GetDeck 识别后导出 `.ydk`，再通过「卡组 → 导入 YDK」
+  存成卡组指纹，之后就能认出你自组（不在参照库里）的卡组。
+
 ## 声明
 
 * 非官方粉丝工具，与 KONAMI 无关；游戏内素材（卡绘、图标）版权归

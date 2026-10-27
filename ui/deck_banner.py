@@ -118,6 +118,11 @@ class DeckConfirmBanner(QWidget):
         self.title = widgets.label(tr('我方卡组：'), 'body')
         lay.addWidget(self.title)
 
+        #: 匹配界面提示位（「已识别」/「未识别」）—— 平时隐藏
+        self._notice = widgets.label('', 'body')
+        self._notice.hide()
+        lay.addWidget(self._notice)
+
         self._img_path = None
         self._known = False
         #: 卡图 = **按键**（点了弹卡组选择器，手动换我方卡组）
@@ -164,6 +169,23 @@ class DeckConfirmBanner(QWidget):
         self.hide()                       # 构造完默认收起（update_state 决定显隐）
 
     # ------------------------------------------------------------ 状态
+    def set_notice(self, text: str, color: str, hint_key: str = '') -> None:
+        """在标题后面挂一段彩色提示（「已识别」绿 / 「未识别」黄）。
+
+        ⚠️ **不改 `label`**（那个是占位，用户已定「不带卡组名」），
+           单独一个 QLabel，避免与 `update_state` 的文案互相覆盖。
+        """
+        self._notice.setText(text or '')
+        if text:
+            self._notice.setStyleSheet('color: %s;' % color)
+            self._notice.show()
+        else:
+            self._notice.hide()
+            self._notice.setToolTip('')
+        if hint_key:
+            # tooltip 给完整说明（i18n key；缺翻译时 tr() 原样返回 key）
+            self._notice.setToolTip(tr(hint_key))
+
     def set_visible(self, on: bool) -> None:
         """显/隐并**通知浮窗**（setVisible 不发事件，得自己喊一声）。"""
         changed = on != self.isVisible()

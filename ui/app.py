@@ -689,6 +689,7 @@ class MasterDuelUiApp(object):
             return
         self._auto_show_tick()             # 游戏启动 → 自动弹悬浮窗（2026-10-05）
         self._collector_guard_tick()       # 采集器死了 → 拉起来（2026-10-24）
+        self._matching_tick()              # 进匹配界面 → 检查我方卡组（2026-10-28）
         p = ui_state.probe(self.storage)
         key = p.key() if p is not None else None
         #: ★ 多账号（2026-10-03）：账号切换也触发全量刷新（探针键不含它）
@@ -727,6 +728,127 @@ class MasterDuelUiApp(object):
             ensure_collector()
         except Exception:                                # noqa: BLE001
             pass
+
+    # ----------------------------------------------------- 匹配界面提示
+    def _matching_tick(self) -> None:
+        """进匹配界面 -> 刷一次我方卡组横幅 + 弹状态提示（用户 2026-10-28）。
+
+        对齐 untapped 的 DeckStatus 机制：**只在匹配界面**提示，
+        识别成功弹「已识别」、失败弹「未识别 + 怎么办」。
+
+        数据源 = 采集器写的 `data/archive/duel_state.json` 的 `view` 字段
+        （`core.memread.current_view`，2026-10-28 实机打通）。
+        ⚠️ 采集器没跑 / 没开 `--emit-state` 时这个字段不存在 —— 静默跳过，
+           不报错（用户没开就是没这个功能，不是 bug）。
+        """
+        mon = getattr(self, '_matching_mon', None)
+        if mon is None:
+            from core.matching_monitor import MatchingMonitor
+            mon = self._matching_mon = MatchingMonitor()
+        view = self._read_duel_view()
+        if view is None:
+            return
+        events = mon.feed(view.get('in_matching'))
+        if not events:
+            return
+        from core.matching_monitor import EV_ENTER
+        if EV_ENTER in events:
+            self._on_enter_matching()
+
+    @staticmethod
+    def _read_duel_view():
+        """读 `duel_state.json` 的 `view` 字段；读不到给 None（**不抛**）。
+
+        ⚠️ 文件每 2 秒被采集器覆盖写，读到半截 JSON 是**正常现象** ——
+           那种情况返回 None，下一拍再读。
+        """
+        try:
+            import json as _json
+            from core import paths as _paths
+            path = _paths.data_path('archive', 'duel_state.json')
+            with open(path, encoding='utf-8') as f:
+                data = _json.load(f)
+            v = data.get('view')
+            return v if isinstance(v, dict) else None
+        except Exception:                                # noqa: BLE001
+            return None
+
+    def _on_enter_matching(self) -> None:
+        """刚进入匹配界面：**后台**读一次我方卡组，然后按结果提示。
+
+        ⚠️ **必须异步**（用户 2026-10-28 实报「点刷新卡 10 秒」，同源）：
+           内存定位 3.75s（扫 metadata 镜像）+ 6.11s（扫类名）远超一次
+           tick 能接受的时间；同步跑会把 UI 主线程冻住。真读数据只要 0.01s。
+
+        做法与「刷新」按钮一致：QProcess 跑 `core.memread.my_deck_live`
+        的 CLI，完成回调再提示（**不引入线程**）。
+
+        读失败不弹窗（匹配界面里弹窗很打扰），回落状态文件。
+        """
+        proc = getattr(self, '_live_proc', None)
+        if proc is not None and proc.state() != QProcess.NotRunning:
+            return                       # 上一次还在跑：等它回调
+        from PySide6.QtCore import QProcess, QProcessEnvironment
+        import sys as _sys
+
+        # ⚠️ MasterDuelUiApp 不是 QObject（纯 Python 类），不能当 QProcess 的
+        #    parent —— 挂到 self.win（QWidget，是 QObject）上，生命周期一致。
+        p = QProcess(self.win)
+        self._live_proc = p
+        self._live_out = b''
+
+        def _on_read():
+            try:
+                self._live_out += bytes(p.readAllStandardOutput())
+            except Exception:                            # noqa: BLE001
+                pass
+
+        def _on_finish(_code, _status):
+            raw = self._live_out.decode('utf-8', 'replace').strip()
+            self._live_proc = None
+            state = None
+            try:
+                import json as _json
+                rec = _json.loads(raw.splitlines()[-1]) if raw else {}
+                if rec.get('ok') and rec.get('name'):
+                    from core import my_deck
+                    state = my_deck.load()
+            except Exception:                            # noqa: BLE001
+                state = None
+            if state is None:
+                try:
+                    from core import my_deck
+                    state = my_deck.load()
+                except Exception:                        # noqa: BLE001
+                    state = {}
+            try:
+                self.win.refresh_deck_banner()
+            except Exception:                            # noqa: BLE001
+                pass
+            try:
+                self.win.announce_deck_status(state)
+            except Exception as _e:                      # noqa: BLE001
+                # ⚠️ 不静默：UI 回调吞异常踩过坑（ui-callback-swallow-exceptions）
+                print('[matching] 卡组状态提示失败：%r' % (_e,))
+
+        p.readyReadStandardOutput.connect(_on_read)
+        p.finished.connect(_on_finish)
+        try:
+            env = QProcessEnvironment.systemEnvironment()
+            env.insert('PYTHONIOENCODING', 'utf-8')
+            env.insert('PYTHONUTF8', '1')
+            p.setProcessEnvironment(env)
+            from core import paths as _paths
+            p.setWorkingDirectory(_paths.PROJ)
+            p.start(_sys.executable, ['-m', 'core.memread.my_deck_live'])
+        except Exception as _e:                          # noqa: BLE001
+            self._live_proc = None
+            print('[matching] live 读取启动失败：%r' % (_e,))
+            try:
+                from core import my_deck
+                self.win.announce_deck_status(my_deck.load())
+            except Exception:                            # noqa: BLE001
+                pass
 
     def _auto_show_tick(self) -> None:
         """游戏启动 → 自动弹悬浮窗（设置 ``ui/auto_show_floating``，默认开）。
@@ -1103,7 +1225,7 @@ class MasterDuelUiApp(object):
     # ------------------------------------------------------ S6 统计窗
     # ---------------------------------------------------------- 看板（S7）
     def floating_relayout(self) -> None:
-        """悬浮窗按新设置**重排列**（隐藏了哪几列就立刻生效，不���重启）。
+        """悬浮窗按新设置**重排列**（隐藏了哪几列就立刻生效，不用重启）。
 
         窗口宽下限也跟着变（列少了 -> 窗口可以更窄），所以先按新设置重新
         定尺寸、再强制走一遍 `_relayout_columns`（它的「列宽没变就跳过」缓存
@@ -1218,6 +1340,7 @@ class MasterDuelUiApp(object):
                 banlist_loader=self.dashboard_banlist_loader(),
                 deckview_loader=self.dashboard_deckview_loader(),
                 on_fetch_decks=self.fetch_new_decks_dialog,      # Q17
+                on_import_ydk=self.on_import_ydk,                # 卡组指纹（2026-10-28）
                 opp_deck_images=self._deck_images().resolve,     # 卡组名管理页签的行图
                 storage=self.storage,                            # 换图写库用
                 collector_loader=self.dashboard_collector_status,  # 标题栏采集器状态
@@ -1427,6 +1550,32 @@ class MasterDuelUiApp(object):
         return load
 
     # ------------------------------------------------- Q14 / Q17（卡组页两个入口）
+    def on_import_ydk(self, parent=None) -> None:
+        """导入 YDK -> 存成「卡组指纹」（用户 2026-10-28）。
+
+        指纹的用途：我方用了参照库里没有的自组卡组时，靠它认出来
+        （判定含容错，见 `core.deck_fingerprint`）。
+        文件来源：get-deck.com 从卡组截图导出（查卡页有链接）/ 游戏内复制。
+        """
+        from PySide6.QtWidgets import QMessageBox
+        from ui.ydk_import import YdkImportDialog
+        try:
+            dlg = YdkImportDialog(parent or self.win)
+            if dlg.exec() != dlg.Accepted:
+                return
+            from core import deck_fingerprint as fp
+            path = fp.save_fingerprint(dlg.result_name, dlg.result_ids,
+                                       source='ydk')
+            QMessageBox.information(
+                parent or self.win, tr('导入 YDK'),
+                tr('已保存卡组指纹「%s」（%d 张卡）。\n以后识别我方卡组时会比对它。')
+                % (dlg.result_name, len(dlg.result_ids)))
+            print('[fingerprint] saved %r -> %s' % (dlg.result_name, path))
+        except Exception as _e:                          # noqa: BLE001
+            print('[fingerprint] 导入失败：%r' % (_e,))
+            QMessageBox.warning(parent or self.win, tr('导入 YDK'),
+                                tr('导入失败：') + str(_e))
+
     def fetch_new_decks_dialog(self) -> None:
         """Q17「获取新卡组名」（卡组页那个按钮）—— 复用 `fetch_new_decks()` 那条链路。"""
         from ui.decks_page import FetchDecksDialog
