@@ -177,6 +177,16 @@ def diff_summary(current_ids: Sequence, fingerprint_ids: Sequence) -> Dict[str, 
 #: 指纹目录：`data/deck_fingerprints/<卡组名>.json`。
 #: 走 `paths.data_path()`（安装版在 Program Files 时数据会落到可写目录）。
 def _dir():
+    """指纹目录。
+
+    ⚠️ `paths.DATA_DIR` 是 **import 期定格的常量**，测试改 `MD_DATA_DIR`
+    对它无效（所有测试都写进真 `data/`，互相污染）。所以这里支持
+    `MD_FINGERPRINT_DIR` 直接覆盖 —— 单测用它指向临时目录。
+    """
+    import os
+    env = os.environ.get('MD_FINGERPRINT_DIR')
+    if env:
+        return env
     from core import paths
     return paths.data_path('deck_fingerprints')
 

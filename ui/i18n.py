@@ -186,6 +186,10 @@ _T = {
     '官网查卡（Konami 数据库）': ('Official DB (Konami)', '公式DB（Konami）'),
     '百鸽查卡（ygocdb）': ('ygocdb', 'ygocdb'),
     '导入 YDK': ('Import YDK', 'YDKを読み込む'),
+    '导入 .ydk 文件，让软件认出你的自组卡组（换 15% 以内的卡仍认得出）': (
+        'Import a .ydk so the app recognises your own deck '
+        '(still matched after swapping up to ~15% of the cards)',
+        '.ydk を読み込み、自分のデッキを認識させます（15%以内の入れ替えなら一致）'),
     '导入': ('Import', '読み込む'),
     '浏览…': ('Browse…', '参照…'),
     '选择一个 .ydk 文件…': ('Pick a .ydk file…', '.ydk ファイルを選択…'),

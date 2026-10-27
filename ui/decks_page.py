@@ -230,6 +230,9 @@ class DecksPage(QWidget):
                                          image_resolver=image_resolver,
                                          storage=self._storage)
         self.names_page.saved.connect(self._on_names_saved)
+        #: ★ 2026-10-28：「自定义卡组名」行右侧的 [导入 YDK] —— 逐层转给宿主
+        self.names_page.import_ydk_requested.connect(
+            self.import_ydk_requested.emit)
         #: 页签 2 = Tier 表（从「查询」搬进来的，`ui/tier_page.py` 原样内嵌）——
         #: 点芯片 → 直接切到本页的「卡组构成」页签（不再是跨页跳）
         self.tier_page = TierPage()

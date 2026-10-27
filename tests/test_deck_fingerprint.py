@@ -272,17 +272,21 @@ class FingerprintStorageTest(unittest.TestCase):
     """指纹落盘/读取/批量匹配（`data/deck_fingerprints/<名字>.json`）。"""
 
     def setUp(self):
+        #: ⚠️ 用 `MD_FINGERPRINT_DIR` 而不是 `MD_DATA_DIR` ——
+        #: `paths.DATA_DIR` 是 **import 期定格的常量**，改 `MD_DATA_DIR`
+        #: 对已导入的模块无效，测试会写进真 `data/deck_fingerprints/`
+        #: 并互相污染（实测踩过：A.json / 我的卡组.json 落进了真库）。
         import tempfile
         self.tmp = tempfile.mkdtemp()
-        self._old = os.environ.get('MD_DATA_DIR')
-        os.environ['MD_DATA_DIR'] = self.tmp
+        self._old = os.environ.get('MD_FINGERPRINT_DIR')
+        os.environ['MD_FINGERPRINT_DIR'] = self.tmp
 
     def tearDown(self):
         import shutil
         if self._old is None:
-            os.environ.pop('MD_DATA_DIR', None)
+            os.environ.pop('MD_FINGERPRINT_DIR', None)
         else:
-            os.environ['MD_DATA_DIR'] = self._old
+            os.environ['MD_FINGERPRINT_DIR'] = self._old
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_save_and_load(self):

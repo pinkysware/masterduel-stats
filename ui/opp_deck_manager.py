@@ -58,9 +58,10 @@ NAME_W = 180
 #: 缩略图边长（与 `widgets.thumb_label` 的默认一致）
 THUMB = 22
 #: 三列宽度比例（中文名 / 别名 / 日文名）
-#: ⚠️ 2026-09-21 用户：「缩小中文名的列宽」—— 中文名两个字就够，别名常一串
-#:    （`METABEAT / Barrier Statue / 深渊`），所以 3:4:3 → **2:5:3**。
-COL_STRETCH = (2, 5, 3)
+#: 2026-09-21 用户：「缩小中文名的列宽」—— 3:4:3 → 2:5:3。
+#: ★ 2026-10-28 用户：「缩减别名列的列宽」—— 别名给到 5 太宽（把日文名挤窄了），
+#:    改 **2:4:3**。改这里会同时改表头与所有行（两处共用本常量）。
+COL_STRETCH = (2, 4, 3)
 #: 「删除」按钮的宽度（表头与行共用，保证对齐；0 = 那一行没有按钮）
 DEL_W = 28
 #: 编辑框的内边距（**必须比 QSS 的 `6px 10px` 小** —— 那是给大控件用的，
@@ -742,6 +743,8 @@ class NewDeckRow(QWidget):
 
     #: 点了「添加」（参数 = 名字）
     submitted = Signal(str)
+    #: 点了「导入 YDK」（建卡组指纹，2026-10-28）—— 由 manager 转给宿主
+    import_ydk_requested = Signal()
 
     def __init__(self, add_w: int = 0, parent=None):
         super().__init__(parent)
@@ -768,6 +771,19 @@ class NewDeckRow(QWidget):
         self.btn_add.setFocusPolicy(Qt.NoFocus)   # 别抢输入框焦点
         self.btn_add.clicked.connect(self._on_return)
         hl.addWidget(self.btn_add)
+        #: ★ 2026-10-28 用户：「在自定义卡组的右侧添加导入 ydk 按钮」——
+        #: 与「添加」并排。它建的是**卡组指纹**（判断我方卡组是不是这副），
+        #: 与「添加」把名字写进覆盖表是两件不同的事。
+        self.btn_ydk = QPushButton(tr('导入 YDK'))
+        self.btn_ydk.setFont(widgets.font(theme.F_BODY_SM))
+        self.btn_ydk.setFixedHeight(_edit_h())
+        self.btn_ydk.setMinimumWidth(76)
+        self.btn_ydk.setCursor(Qt.PointingHandCursor)
+        self.btn_ydk.setFocusPolicy(Qt.NoFocus)
+        self.btn_ydk.setToolTip(tr(
+            '导入 .ydk 文件，让软件认出你的自组卡组（换 15% 以内的卡仍认得出）'))
+        self.btn_ydk.clicked.connect(self.import_ydk_requested.emit)
+        hl.addWidget(self.btn_ydk)
         if add_w:                    # 与表头 / 其它行的「隐藏」列对齐
             hl.addWidget(_spacer(add_w))
         self._on_text('')
@@ -805,6 +821,8 @@ class OppDeckManager(QWidget):
 
     #: 已成功写盘（（可选）进库也成功）—— 调用方据此刷新界面
     saved = Signal()
+    #: 点了「导入 YDK」（建卡组指纹）—— 逐层转给宿主，由 app 弹文件框
+    import_ydk_requested = Signal()
 
     def __init__(self, csv_path=None, parent=None, runner_factory=None,
                  image_resolver=None, storage=None, custom_names=None,
@@ -945,6 +963,9 @@ class OppDeckManager(QWidget):
         hide_w = self.rows_ui[0].hidden.sizeHint().width() if self.rows_ui else 0
         self.new_row = NewDeckRow(add_w=hide_w)
         self.new_row.submitted.connect(self.add_custom)
+        #: 转发「导入 YDK」—— 由 `DecksPage` 接，最终到 app 弹文件框
+        self.new_row.import_ydk_requested.connect(
+            self.import_ydk_requested.emit)
         self.col.insertWidget(0, self.new_row)
 
         #: 我加过、但不在覆盖表里的自定义卡组（只读行；卡图可点）
@@ -1020,9 +1041,23 @@ class OppDeckManager(QWidget):
         item = OppDeckRow(row, self.idx, img=self._default_img_for(name))
         item.deleted.connect(self.remove_row)
         item.image_clicked.connect(self.set_deck_image)
+        #: ★ BUG 修复（2026-10-28 用户实报「保存后自定义卡组和非自定义混在一起，
+        #:   自定义标志会消失」）——
+        #:   原来这里 `self.rows_ui.append(item)` 把新条目**直接塞进站内组**
+        #:   （`rows_ui` = 站内 + 分隔行 + 自定义），于是：
+        #:   ① 它永远显示在「—— 自定义卡组 ——」分隔线**上方**；
+        #:   ② `custom_csv_ui` 里没有它 → 保存后再分组也找不回来。
+        #:   新加的名字**必定不在站内名单**（`add_custom` 的语义就是建自定义条目），
+        #:   所以放进 `custom_csv_ui`，并显式插到分隔线之后。
+        self.custom_csv_ui.append(item)
         self.rows_ui.append(item)
-        # 插到 stretch 之前、列表末尾
-        self.col.insertWidget(self.col.count() - 1, item)
+        self.custom_divider.setVisible(True)
+        #: 插到**分隔行之后**（`indexOf` 拿到分隔行的实际位置，避免算错）
+        pos = self.col.indexOf(self.custom_divider)
+        if pos < 0:
+            self.col.insertWidget(self.col.count() - 1, item)
+        else:
+            self.col.insertWidget(pos + 1, item)
         self._apply_filter(self.edit_search.text())
         self.status.setText(tr('已加「%s」—— 点「保存」写进覆盖表并贴进库') % name)
         return True
@@ -1385,7 +1420,15 @@ class OppDeckManager(QWidget):
             self.rows_ui.append(item)
         if pending and self.custom_label.parent() is not None:
             self.custom_label.setVisible(False)
-        self.custom_divider.setVisible(False)
+        #: ★ BUG 修复（2026-10-28 用户实报「保存后自定义卡组和非自定义混在一起，
+        #:   自定义标志消失」）：原来是**无条件** `setVisible(False)` ——
+        #:   只要点过一次保存，分隔行就永远收起来，于是自定义条目与站内条目
+        #:   在视觉上混成一片，用户再也分不清哪些是自己加的。
+        #:
+        #:   正确语义：**分隔行跟着「还有没有自定义条目」走** ——
+        #:   表里仍存在自定义行（`custom_csv_ui` 非空）就必须显示，
+        #:   只有全部转正/删除后才收起。
+        self.custom_divider.setVisible(bool(self.custom_csv_ui))
         try:
             # ★ `deck_csv.write` 自 BUG-B2A-03 起**不再抛**（原子写失败返回 False），
             #   所以这里必须看返回值：失败要提示并 return，不能继续起 `--cn-only`
