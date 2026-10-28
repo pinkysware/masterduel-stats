@@ -23,28 +23,46 @@
     A = 当前卡组卡集合（内存读到，含份数）
     B = YDK 卡集合（含份数）
 
-    # 1) 主判据：卡种集合的 Jaccard（份数不影响"是不是这副"）
-    J = |A∩B| / |A∪B|
+    # 1) 主判据：**覆盖率**（不是 Jaccard！）
+    overlap = |A∩B| / min(|A|, |B|)
 
     # 2) 关键卡保底：YDK 里的"核心卡"命中率
     #    "核心卡" = 在 YDK 里份数 >= CORE_COPIES 的卡（3 张 = 满编主轴）
     #    防止「两副牌共享全部手坑、主轴完全不同」被判成同一副
-    K = |A∩core(B)| / |core(B)|
+    K = |A∩core(B)| / |core(B)|        （core 为空时 K 恒 1.0 —— 保底不生效）
 
-    # 3) 判同：J >= JACCARD_MIN **且** K >= CORE_MIN
-    #    （core(B) 为空时只看 J —— 没有满编卡的卡组，比如纯额外轴）
+    # 3) 判同：overlap >= OVERLAP_MIN **且** K >= CORE_MIN
 
-阈值怎么来的（**必须实机标定，这里给的是起始值**）
+为什么分母是 min(|A|,|B|) 而不是并集（2026-10-28 实测 + 审查意见）
+------------------------------------------------------------------
+「用户会替换**或增减**卡片」是硬要求。用并集做分母时，用户**加**卡会被
+二次惩罚（分子不涨、分母还涨）：
+
+* 换 8 张（55 张 / 35 种的卡组）：覆盖率 = 27/35 = 0.77  ✅ 通过
+  同一场景的 Jaccard = 27/(35+8) = 0.63  ❌ 会被误拒
+* 加 5 张：覆盖率不变（分母取较小集合 = YDK 那份），✅ 通过
+  Jaccard 会掉 —— 这就是不用并集的理由。
+
+阈值表 —— **基于「55 张 / 35 种」的真实卡组结构**
 --------------------------------------------------
-用「同一副牌改 3~5 张」与「不同卡组」两类样本反推：
+⚠️ 覆盖率的分母是**卡种数**，不是张数。真实卡组 55 张只有 ~35 种
+（40 主里常有十来张是 3 份），所以同一组数字在「55 张各 1 份」的合成数据上
+会明显不同（后者 55 种，分母更大、覆盖率更低）。**引用这组数时必须写明基准**：
 
-* 同副改 3 张（55 张）：J ≈ 52/58 ≈ 0.90，K ≈ 1.0（没动核心）
-* 同副改 8 张（约 15%）：J ≈ 47/63 ≈ 0.75，K ≈ 0.9
-* 两副同 archetype 混不同轴：J ≈ 0.6~0.7，K 常掉到 0.5 以下
-* 完全不同的卡组：J < 0.2
+| 改动 | 覆盖率（35 种基准） | 判定 |
+|---|---|---|
+| 换 3 张 | 0.914 | ✅ |
+| 换 5 张 | 0.857 | ✅ |
+| **换 8 张** | **0.771** | ✅ |
+| 换 12 张 | 0.657 | ❌ |
+| 换 15 张 | 0.571 | ❌ |
+| 换 20 张 | 0.429 | ❌ |
+| 加 / 减 5 张 | 1.000 | ✅ |
 
-所以 ``JACCARD_MIN = 0.72`` / ``CORE_MIN = 0.60`` 能分开「同副微调」与「不同卡组」。
-⚠️ 这两个数是**起点**，要用用户的真实卡组实测校准（见计划 §10.6）。
+即 ``OVERLAP_MIN = 0.72`` 的分界线在「**换掉 35 种里的 9~10 种**」附近。
+⚠️ 这是**起点值**，要用用户的真实 YDK 实测校准（见计划 §10.6）。
+⚠️ 与「两副共享手坑的不同卡组」要能分开 —— 那种情况覆盖率常到 0.5~0.7，
+靠 `CORE_MIN` 拦（主轴满编卡一张不中）。
 
 只做判定，不写库
 ----------------
@@ -56,9 +74,14 @@ from __future__ import annotations
 from collections import Counter
 from typing import Dict, Iterable, List, NamedTuple, Optional, Sequence
 
-#: 主判据阈值：卡种集合 Jaccard 下限。
-#: 起点 0.72 —— 同副牌换 15% 的卡仍然过；两副共享手坑的不同卡组会被拒。
-JACCARD_MIN = 0.72
+#: 主判据阈值：**覆盖率**下限。
+#: ⚠️ 名字曾经叫 `JACCARD_MIN` —— **名不副实**（2026-10-28 审查意见 P2-3）：
+#: 本模块算的是「较小集合的命中比例」（覆盖率），不是 Jaccard（并集做分母）。
+#: 两者差别很大：55 张 / 35 种的卡组换 8 张，覆盖率 0.77 会通过，
+#: Jaccard 只有 0.53 会被拒。用错名字会让下一个人把阈值当 Jaccard 调紧。
+#: `JACCARD_MIN` 保留为**废弃别名**（防外部引用断掉），新代码用 `OVERLAP_MIN`。
+OVERLAP_MIN = 0.72
+JACCARD_MIN = OVERLAP_MIN       #: 废弃别名，等价于 :data:`OVERLAP_MIN`
 
 #: 关键卡保底阈值：YDK 里「满编卡」（份数 >= CORE_COPIES）的命中率下限。
 CORE_MIN = 0.60
@@ -75,15 +98,23 @@ class Match(NamedTuple):
     """一次比对的结论。``matched=False`` 时 ``reason`` 说明为什么。"""
 
     matched: bool
-    jaccard: float = 0.0          # 卡种覆盖度（较小集合的命中比例）
+    #: 卡种**覆盖率**（较小集合的命中比例）。
+    #: ⚠️ 字段名曾是 ``jaccard`` —— 名不副实（2026-10-28 审查意见 P2-3），
+    #: 已改 ``overlap``；``jaccard`` 保留为只读属性做兼容。
+    overlap: float = 0.0
     core_ratio: float = 1.0       # 关键卡命中率（YDK 无满编卡时恒 1.0）
     only_current: int = 0         # 只在当前卡组里（= 用户后加的卡）
     only_fingerprint: int = 0     # 只在 YDK 里（= 用户去掉的卡）
     shared: int = 0
     reason: str = ''
 
+    @property
+    def jaccard(self) -> float:
+        """**废弃别名**（旧名把覆盖率叫成了 Jaccard）。新代码用 :attr:`overlap`。"""
+        return self.overlap
+
     def to_dict(self) -> dict:
-        return {'matched': self.matched, 'jaccard': round(self.jaccard, 3),
+        return {'matched': self.matched, 'overlap': round(self.overlap, 3),
                 'core_ratio': round(self.core_ratio, 3),
                 'only_current': self.only_current,
                 'only_fingerprint': self.only_fingerprint,
@@ -107,7 +138,7 @@ def core_ids(fingerprint_ids: Sequence, copies: int = CORE_COPIES) -> List[str]:
 
 
 def compare(current_ids: Sequence, fingerprint_ids: Sequence,
-            *, jaccard_min: float = JACCARD_MIN,
+            *, overlap_min: float = OVERLAP_MIN,
             core_min: float = CORE_MIN,
             core_copies: int = CORE_COPIES,
             min_current: int = MIN_CURRENT_CARDS) -> Match:
@@ -143,22 +174,28 @@ def compare(current_ids: Sequence, fingerprint_ids: Sequence,
     smaller = min(len(a), len(b))
     overlap = (len(shared) / smaller) if smaller else 0.0
 
+    #: ⚠️ **`core` 为空时保底不生效**（2026-10-28 审查意见 P2-4）：
+    #: YDK 里一张「满编 3 份」的卡都没有时（限卡环境 / 主轴只放 1~2 张 /
+    #: 纯额外轴），`core_ratio` 直接给 1.0 —— 等于只靠覆盖率判。
+    #: 这是**已知取舍**，不是 bug：那种卡组没有「主轴」这个概念，
+    #: 强行找一个保底判据反而会误拒。`Match.reason` 里也不会因此报错。
+    #: 要收紧的话，方向是「份数 >= 2」或「主卡组前 N 种」，见计划文档。
     core = set(core_ids(fingerprint_ids, core_copies))
     core_ratio = (len(shared & core) / len(core)) if core else 1.0
 
     only_cur = len(a - b)
     only_fp = len(b - a)
 
-    ok = overlap >= jaccard_min and core_ratio >= core_min
+    ok = overlap >= overlap_min and core_ratio >= core_min
     reason = ''
     if not ok:
-        if overlap < jaccard_min:
+        if overlap < overlap_min:
             reason = ('只有 %.0f%% 的卡重合（需要 %.0f%%）'
-                      % (overlap * 100, jaccard_min * 100))
+                      % (overlap * 100, overlap_min * 100))
         else:
             reason = ('关键卡只命中 %.0f%%（需要 %.0f%%）'
                       % (core_ratio * 100, core_min * 100))
-    return Match(True if ok else False, jaccard=overlap,
+    return Match(True if ok else False, overlap=overlap,
                  core_ratio=core_ratio, only_current=only_cur,
                  only_fingerprint=only_fp, shared=len(shared), reason=reason)
 

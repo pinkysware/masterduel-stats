@@ -329,3 +329,48 @@ class UninstallJumpAndPidCheckTest(unittest.TestCase):
                          "from ui import collector_ctl", bat)
         self.assertIn('> "%MD_TMP2%"', bat, 'RUNNING 也要走文件')
 
+
+
+class TestCollectorEmitStateEverywhere(unittest.TestCase):
+    """**所有**拉起采集器的入口都必须带 `--emit-state`（2026-10-28 P1）。
+
+    为什么是硬要求：`--emit-state` 写 `data/archive/duel_state.json`，
+    悬浮窗的「进匹配界面提示卡组识别状态」和将来的游戏内浮层全靠它。
+    **不带 = 那个文件永不生成 = 功能静默失效，且没有任何报错。**
+
+    历史（真踩过）：2026-10-28 只在 `ui/collector_ctl.py` 补了，
+    漏了便携包 `start.bat` —— 便携版用户完全没这个功能，而且
+    `_matching_tick` 的注释把这种情况归成「用户没开，不是 bug」，
+    排障时会被直接排除掉。审查意见《匹配界面卡组提示实施记录》P1 抓到。
+    """
+
+    #: (路径, 是否 build/ 下) —— 四个入口，一个都不能少
+    ENTRIES = (
+        ('start.bat', False),
+        (os.path.join('build', 'launch_installed.bat'), False),
+        (os.path.join('build', 'build_full_zip.py'), False),
+        (os.path.join('ui', 'collector_ctl.py'), False),
+    )
+
+    def test_all_launchers_pass_emit_state(self):
+        missing = []
+        for rel, _ in self.ENTRIES:
+            path = os.path.join(PROJ, rel)
+            if not os.path.exists(path):
+                missing.append('%s（文件不存在）' % rel)
+                continue
+            with open(path, 'rb') as f:
+                raw = f.read().decode('utf-8', 'replace')
+            # 只看真正启动采集器的那些行
+            lines = [ln for ln in raw.splitlines()
+                     if 'duel_collector' in ln and 'start ' in ln.lower()
+                     or ('duel_collector' in ln and "'--minutes'" in ln)]
+            if not lines:
+                continue
+            for ln in lines:
+                if '--emit-state' not in ln and 'emit_state' not in ln:
+                    missing.append('%s: %s' % (rel, ln.strip()[:90]))
+        self.assertEqual(
+            missing, [],
+            '这些启动入口没带 --emit-state，duel_state.json 永不生成 → '
+            '匹配提示/浮层静默失效：\n  ' + '\n  '.join(missing))
