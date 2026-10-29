@@ -54,8 +54,13 @@ def _make_blob(version: int = 31, str_off: int = 0x4000,
     struct.pack_into('<i', buf, 0x0C, 0x0100)
     struct.pack_into('<i', buf, 0x10, 0x2100)     # stringLiteralDataOffset
     struct.pack_into('<i', buf, 0x14, 0x0100)
-    struct.pack_into('<i', buf, 0x18, str_off)    # stringOffset
-    struct.pack_into('<i', buf, 0x1C, str_size)   # stringSize
+    if version >= 39:
+        # v39（Unity 6000.3）：string 表挪到 0x20/0x24，见 il2cpp._HDR_V39
+        struct.pack_into('<i', buf, 0x20, str_off)    # stringOffset
+        struct.pack_into('<i', buf, 0x24, str_size)   # stringSize
+    else:
+        struct.pack_into('<i', buf, 0x18, str_off)    # stringOffset
+        struct.pack_into('<i', buf, 0x1C, str_size)   # stringSize
     return buf
 
 
@@ -117,6 +122,24 @@ class TestHeaderShape(unittest.TestCase):
     def test_too_short(self):
         with self.assertRaises(ValueError):
             MetadataHeader(b'\x00' * 8)
+
+    def test_v39_header_uses_new_layout(self):
+        """v39（Unity 6000.3，2026-10-30 游戏更新实测）string 表在 0x20/0x24。"""
+        buf = _make_blob(version=39, str_off=0x6000, str_size=0x2000)
+        hdr = MetadataHeader(bytes(buf[:64]))
+        self.assertEqual(hdr.version, 39)
+        self.assertEqual(hdr.string_offset, 0x6000)
+        self.assertEqual(hdr.string_size, 0x2000)
+        self.assertTrue(hdr.is_valid)
+        self.assertEqual(hdr.field_offset('stringOffset'), 0x20)
+
+    def test_v39_literal_fields_unchanged(self):
+        """16 字节特征里的 stringLiteral 两组（0x08/0x0C）v39 未挪位 ——
+        所以镜像特征格式两代通用（version 字节本来就不同，那 4 字节是身份）。"""
+        s31 = MetadataHeader(bytes(_make_blob(version=31)[:64])).signature
+        s39 = MetadataHeader(bytes(_make_blob(version=39)[:64])).signature
+        self.assertEqual(s31[8:16], s39[8:16])
+        self.assertNotEqual(s31[4:8], s39[4:8])   # version 字节不同 = 各自身份
 
 
 # --------------------------------------------------- 真实 metadata（有游戏才跑）
@@ -188,6 +211,17 @@ class TestFindMirrorInSelfProcess(unittest.TestCase):
         self.assertEqual(m.string_addr('X', b'\x00X\x00'),
                          0x7FF000000000 + 0x4000 + 1)
         self.assertIsNone(m.string_addr('Nope', b'\x00X\x00'))
+
+    def test_finds_v39_blob(self):
+        """v39 布局的假头部也要能找到（stringOffset 在 0x20）。"""
+        buf = _make_blob(version=39, str_off=0x6000, str_size=0x2000)
+        hdr = MetadataHeader(bytes(buf[:64]))
+        addr = ctypes.addressof(buf)
+        regs = [MemoryRegion(addr & ~0xFFF, 0x2000, 0x04, MEM_COMMIT, 0x20000)]
+        with SafeProcess(os.getpid()) as p:
+            m = find_metadata_mirror(p, hdr, regions=regs)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.base, addr)
 
     def test_string_table_span(self):
         m = MetadataMirror(0x1000, self.hdr)

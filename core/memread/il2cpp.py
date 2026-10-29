@@ -48,21 +48,37 @@ _HDR = {
     'methodsSize': 0x34,
 }
 
+#: v39（Unity 6000.3）的头部在 stringLiteralSize 之后多插了一组未知字段，
+#: 字符串表（string）的位置从 0x18/0x1C 挪到 **0x20/0x24**。
+#: 2026-10-30 游戏更新（Unity 6000.0.61f1 -> 6000.3.18f1）实测，三重验证：
+#:   * 0x20 起读出 Assembly-CSharp|<Module>|... 的类名序列（NUL 分隔）；
+#:   * 0x18 处是 stringLiteralData（ease-in-out 等运行时字面量，不是类名表）；
+#:   * 0x20 的 offset+size 恰好等于 0x2C 处的下一个区段 offset（区段链吻合）。
+#: ⚠️ 其余未知版本一律按 v31 读 —— 读错时 is_valid 大多仍为真（假偏移
+#: 也是正数），内容必然是垃圾；遇到未实测的新版本先离线验内容再进这张表。
+_HDR_V39 = dict(_HDR, stringOffset=0x20, stringSize=0x24)
+
 #: 搜索用的特征长度。16 字节 = magic+version+前两组偏移，足够独特
+#:（v39 下 0x08/0x0C 仍是 stringLiteral 两组，16 字节特征不变 ——
+#:  2026-10-30 实测镜像仍能凭它扫到）
 SIGNATURE_LEN = 16
 
 
 class MetadataHeader(object):
     """``global-metadata.dat`` 的头部（离线解析，来自磁盘只读副本）。"""
 
-    __slots__ = ('_raw', '_fields')
+    __slots__ = ('_raw', '_fields', '_layout')
 
     def __init__(self, raw: bytes) -> None:
         if len(raw) < SIGNATURE_LEN:
             raise ValueError('metadata 头部太短：%d 字节' % len(raw))
         self._raw = bytes(raw)
+        # 先解 version 才知道按哪套布局读（v39 起字段位置变了）
+        ver = struct.unpack_from('<i', raw, 0x04)[0] if len(raw) >= 8 else 0
+        layout = _HDR_V39 if ver == 39 else _HDR
+        self._layout = layout
         f: Dict[str, int] = {}
-        for name, off in _HDR.items():
+        for name, off in layout.items():
             if off + 4 <= len(raw):
                 # magic 是 0xFAB11BAF，超过 int32 正数上限，得按无符号读
                 fmt = '<I' if name == 'magic' else '<i'
@@ -86,6 +102,10 @@ class MetadataHeader(object):
 
     def get(self, name: str, default: int = -1) -> int:
         return self._fields.get(name, default)
+
+    def field_offset(self, name: str) -> int:
+        """某字段在头部里的偏移（镜像校验要在同一位置重读同名字段）。"""
+        return self._layout[name]
 
     @property
     def version(self) -> int:
@@ -187,13 +207,13 @@ def verify_candidate(proc: SafeProcess, addr: int, header: MetadataHeader) -> bo
         return False
     if blob[:len(sig)] != sig:
         return False
-    # 再核两个不该变的字段
+    # 再核两个不该变的字段（用 header 自己的布局 —— v39 起位置不同）
     try:
-        if struct.unpack_from('<i', blob, _HDR['stringOffset'])[0] != header.string_offset:
-            return False
-        if struct.unpack_from('<i', blob, _HDR['stringSize'])[0] != header.string_size:
-            return False
+        so = struct.unpack_from('<i', blob, header.field_offset('stringOffset'))[0]
+        ss = struct.unpack_from('<i', blob, header.field_offset('stringSize'))[0]
     except struct.error:
+        return False
+    if so != header.string_offset or ss != header.string_size:
         return False
     return True
 

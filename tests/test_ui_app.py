@@ -1010,18 +1010,48 @@ class AutoShowFloatingTest(SettingsPatchedTest):
         a._game_running = lambda: running
         return a
 
-    def test_pops_on_rising_edge_only(self):
+    def test_first_tick_shows_when_game_already_running(self):
+        """★ 2026-10-29 用户实报「打不开 start.bat」的回归锁。
+
+        场景：**先开游戏、再双击 start.bat** —— 那时首拍 `_game_was_running`
+        就是 True（不是 False），旧逻辑的 `prev is False` 永不成立 →
+        UI 进程活着但窗口永不出现，用户以为软件没启动。
+
+        现在首拍也应该弹一次。
+        """
         a = self._app(running=True)
-        a._auto_show_tick()                    # 首拍建基线：不弹
+        a._auto_show_tick()
+        self.assertEqual(self.win.shown, 1, '游戏已在跑时，启动后应弹一次')
+
+    def test_first_tick_silent_when_game_not_running(self):
+        """游戏没开 -> 不弹（等它开了再弹）。"""
+        a = self._app(running=False)
+        a._auto_show_tick()
         self.assertEqual(self.win.shown, 0)
-        a._game_was_running = False            # 模拟「已见过游戏没跑」
+
+    def test_pops_on_rising_edge(self):
+        """游戏从关到开 -> 弹（原有语义不变）。"""
+        a = self._app(running=False)
+        a._auto_show_tick()                    # 首拍：游戏没开，不弹
+        self.assertEqual(self.win.shown, 0)
+        a._game_running = lambda: True
         a._auto_show_tick()                    # False→True：弹
         self.assertEqual(self.win.shown, 1)
-        a._auto_show_tick()                    # 仍 True：不重复
+
+    def test_user_hides_not_repopped(self):
+        """用户手动收起、游戏没退 -> **不再**自动弹（原有语义不变）。
+
+        ⚠️ 这条是「启动后首拍也弹」的边界：那个只弹**一次**
+        （`_auto_shown_once`），用户收起后不会被它反复弹出来。
+        """
+        a = self._app(running=True)
+        a._auto_show_tick()                    # 首拍弹一次
         self.assertEqual(self.win.shown, 1)
-        self.win.visible = False               # 用户手动收起，游戏没退
+        self.win.visible = False               # 用户收起（游戏没退）
         a._auto_show_tick()
-        self.assertEqual(self.win.shown, 1, '没有新跳变不该再弹')
+        self.assertEqual(self.win.shown, 1, '收起了就不该再弹')
+        a._auto_show_tick()
+        self.assertEqual(self.win.shown, 1)
 
     def test_setting_off_disables(self):
         app_mod.settings().setValue('ui/auto_show_floating', '0')

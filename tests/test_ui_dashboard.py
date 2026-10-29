@@ -2320,7 +2320,7 @@ class DeckManagerFeedbackTest(unittest.TestCase):
 
     # ---- 列宽（用户：「缩小中文名的列宽」）
     def test_cn_column_narrower_than_alias(self):
-        """★ 中文名列宽要比别名列窄（原来 3:4，现在 2:5）。"""
+        """★ 中文名列宽要比别名列窄（用户 2026-10-28 口径 2:4:3）。"""
         from PySide6.QtCore import QPoint
         self.mgr.resize(1000, 600)
         self.mgr.show()
@@ -2331,7 +2331,7 @@ class DeckManagerFeedbackTest(unittest.TestCase):
                         '中文名列该比别名列窄（已缩过一次）')
         from ui import opp_deck_manager as mgr_mod
         self.assertEqual(mgr_mod.COL_STRETCH[0], 2)
-        self.assertEqual(mgr_mod.COL_STRETCH[1], 5)
+        self.assertEqual(mgr_mod.COL_STRETCH[1], 4)
 
     def test_header_has_delete_column(self):
         """表头最右边也有「删」那一格（否则与行对不齐）。"""

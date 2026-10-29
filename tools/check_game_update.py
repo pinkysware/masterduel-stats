@@ -112,6 +112,13 @@ KNOWN_FIELDS = (
 )
 
 
+#: 主界面下允许「未就绪」的类 —— 对局/结算/礼盒/编辑界面才触发懒加载。
+#: 2026-10-30 实测：这几个类 fields 指针为 NULL（甚至 TypeInfo 未构造）
+#: 是 IL2CPP 懒加载，不是布局坏；别把 --live 判红。
+LAZY_ON_IDLE = ('DeckEditViewController2', 'PresentBoxViewController',
+                'DuelLogController', 'DuelEndMessage')
+
+
 # ---------------------------------------------------------------------- 依赖收集
 
 def _iter_py(path_dir):
@@ -437,10 +444,22 @@ def live_report(game_dir):
                     if tis:
                         break
             if not tis:
-                ok = False
-                lines.append('❌ %s：定位不到 TypeInfo' % label)
+                if name in LAZY_ON_IDLE:
+                    lines.append('💤 %s：TypeInfo 还没构造（懒加载 —— '
+                                 '进对应界面后自然就绪）' % label)
+                else:
+                    ok = False
+                    lines.append('❌ %s：定位不到 TypeInfo' % label)
                 continue
             ti = tis[0]
+            try:
+                fptr = proc.read_ptr(ti + TYPEINFO_FIELDS_OFFSET)
+            except Exception:                                # noqa: BLE001
+                fptr = 0
+            if not fptr and name in LAZY_ON_IDLE:
+                lines.append('💤 %s：字段表懒加载未触发（fields 指针为空）'
+                             ' —— 进对局/开对应界面后自然就绪' % label)
+                continue
             try:
                 got = list_fields(proc, ti, mirror=mirror)
             except Exception as e:                           # noqa: BLE001
@@ -466,7 +485,13 @@ def live_report(game_dir):
                 ok = False
             else:
                 # 字段名抽查：类里应该能看到我们依赖的某个名字
-                names = {f.name for f in got}
+                names = set()
+                for f in got:
+                    names.add(f.name)
+                    # 自动属性的字段名带包装：<duelHUD>k__BackingField
+                    if f.name.startswith('<') and f.name.endswith(
+                            'k__BackingField'):
+                        names.add(f.name[1:-len('k__BackingField') - 1])
                 want = _expected_fields_for(name)
                 got_want = sorted(want & names)
                 if want and not got_want:

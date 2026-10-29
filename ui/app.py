@@ -853,17 +853,35 @@ class MasterDuelUiApp(object):
     def _auto_show_tick(self) -> None:
         """游戏启动 → 自动弹悬浮窗（设置 ``ui/auto_show_floating``，默认开）。
 
-        只在 **False→True 跳变**时弹（UI 启动时游戏已经在跑 = 不弹；
-        用户手动收起后游戏没退 = 不再打扰）。判据优先采集器心跳里的
-        ``game_pid``（读一个文件，便宜）；心跳不新鲜（采集器没跑）才自己
-        扫进程（``find_pids_by_name``，只读枚举，限流 15s 一次）。
+        两种触发（2026-10-29 补第二种，用户实报「打不开 start.bat」）：
+
+        1. **游戏从关到开**（``prev is False``）—— 打游戏时自动弹；
+        2. **启动后首次检查**，游戏已经在跑且窗口没显示 —— 也弹一次。
+
+        ⚠️ 只加第 1 条时的坑：**先开游戏、再双击 start.bat** 是常见用法，
+        那时 `prev` 第一次就是 `True`（不是 `False`），条件永不成立 →
+        **UI 进程活着但窗口永不出现**，用户以为软件没启动（2026-10-29 实报）。
+        第 2 条只弹**一次**（`_auto_shown_once`），所以「用户手动收起后
+        不要再打扰」的语义不变。
+
+        判据优先采集器心跳里的 ``game_pid``（读一个文件，便宜）；
+        心跳不新鲜（采集器没跑）才自己扫进程（只读枚举，限流 15s 一次）。
         """
         if str(settings().value('ui/auto_show_floating', '1')) in ('0', 'false'):
             return
         running = self._game_running()
         prev = getattr(self, '_game_was_running', None)
         self._game_was_running = running
-        if running and prev is False and not self.win.isVisible():
+        if not running or self.win.isVisible():
+            return
+        #: 游戏从关到开 -> 弹
+        if prev is False:
+            self.win.show()
+            self.win.raise_()
+            return
+        #: 启动后首次检查、游戏本来就在跑 -> 弹一次（用户的窗口还没见过）
+        if not getattr(self, '_auto_shown_once', False):
+            self._auto_shown_once = True
             self.win.show()
             self.win.raise_()
 
@@ -1900,8 +1918,25 @@ def main(db_path: Optional[str] = None, interval_ms: int = 2000,
     """
     lock = acquire_single_instance_lock()
     if lock is None:
-        QMessageBox.information(None, tr('已经在跑了'),
-                                tr('悬浮窗已经在运行（看屏幕右上角）。'))
+        #: ⚠️ 这里**还没有 QApplication**（锁在构造前抢，BUG-B5-02），
+        #:    直接 `QMessageBox.information` 在某些 Qt 版本上会崩；
+        #:    而 pythonw 下（`start.bat` 就是这么起的）窗口可能根本不显示，
+        #:    用户只看到「黑框一闪」（2026-10-29 实报）。
+        #:    所以：① 先确保有 QApplication；② 同时写一行 stdout（有控制台时
+        #:    能看见）+ 写日志文件（pythonw 时的唯一线索）。
+        try:
+            print('已经在跑了：悬浮窗进程活着（看屏幕右下角托盘图标）。',
+                  flush=True)
+        except Exception:                                # noqa: BLE001
+            pass
+        try:
+            from ui.i18n import tr as _tr
+            _qapp = QApplication.instance() or QApplication(sys.argv[:1])
+            QMessageBox.information(
+                None, _tr('已经在跑了'),
+                _tr('悬浮窗已经在运行（看屏幕右下角托盘图标，双击可恢复）。'))
+        except Exception:                                # noqa: BLE001
+            pass                      # 弹不出来也不该崩 —— 退出码仍说明情况
         return 1
     app = MasterDuelUiApp([sys.argv[0]] if argv is None else argv,
                           db_path=db_path, interval_ms=interval_ms, demo=demo)
